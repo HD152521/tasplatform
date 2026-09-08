@@ -145,4 +145,48 @@ CREATE TABLE IF NOT EXISTS case_reads (
   last_read_thread_ms INTEGER NOT NULL DEFAULT 0,
   read_at             TEXT    NOT NULL
 );
+
+-- 정기점검 보고서의 월별 인스턴스 입력값.
+-- 결과(container_*)를 같이 저장하는 이유는 다음 달 "전월 대비 증감" 때문이다.
+-- 이 값이 있으면 다음 달에는 입력 9개만 넣으면 된다.
+-- month 는 'YYYY-MM'.
+CREATE TABLE IF NOT EXISTS instance_counts (
+  month                TEXT    PRIMARY KEY,
+  bank_dev             REAL    NOT NULL,
+  bank_prod            REAL    NOT NULL,
+  bank_dr              REAL    NOT NULL,
+  central_dev          REAL    NOT NULL,
+  central_prod         REAL    NOT NULL,
+  central_dr           REAL    NOT NULL,
+  shared_dev           REAL    NOT NULL,
+  shared_prod          REAL    NOT NULL,
+  shared_dr            REAL    NOT NULL,
+  container_bank_prod         REAL NOT NULL,
+  container_bank_prod_shared  REAL NOT NULL,
+  container_bank_dev          REAL NOT NULL,
+  container_bank_dev_shared   REAL NOT NULL,
+  container_central_prod      REAL NOT NULL,
+  container_central_dev       REAL NOT NULL,
+  -- 이 달을 계산할 때 실제로 쓴 전월값.
+  -- 앞선 달이 저장돼 있으면 그 값이 들어가고, 첫 달이면 사람이 넣은 값이 들어간다.
+  -- 남겨두면 "무엇과 비교한 증감인지"를 나중에도 알 수 있다.
+  prev_bank_prod         REAL NOT NULL DEFAULT 0,
+  prev_bank_prod_shared  REAL NOT NULL DEFAULT 0,
+  prev_bank_dev          REAL NOT NULL DEFAULT 0,
+  prev_bank_dev_shared   REAL NOT NULL DEFAULT 0,
+  prev_central_prod      REAL NOT NULL DEFAULT 0,
+  prev_central_dev       REAL NOT NULL DEFAULT 0,
+  saved_at             TEXT    NOT NULL
+);
+
+-- 정기점검 보고서에 넣기로 고른 항목들.
+-- kind: 'sr' = 케이스 번호, 'jira' = 이슈 키.
+-- 단계를 옮겨다녀도 선택이 남아야 해서 저장한다.
+CREATE TABLE IF NOT EXISTS report_picks (
+  month TEXT    NOT NULL,
+  kind  TEXT    NOT NULL,
+  ref   TEXT    NOT NULL,
+  ord   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (month, kind, ref)
+);
 `;

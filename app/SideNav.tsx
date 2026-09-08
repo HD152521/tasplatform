@@ -34,6 +34,7 @@ export function SideNav({
     { href: "/closed", label: "종료", count: counts.closed, badge: 0 },
     { href: "/new", label: "SR 작성", count: null, badge: 0 },
     { href: "/cves", label: "보안 공지", count: counts.cves, badge: counts.criticalCves },
+    { href: "/report", label: "정기점검", count: null, badge: 0 },
     { href: "/logs", label: "수집 로그", count: null, badge: 0 },
   ];
 

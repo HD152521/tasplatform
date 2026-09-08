@@ -22,6 +22,7 @@ import {
 import type { AttachmentRow, RequestThreadVo, SearchResultItem } from "../lib/types.ts";
 import { fetchCaseDescription, fetchCaseList, fetchThreads, type CaseDetail } from "./api.ts";
 import { acquireLock } from "./lock.ts";
+import { formatFailure, formatReplies, hasWebhook, send } from "../lib/notify.ts";
 import {
   SessionExpiredError, SessionMissingError,
   ensureSessionValid, launchBrowser, openSavedSession, persistSession,
@@ -30,6 +31,8 @@ import {
 const DRY_RUN = process.argv.includes("--dry-run");
 
 interface NewReply {
+  /** 알림에서 케이스로 바로 갈 링크를 만들 때 쓴다. */
+  requestId: number;
   caseLabel: string;
   subject: string;
   author: string;
@@ -203,6 +206,7 @@ async function main(): Promise<void> {
 
       for (const thread of fresh) {
         replies.push({
+          requestId: change.item.requestId,
           caseLabel: change.item.requestIdFormatted,
           subject: change.item.requestDesc,
           author: thread.createdUserUnitName,
@@ -240,6 +244,7 @@ async function main(): Promise<void> {
     });
 
     report(cases.length, changes.length, replies);
+    await announceReplies(replies);
   } catch (error) {
     const expired =
       error instanceof SessionExpiredError ||
@@ -261,6 +266,36 @@ async function main(): Promise<void> {
     db.close();
     release();
   }
+}
+
+/** 새 답변을 메신저로 알린다. 웹훅이 없으면 조용히 넘어간다. */
+async function announceReplies(replies: readonly NewReply[]): Promise<void> {
+  if (replies.length === 0 || !hasWebhook()) return;
+  const result = await send(formatReplies(replies));
+  if (!result.ok) console.error(`알림 전송 실패: ${result.detail}`);
+}
+
+/**
+ * 수집 실패를 알린다.
+ *
+ * 15분마다 도는데 매번 보내면 도배가 된다. 직전 회차도 같은 상태였다면
+ * 이미 알린 것이므로 건너뛴다 — 상태가 바뀌는 순간에만 알린다.
+ */
+async function announceFailure(
+  db: ReturnType<typeof openDb>,
+  runId: number,
+  kind: "session" | "failed",
+  message: string,
+): Promise<void> {
+  if (!hasWebhook()) return;
+  const status = kind === "session" ? "session_expired" : "failed";
+  const rows = db
+    .prepare("SELECT status FROM runs WHERE run_id < ? ORDER BY run_id DESC LIMIT 1")
+    .all(runId) as Array<{ status: string }>;
+  if (rows[0]?.status === status) return;
+
+  const result = await send(formatFailure(kind, message));
+  if (!result.ok) console.error(`알림 전송 실패: ${result.detail}`);
 }
 
 function report(seen: number, changed: number, replies: readonly NewReply[]): void {

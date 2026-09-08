@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { COLOR, Card } from "../../ui.tsx";
 
-type Kind = "confluence" | "report";
+type Kind = "confluence";
 
 interface SummaryResponse {
   content?: string;
@@ -14,8 +14,7 @@ interface SummaryResponse {
 }
 
 const KINDS: ReadonlyArray<{ id: Kind; label: string; note: string }> = [
-  { id: "confluence", label: "Confluence 문서", note: "기술 상세 · 재발 시 검색용" },
-  { id: "report", label: "정기 보고서", note: "요약 · 결과 중심" },
+  { id: "confluence", label: "Confluence 문서", note: "SR 현행화 양식" },
 ];
 
 export function SummaryPanel({ requestId }: { requestId: number }) {

@@ -43,6 +43,12 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: string 
   { table: "cves", column: "affected_json", ddl: "TEXT NOT NULL DEFAULT '[]'" },
   { table: "cves", column: "summary_ko", ddl: "TEXT NOT NULL DEFAULT ''" },
   { table: "cves", column: "brief_ko", ddl: "TEXT NOT NULL DEFAULT ''" },
+  { table: "instance_counts", column: "prev_bank_prod", ddl: "REAL NOT NULL DEFAULT 0" },
+  { table: "instance_counts", column: "prev_bank_prod_shared", ddl: "REAL NOT NULL DEFAULT 0" },
+  { table: "instance_counts", column: "prev_bank_dev", ddl: "REAL NOT NULL DEFAULT 0" },
+  { table: "instance_counts", column: "prev_bank_dev_shared", ddl: "REAL NOT NULL DEFAULT 0" },
+  { table: "instance_counts", column: "prev_central_prod", ddl: "REAL NOT NULL DEFAULT 0" },
+  { table: "instance_counts", column: "prev_central_dev", ddl: "REAL NOT NULL DEFAULT 0" },
 ];
 
 function migrate(db: DatabaseSync): void {

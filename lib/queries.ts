@@ -292,6 +292,50 @@ export function getCve(cveId: string): CveDetailRow[] {
   );
 }
 
+export interface MonthCaseRow {
+  request_id: number;
+  request_id_formatted: string;
+  subject: string;
+  status: string;
+  priority: string;
+  category: string;
+  party_name: string;
+  created_on: string;
+  created_on_ms: number | null;
+  last_updated: string;
+  /** 마지막 Broadcom 답변. 보고서의 "진행 현황" 칸에 쓴다. */
+  last_reply: string;
+}
+
+/**
+ * 해당 월에 등록된 케이스. 정기점검 보고서의 SR 섹션 후보다.
+ *
+ * 보고서는 "그 달에 발생한 SR" 기준이라 생성일로 자른다.
+ * month 는 'YYYY-MM'.
+ */
+export function listCasesInMonth(month: string): MonthCaseRow[] {
+  const [y, m] = month.split("-").map(Number) as [number, number];
+  const start = new Date(y, m - 1, 1).getTime();
+  const end = new Date(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1).getTime();
+
+  return withDb((db) =>
+    toPlain<MonthCaseRow>(
+      db
+        .prepare(
+          `SELECT c.request_id, c.request_id_formatted, c.subject, c.status, c.priority,
+                  c.category, c.party_name, c.created_on, c.created_on_ms, c.last_updated,
+                  COALESCE((SELECT t.body_text FROM threads t
+                             WHERE t.request_id = c.request_id AND t.is_ours = 0
+                             ORDER BY t.res_date_ms DESC LIMIT 1), '') AS last_reply
+             FROM cases c
+            WHERE c.created_on_ms >= ? AND c.created_on_ms < ?
+            ORDER BY c.created_on_ms ASC`,
+        )
+        .all(start, end),
+    ),
+  );
+}
+
 export interface ProductComponent {
   productId: number;
   productName: string;
