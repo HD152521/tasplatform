@@ -14,12 +14,70 @@
  *   (포털 작성 화면의 드롭다운을 한 번 캡처하면 풀린다)
  */
 import "server-only";
-import { readFileSync } from "node:fs";
 import type { BrowserContext } from "playwright";
 import { API_HEADERS, API_ORIGIN } from "./config.ts";
 import { textToHtml } from "./html.ts";
 
-const TEMPLATE_PATH = new URL("../collector/payloads/create.json", import.meta.url);
+/**
+ * 등록 템플릿.
+ *
+ * 원본은 `collector/payloads/create.json` (캡처 107_create_request) 이지만,
+ * 여기서는 파일을 읽지 않고 문자열 상수로 둔다.
+ * Next.js 번들 환경에서는 readFileSync(new URL(..., import.meta.url)) 이
+ * "The \"path\" argument must be of type string ... Received an instance of URL"
+ * 로 죽는다 — 번들러가 URL 을 자체 shim 으로 바꿔 fs 가 거부한다(실측 확인).
+ * lib/schema.ts 가 같은 이유로 .sql 파일 대신 상수를 쓴다.
+ *
+ * 캡처를 다시 떠서 값이 바뀌면 이 상수도 같이 고칠 것.
+ */
+const TEMPLATE = {
+  '"null"': null,
+  requestMasterVO: {
+    subCategoryId: 4322,
+    priorityId: 3,
+    requestDesc: "",
+    categoryId: 3561,
+    itemId: 69076,
+    sourceId: 1,
+    unitId: 25326,
+    requestTypeId: 63,
+  },
+  assetId: null,
+  otherInfoVO: {
+    unitLocationId: 2565181,
+    releaseId: 798,
+    onBehalfOfSite: null,
+    attribute1: null,
+    attribute2: null,
+    attribute3: null,
+  },
+  requestEntitlementsVO: { groupSiteId: null, entlId: 10486720 },
+  componentMappingList: [{ compId: 9698, compReleaseId: null }],
+  descDetailsVO: { descLarge: "" },
+  emailCCVO: {},
+  emailCCExternalVO: {},
+  enableDefaultContext: false,
+  itemFlexMapValueList: [],
+  subcatFlexMapValueList: [],
+  requestFlexMapValueList: [
+    {
+      attributeId: 697,
+      attributeTypeId: 2,
+      attributeName: "Issue Type",
+      requestFlexMapId: 572,
+      lovName: "Technical",
+      lovId: 4323,
+      isDeleted: false,
+    },
+  ],
+  itemSectionMapValueList: [],
+  requestSectionMapValueList: [],
+  configType: "PRODUCT_DRIVEN",
+  itemPrototypeMapValueList: [],
+  requestPrototypeMapValueList: [],
+  multiLevelFlexConfigurationValueList: [],
+  unitFlexMapValueList: [],
+} as const;
 
 export const PRIORITIES: ReadonlyArray<{ id: number; label: string }> = [
   { id: 1, label: "Critical - P1" },
@@ -40,8 +98,9 @@ export type CreateResult =
   | { ok: true; requestId: number; requestIdFormatted: string; message: string }
   | { ok: false; code: "session" | "failed"; message: string };
 
+/** 호출마다 새 사본을 준다 — 아래에서 제목·본문을 덮어쓰기 때문에 공유하면 안 된다. */
 function loadTemplate(): Record<string, any> {
-  return JSON.parse(readFileSync(TEMPLATE_PATH, "utf8")) as Record<string, any>;
+  return JSON.parse(JSON.stringify(TEMPLATE)) as Record<string, any>;
 }
 
 /** 화면에서 "이 값으로 나갑니다"를 보여주기 위한 요약. */

@@ -269,7 +269,6 @@ export function DraftForm({ combos }: { combos: ProductComponent[] }) {
               ["Group Site Id", FIXED.siteId],
               ["Issue Type", FIXED.issueType],
               ["Prod Release", d.release],
-      ["Product", productName], ["Component", componentName],
               ["Severity", d.severity],
               ["Product", productName],
               ["Component", componentName],

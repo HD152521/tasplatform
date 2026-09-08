@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { PRIORITIES, createCase } from "../../../lib/createCase.ts";
-import { ensureSessionValid, openSavedSession, persistSession } from "../../../collector/session.ts";
+import {
+  SessionExpiredError, SessionMissingError,
+  ensureSessionValid, openSavedSession, persistSession,
+} from "../../../collector/session.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,9 +44,14 @@ export async function POST(request: Request) {
     await persistSession(session.context);
     return NextResponse.json(result, { status: result.ok ? 200 : 409 });
   } catch (error) {
+    // 세션 문제만 401 로 돌려준다. 그 외(코드 버그 등)를 401 로 뭉뚱그리면
+    // 화면에 "로그인하세요"가 떠서 진짜 원인을 못 찾는다.
+    const isSession = error instanceof SessionExpiredError || error instanceof SessionMissingError;
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isSession) console.error("[api/create]", error);
     return NextResponse.json(
-      { ok: false, code: "session", message: error instanceof Error ? error.message : String(error) },
-      { status: 401 },
+      { ok: false, code: isSession ? "session" : "failed", message },
+      { status: isSession ? 401 : 500 },
     );
   } finally {
     await session?.close();
