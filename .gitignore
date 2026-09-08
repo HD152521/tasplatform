@@ -22,3 +22,6 @@ captured_run1_loginonly/
 1_login_capture.py
 2_probe_headers.py
 search_payload.json
+
+# 사내 보고 자료 / 고객 SR 내용 — 공개 저장소에 올리지 않는다
+docs/
