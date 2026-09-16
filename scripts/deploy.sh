@@ -7,9 +7,11 @@
 #     org/space 는 기본 PA. 다르면 export CF_ORG=... CF_SPACE=...
 #
 # 사용:
-#   bash scripts/deploy.sh
-#   # Postgres 서비스가 아직 없으면 서비스명·플랜을 넘겨 자동 생성:
-#   export PG_SERVICE=<마켓플레이스 서비스명> PG_PLAN=<플랜명>; bash scripts/deploy.sh
+#   # (A) 이미 만들어둔 Postgres 인스턴스를 바인딩 — 그 인스턴스 이름만 주면 된다:
+#   export PG_SERVICE_INSTANCE=<cf services 에 보이는 인스턴스 이름>; bash scripts/deploy.sh
+#   # (B) 인스턴스를 새로 만들어 바인딩 — offering·plan 을 주면 생성 후 바인딩:
+#   export PG_SERVICE=<offering명> PG_PLAN=<플랜명>; bash scripts/deploy.sh
+#   #     (이때 인스턴스 이름은 기본 sr-postgres, 바꾸려면 PG_SERVICE_INSTANCE 도)
 #
 # 무엇이 뜨는가:
 #   web  (Next.js 뷰어·설정·API)  → cf push
@@ -72,16 +74,16 @@ elif [ -n "${PG_SERVICE:-}" ] && [ -n "${PG_PLAN:-}" ]; then
     sleep 10
   done
 else
-  echo "  ✗ '$PG_SERVICE_INSTANCE' 서비스가 없습니다. Postgres 서비스/플랜을 정해 만들어야 합니다:"
-  echo "      cf marketplace                              # postgres 서비스명·플랜 확인"
-  echo "      cf create-service <서비스> <플랜> $PG_SERVICE_INSTANCE"
-  echo "    또는 이 스크립트가 자동 생성하도록:"
-  echo "      export PG_SERVICE=<서비스> PG_PLAN=<플랜>; bash scripts/deploy.sh"
+  echo "  ✗ '$PG_SERVICE_INSTANCE' 라는 서비스 인스턴스가 없습니다. 둘 중 하나:"
+  echo "    (A) 이미 만들어둔 인스턴스를 쓰려면 — cf services 에서 이름 확인 후:"
+  echo "        export PG_SERVICE_INSTANCE=<그 인스턴스 이름>; bash scripts/deploy.sh"
+  echo "    (B) 새로 만들려면 — cf marketplace 로 offering·plan 확인 후:"
+  echo "        export PG_SERVICE=<offering> PG_PLAN=<플랜>; bash scripts/deploy.sh"
   exit 1
 fi
 
-echo "== 6) cf push (web + mcp, sr-postgres 바인딩) =="
-cf push -f manifest.yml
+echo "== 6) cf push (web + mcp, '$PG_SERVICE_INSTANCE' 바인딩) =="
+cf push -f manifest.yml --var pg_instance="$PG_SERVICE_INSTANCE"
 
 echo "== 7) worker(수집기) 안내 =="
 echo "  아직 앱이 아니다(M2 에서 앱 내부 루프로 추가 예정). 지금 1회 수동 수집:"

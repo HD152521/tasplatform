@@ -12,6 +12,9 @@
 # ⚠ 시크릿(SR_SECRET_KEY/SR_USERNAME/SR_PASSWORD 등)은 .env(루트, .cfignore 로 push 포함)
 #   또는 cf set-env 로 넣는다. manifest 에는 비밀값을 두지 않는다.
 
+# 바인딩할 Postgres 서비스 인스턴스 이름은 변수로 받는다(((pg_instance))).
+# deploy.sh 가 --var pg_instance=$PG_SERVICE_INSTANCE 로 넘긴다(기본 sr-postgres).
+# 이미 만들어둔 인스턴스가 있으면 그 이름을 PG_SERVICE_INSTANCE 로 주면 그걸 바인딩한다.
 applications:
   - name: broadcom-sr-web
     buildpacks:
@@ -23,7 +26,7 @@ applications:
       NODE_ENV: production
       TZ: Asia/Seoul
     services:
-      - sr-postgres
+      - ((pg_instance))
 
   - name: broadcom-sr-mcp
     buildpacks:
@@ -35,4 +38,4 @@ applications:
       HOST: 0.0.0.0             # 라우트는 GoRouter 가 TLS 종단
       TZ: Asia/Seoul
     services:
-      - sr-postgres
+      - ((pg_instance))
