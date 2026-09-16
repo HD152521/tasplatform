@@ -76,16 +76,14 @@ export function previousMonthOf(month: string): string {
   return `${d.y}-${String(d.m).padStart(2, "0")}`;
 }
 
-export function loadMonth(month: string): SavedMonth | null {
-  const db = openDb();
+export async function loadMonth(month: string): Promise<SavedMonth | null> {
+  const db = await openDb();
   try {
-    const rows = db
-      .prepare("SELECT * FROM instance_counts WHERE month = ?")
-      .all(month) as unknown as Row[];
+    const rows = (await db.all("SELECT * FROM instance_counts WHERE month = ?", [month])) as Row[];
     const row = rows[0];
     return row === undefined ? null : toSaved(row);
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
@@ -95,38 +93,39 @@ export function loadMonth(month: string): SavedMonth | null {
  * 직전 달이 없으면 그보다 앞선 달 중 가장 최근 것을 쓴다 — 한 달 건너뛰었다고
  * 증감이 통째로 틀리는 것보다는 낫다. 화면에서 어느 달을 썼는지 보여준다.
  */
-export function findPrevious(month: string): SavedMonth | null {
-  const db = openDb();
+export async function findPrevious(month: string): Promise<SavedMonth | null> {
+  const db = await openDb();
   try {
-    const rows = db
-      .prepare("SELECT * FROM instance_counts WHERE month < ? ORDER BY month DESC LIMIT 1")
-      .all(month) as unknown as Row[];
+    const rows = (await db.all(
+      "SELECT * FROM instance_counts WHERE month < ? ORDER BY month DESC LIMIT 1",
+      [month],
+    )) as Row[];
     const row = rows[0];
     return row === undefined ? null : toSaved(row);
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
-export function listMonths(): Array<{ month: string; savedAt: string }> {
-  const db = openDb();
+export async function listMonths(): Promise<Array<{ month: string; savedAt: string }>> {
+  const db = await openDb();
   try {
-    const rows = db
-      .prepare("SELECT month, saved_at FROM instance_counts ORDER BY month DESC")
-      .all() as unknown as Array<{ month: string; saved_at: string }>;
+    const rows = (await db.all(
+      "SELECT month, saved_at FROM instance_counts ORDER BY month DESC",
+    )) as Array<{ month: string; saved_at: string }>;
     return rows.map((r) => ({ month: r.month, savedAt: r.saved_at }));
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
 /** 입력값과 계산 결과를 함께 저장한다. 같은 달을 다시 저장하면 덮어쓴다. */
-export function saveMonth(month: string, input: InstanceInput, previous: PreviousMonth): SavedMonth {
+export async function saveMonth(month: string, input: InstanceInput, previous: PreviousMonth): Promise<SavedMonth> {
   const { carryOver } = calculateInstances(input, previous);
   const savedAt = isoNow();
-  const db = openDb();
+  const db = await openDb();
   try {
-    db.prepare(
+    await db.run(
       `INSERT INTO instance_counts (
          month, bank_dev, bank_prod, bank_dr,
          central_dev, central_prod, central_dr,
@@ -157,19 +156,20 @@ export function saveMonth(month: string, input: InstanceInput, previous: Previou
          prev_central_prod = excluded.prev_central_prod,
          prev_central_dev = excluded.prev_central_dev,
          saved_at = excluded.saved_at`,
-    ).run(
-      month, input.bank.dev, input.bank.prod, input.bank.dr,
-      input.central.dev, input.central.prod, input.central.dr,
-      input.shared.dev, input.shared.prod, input.shared.dr,
-      carryOver.bankProd, carryOver.bankProdShared,
-      carryOver.bankDev, carryOver.bankDevShared,
-      carryOver.centralProd, carryOver.centralDev,
-      previous.bankProd, previous.bankProdShared,
-      previous.bankDev, previous.bankDevShared,
-      previous.centralProd, previous.centralDev, savedAt,
+      [
+        month, input.bank.dev, input.bank.prod, input.bank.dr,
+        input.central.dev, input.central.prod, input.central.dr,
+        input.shared.dev, input.shared.prod, input.shared.dr,
+        carryOver.bankProd, carryOver.bankProdShared,
+        carryOver.bankDev, carryOver.bankDevShared,
+        carryOver.centralProd, carryOver.centralDev,
+        previous.bankProd, previous.bankProdShared,
+        previous.bankDev, previous.bankDevShared,
+        previous.centralProd, previous.centralDev, savedAt,
+      ],
     );
   } finally {
-    db.close();
+    await db.close();
   }
   return { month, input, containers: carryOver, previous, savedAt };
 }
@@ -180,14 +180,14 @@ export function saveMonth(month: string, input: InstanceInput, previous: Previou
  * 앞선 달이 저장돼 있으면 그 결과를 쓴다 (사람이 손댈 일 없음).
  * 없으면 이 달에 저장해 둔 값을 되살린다 — 첫 달에 직접 넣은 값이다.
  */
-export function resolvePrevious(month: string): {
+export async function resolvePrevious(month: string): Promise<{
   values: PreviousMonth;
   /** 값을 가져온 달. null 이면 사람이 입력해야 한다. */
   fromMonth: string | null;
-} {
-  const earlier = findPrevious(month);
+}> {
+  const earlier = await findPrevious(month);
   if (earlier !== null) return { values: earlier.containers, fromMonth: earlier.month };
 
-  const own = loadMonth(month);
+  const own = await loadMonth(month);
   return { values: own?.previous ?? EMPTY_PREVIOUS, fromMonth: null };
 }

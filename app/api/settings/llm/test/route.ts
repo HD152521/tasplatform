@@ -34,12 +34,12 @@ export async function POST(request: Request) {
     return Number.isFinite(n) ? n : fallback;
   };
 
-  const db = openDb();
+  const db = await openDb();
   try {
     let secret = typeof body.secret === "string" ? body.secret : "";
     if (secret.trim() === "") {
       // 입력 없음 → 저장된 비밀번호(있으면)를 쓴다.
-      const stored = getLlmConfig(db);
+      const stored = await getLlmConfig(db);
       secret = stored?.secret ?? "";
     }
 
@@ -68,7 +68,7 @@ export async function POST(request: Request) {
     }
 
     const result = await testConnection(config);
-    recordAudit(db, {
+    await recordAudit(db, {
       actor: "", teamId: DEFAULT_TEAM_ID, action: "llm_test", requestId: null,
       result: result.ok ? "ok" : "failed:error", detail: `model=${config.modelId}`,
     });
@@ -79,6 +79,6 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   } finally {
-    db.close();
+    await db.close();
   }
 }

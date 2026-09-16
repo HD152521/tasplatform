@@ -24,7 +24,7 @@ async function main(): Promise<void> {
   const arg = process.argv.find((a) => /^\d+$/.test(a));
   const days = arg === undefined ? DEFAULT_DAYS : Number(arg);
 
-  const db = openDb();
+  const db = await openDb();
   let total = 0;
   let fresh = 0;
   let failed = 0;
@@ -48,7 +48,7 @@ async function main(): Promise<void> {
       }
       let added = 0;
       for (const row of rows) {
-        if (upsertCve(db, row)) {
+        if (await upsertCve(db, row)) {
           added += 1;
           if (newOnes.length < 8) {
             newOnes.push(`${row.cve_id}  ${row.severity.padEnd(8)} ${product}`);
@@ -61,7 +61,7 @@ async function main(): Promise<void> {
       await sleep(7000); // 키 없이 쓰는 한도(30초 5회) 준수
     }
   } finally {
-    db.close();
+    await db.close();
   }
 
   console.log("");

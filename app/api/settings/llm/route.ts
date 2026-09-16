@@ -26,17 +26,18 @@ function coerceAuthKind(value: unknown): LlmAuthKind {
 
 /** 현재 LLM 설정(마스킹) + 암호화 키 유무. 평문·암호문은 반환하지 않는다. */
 export async function GET() {
-  const db = openDb();
+  const db = await openDb();
   try {
+    const config = await getLlmConfigMeta(db);
     return NextResponse.json({
       ok: true,
-      config: getLlmConfigMeta(db),
+      config,
       hasSecretKey: hasSecretKey(),
     });
   } catch (error) {
     return NextResponse.json({ ok: false, message: errorMessage(error) }, { status: 500 });
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
@@ -56,9 +57,9 @@ export async function POST(request: Request) {
   };
   const actor = readActor(body.actor);
 
-  const db = openDb();
+  const db = await openDb();
   try {
-    upsertLlmConfig(db, {
+    await upsertLlmConfig(db, {
       name: str(body.name),
       modelId: str(body.modelId),
       baseUrl: str(body.baseUrl),
@@ -72,14 +73,14 @@ export async function POST(request: Request) {
       temperature: numOr(body.temperature, 0.1),
       systemPrompt: str(body.systemPrompt),
     });
-    recordAudit(db, {
+    await recordAudit(db, {
       actor, teamId: DEFAULT_TEAM_ID, action: "llm_upsert", requestId: null,
       result: "ok", detail: `model=${str(body.modelId)}`,
     });
     return NextResponse.json({ ok: true });
   } catch (error) {
     const code = error instanceof MissingSecretKeyError ? "no_key" : "error";
-    recordAudit(db, {
+    await recordAudit(db, {
       actor, teamId: DEFAULT_TEAM_ID, action: "llm_upsert", requestId: null,
       result: `failed:${code}`, detail: `model=${str(body.modelId)}`,
     });
@@ -88,17 +89,17 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ ok: false, message: errorMessage(error) }, { status: 400 });
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
 /** 삭제(단일 설정). */
 export async function DELETE(request: Request) {
   const actor = readActor(new URL(request.url).searchParams.get("actor"));
-  const db = openDb();
+  const db = await openDb();
   try {
-    deleteLlmConfig(db);
-    recordAudit(db, {
+    await deleteLlmConfig(db);
+    await recordAudit(db, {
       actor, teamId: DEFAULT_TEAM_ID, action: "llm_delete", requestId: null,
       result: "ok", detail: "",
     });
@@ -106,6 +107,6 @@ export async function DELETE(request: Request) {
   } catch (error) {
     return NextResponse.json({ ok: false, message: errorMessage(error) }, { status: 500 });
   } finally {
-    db.close();
+    await db.close();
   }
 }

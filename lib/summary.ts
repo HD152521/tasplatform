@@ -33,16 +33,13 @@ export function isSummaryKind(value: unknown): value is SummaryKind {
   return value === "confluence";
 }
 
-function readCached(requestId: number, kind: SummaryKind): Summary | null {
-  const db = openDb();
+async function readCached(requestId: number, kind: SummaryKind): Promise<Summary | null> {
+  const db = await openDb();
   try {
-    const rows = db
-      .prepare(
-        "SELECT content, source, generated_at FROM case_summaries WHERE request_id = ? AND kind = ?",
-      )
-      .all(requestId, kind) as unknown as Array<{
-        content: string; source: string; generated_at: string;
-      }>;
+    const rows = (await db.all(
+      "SELECT content, source, generated_at FROM case_summaries WHERE request_id = ? AND kind = ?",
+      [requestId, kind],
+    )) as Array<{ content: string; source: string; generated_at: string }>;
     const row = rows[0];
     if (row === undefined) return null;
     return {
@@ -52,23 +49,24 @@ function readCached(requestId: number, kind: SummaryKind): Summary | null {
       cached: true,
     };
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
-function writeCached(requestId: number, kind: SummaryKind, summary: Summary): void {
-  const db = openDb();
+async function writeCached(requestId: number, kind: SummaryKind, summary: Summary): Promise<void> {
+  const db = await openDb();
   try {
-    db.prepare(
+    await db.run(
       `INSERT INTO case_summaries (request_id, kind, content, source, generated_at)
        VALUES (?,?,?,?,?)
        ON CONFLICT(request_id, kind) DO UPDATE SET
          content = excluded.content,
          source = excluded.source,
          generated_at = excluded.generated_at`,
-    ).run(requestId, kind, summary.content, summary.source, summary.generatedAt);
+      [requestId, kind, summary.content, summary.source, summary.generatedAt],
+    );
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
@@ -82,11 +80,11 @@ export async function getSummary(
   force = false,
 ): Promise<Summary | { error: string }> {
   if (!force) {
-    const cached = readCached(requestId, kind);
+    const cached = await readCached(requestId, kind);
     if (cached !== null) return cached;
   }
 
-  const detail = getCase(requestId);
+  const detail = await getCase(requestId);
   if (detail === null) return { error: "케이스를 찾을 수 없습니다." };
 
   const source = buildSourceText({
@@ -98,7 +96,7 @@ export async function getSummary(
     createdOn: detail.created_on,
     closedOn: detail.last_updated,
     description: detail.description_text,
-    threads: listThreads(requestId).map((t) => ({
+    threads: (await listThreads(requestId)).map((t) => ({
       isOurs: t.is_ours === 1,
       at: t.res_date_val,
       body: t.body_text,
@@ -116,6 +114,6 @@ export async function getSummary(
     generatedAt: isoNow(),
     cached: false,
   };
-  writeCached(requestId, kind, summary);
+  await writeCached(requestId, kind, summary);
   return summary;
 }

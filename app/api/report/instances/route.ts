@@ -70,7 +70,7 @@ export async function POST(request: Request) {
 
   // 앞선 달이 저장돼 있으면 그 결과가 기준이다. 화면이 보낸 값보다 우선한다 —
   // 저장된 계산 결과를 화면 값으로 덮어쓸 이유가 없다.
-  const earlier = findPrevious(body.month);
+  const earlier = await findPrevious(body.month);
   let previous: PreviousMonth;
   if (earlier !== null) {
     previous = earlier.containers;
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const saved = saveMonth(body.month, input, previous);
+    const saved = await saveMonth(body.month, input, previous);
     return NextResponse.json({ ok: true, savedAt: saved.savedAt });
   } catch (error) {
     // 저장 실패를 성공처럼 보이게 하지 않는다.

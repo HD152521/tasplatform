@@ -44,19 +44,17 @@ async function main(): Promise<void> {
     return;
   }
 
-  const db = openDb();
-  const rows = db
-    .prepare(
-      `SELECT DISTINCT cve_id, summary FROM cves
-        WHERE summary_ko = '' AND summary <> ''
-        ORDER BY published DESC`,
-    )
-    .all() as Array<{ cve_id: string; summary: string }>;
+  const db = await openDb();
+  const rows = (await db.all(
+    `SELECT DISTINCT cve_id, summary FROM cves
+      WHERE summary_ko = '' AND summary <> ''
+      ORDER BY published DESC`,
+  )) as Array<{ cve_id: string; summary: string }>;
 
   console.log(`제공자: ${availableProviders().join(" → ")}`);
   console.log(`번역 대상 ${rows.length}건`);
   if (rows.length === 0) {
-    db.close();
+    await db.close();
     return;
   }
 
@@ -72,8 +70,7 @@ async function main(): Promise<void> {
       for (let attempt = 1; attempt <= MAX_ATTEMPTS && !saved; attempt += 1) {
         try {
           const ko = await translateToKorean(row.summary);
-          db.prepare("UPDATE cves SET summary_ko = ? WHERE cve_id = ?")
-            .run(ko.translation, row.cve_id);
+          await db.run("UPDATE cves SET summary_ko = ? WHERE cve_id = ?", [ko.translation, row.cve_id]);
           saved = true;
           console.log(`  ${row.cve_id}  [${ko.provider}] ${ko.translation.slice(0, 54)}`);
         } catch (error) {
@@ -103,7 +100,7 @@ async function main(): Promise<void> {
       await sleep(GAP_MS);
     }
   } finally {
-    db.close();
+    await db.close();
   }
 
   const left = rows.length - done - failed;

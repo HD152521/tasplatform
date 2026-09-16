@@ -37,18 +37,20 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, message: errorMessage(error) }, { status: 400 });
   }
 
-  const db = openDb();
+  const db = await openDb();
   try {
+    const teams = await listTeams(db);
+    const integrations = await listIntegrations(db, teamId);
     return NextResponse.json({
       ok: true,
       teamId,
-      teams: listTeams(db),
-      integrations: listIntegrations(db, teamId),
+      teams,
+      integrations,
     });
   } catch (error) {
     return NextResponse.json({ ok: false, message: errorMessage(error) }, { status: 500 });
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
@@ -92,17 +94,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: errorMessage(error) }, { status: 400 });
   }
 
-  const db = openDb();
+  const db = await openDb();
   try {
-    upsertIntegration(db, { teamId, kind, baseUrl, project, secret });
-    recordAudit(db, {
+    await upsertIntegration(db, { teamId, kind, baseUrl, project, secret });
+    await recordAudit(db, {
       actor, teamId, action: "integration_upsert", requestId: null,
       result: "ok", detail: `kind=${kind}`,
     });
     return NextResponse.json({ ok: true });
   } catch (error) {
     const code = error instanceof MissingSecretKeyError ? "no_key" : "error";
-    recordAudit(db, {
+    await recordAudit(db, {
       actor, teamId, action: "integration_upsert", requestId: null,
       result: `failed:${code}`, detail: `kind=${kind}`,
     });
@@ -113,7 +115,7 @@ export async function POST(request: Request) {
     console.error("[api/settings] 저장 실패", error);
     return NextResponse.json({ ok: false, message: errorMessage(error) }, { status: 400 });
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
@@ -136,21 +138,21 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ ok: false, message: errorMessage(error) }, { status: 400 });
   }
 
-  const db = openDb();
+  const db = await openDb();
   try {
-    deleteIntegration(db, teamId, kind);
-    recordAudit(db, {
+    await deleteIntegration(db, teamId, kind);
+    await recordAudit(db, {
       actor, teamId, action: "integration_delete", requestId: null,
       result: "ok", detail: `kind=${kind}`,
     });
     return NextResponse.json({ ok: true });
   } catch (error) {
-    recordAudit(db, {
+    await recordAudit(db, {
       actor, teamId, action: "integration_delete", requestId: null,
       result: "failed:error", detail: `kind=${kind}`,
     });
     return NextResponse.json({ ok: false, message: errorMessage(error) }, { status: 500 });
   } finally {
-    db.close();
+    await db.close();
   }
 }

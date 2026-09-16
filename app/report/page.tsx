@@ -29,8 +29,10 @@ export default async function ReportPage({
   const params = await searchParams;
   const month = params.month ?? defaultMonth();
   const step = readStep(params.step);
-  const counts = countPicks(month);
+  const counts = await countPicks(month);
   const label = `${month.replace("-", "년 ")}월`;
+  const jiraInitial = step === 3 ? await loadPicks(month, "jira") : [];
+  const hasInstances = step === 4 ? (await loadMonth(month)) !== null : false;
 
   return (
     <>
@@ -47,13 +49,13 @@ export default async function ReportPage({
 
       {step === 1 && <StepInstances month={month} />}
       {step === 2 && <StepSr month={month} />}
-      {step === 3 && <JiraWork month={month} initial={loadPicks(month, "jira")} />}
+      {step === 3 && <JiraWork month={month} initial={jiraInitial} />}
       {step === 4 && (
         <BuildStep
           month={month}
           srCount={counts.sr}
           workCount={counts.jira}
-          hasInstances={loadMonth(month) !== null}
+          hasInstances={hasInstances}
         />
       )}
 
@@ -62,22 +64,23 @@ export default async function ReportPage({
   );
 }
 
-function StepInstances({ month }: { month: string }) {
-  const saved = loadMonth(month);
-  const previous = resolvePrevious(month);
+async function StepInstances({ month }: { month: string }) {
+  const saved = await loadMonth(month);
+  const previous = await resolvePrevious(month);
+  const savedMonths = await listMonths();
   return (
     <InstanceForm
       month={month}
       savedInput={saved?.input ?? null}
       previous={previous.values}
       previousMonth={previous.fromMonth}
-      savedMonths={listMonths()}
+      savedMonths={savedMonths}
     />
   );
 }
 
-function StepSr({ month }: { month: string }) {
-  return (
-    <SrPicker month={month} cases={listCasesInMonth(month)} initial={loadPicks(month, "sr")} />
-  );
+async function StepSr({ month }: { month: string }) {
+  const cases = await listCasesInMonth(month);
+  const initial = await loadPicks(month, "sr");
+  return <SrPicker month={month} cases={cases} initial={initial} />;
 }

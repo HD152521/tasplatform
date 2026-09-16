@@ -13,73 +13,71 @@ import {
   verifyTeamToken,
 } from "../lib/teamToken.ts";
 
-function tempDb() {
+async function tempDb() {
   const dir = mkdtempSync(join(tmpdir(), "srhub-token-"));
-  const db = openDb(join(dir, "test.db"));
-  return { db, cleanup: () => { db.close(); rmSync(dir, { recursive: true, force: true }); } };
+  const db = await openDb(join(dir, "test.db"));
+  return { db, cleanup: async () => { await db.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-test("발급한 토큰으로 검증하면 같은 팀 id 를 돌려준다 (왕복)", () => {
-  const { db, cleanup } = tempDb();
+test("발급한 토큰으로 검증하면 같은 팀 id 를 돌려준다 (왕복)", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    const issued = issueTeamToken(db, DEFAULT_TEAM_ID, "테스트 라벨");
-    const verified = verifyTeamToken(db, issued.token);
+    const issued = await issueTeamToken(db, DEFAULT_TEAM_ID, "테스트 라벨");
+    const verified = await verifyTeamToken(db, issued.token);
     assert.deepEqual(verified, { teamId: DEFAULT_TEAM_ID });
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test("잘못된(존재하지 않는) 토큰은 거부한다", () => {
-  const { db, cleanup } = tempDb();
+test("잘못된(존재하지 않는) 토큰은 거부한다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    issueTeamToken(db, DEFAULT_TEAM_ID);
-    const verified = verifyTeamToken(db, "not-a-real-token");
+    await issueTeamToken(db, DEFAULT_TEAM_ID);
+    const verified = await verifyTeamToken(db, "not-a-real-token");
     assert.equal(verified, null);
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test("빈 문자열 토큰은 거부한다", () => {
-  const { db, cleanup } = tempDb();
+test("빈 문자열 토큰은 거부한다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    assert.equal(verifyTeamToken(db, ""), null);
-  } finally { cleanup(); }
+    assert.equal(await verifyTeamToken(db, ""), null);
+  } finally { await cleanup(); }
 });
 
-test("해지된 토큰은 이후 검증에서 거부한다", () => {
-  const { db, cleanup } = tempDb();
+test("해지된 토큰은 이후 검증에서 거부한다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    const issued = issueTeamToken(db, DEFAULT_TEAM_ID);
-    assert.ok(verifyTeamToken(db, issued.token));
+    const issued = await issueTeamToken(db, DEFAULT_TEAM_ID);
+    assert.ok(await verifyTeamToken(db, issued.token));
 
-    revokeTeamToken(db, issued.token);
-    assert.equal(verifyTeamToken(db, issued.token), null);
-  } finally { cleanup(); }
+    await revokeTeamToken(db, issued.token);
+    assert.equal(await verifyTeamToken(db, issued.token), null);
+  } finally { await cleanup(); }
 });
 
-test("존재하지 않는 팀으로는 발급을 거부한다", () => {
-  const { db, cleanup } = tempDb();
+test("존재하지 않는 팀으로는 발급을 거부한다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    assert.throws(() => issueTeamToken(db, "no-such-team"));
-  } finally { cleanup(); }
+    await assert.rejects(async () => { await issueTeamToken(db, "no-such-team"); });
+  } finally { await cleanup(); }
 });
 
-test("잘못된 형식의 teamId(경로 탈출 시도)는 발급을 거부한다", () => {
-  const { db, cleanup } = tempDb();
+test("잘못된 형식의 teamId(경로 탈출 시도)는 발급을 거부한다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    assert.throws(() => issueTeamToken(db, "../x"));
-  } finally { cleanup(); }
+    await assert.rejects(async () => { await issueTeamToken(db, "../x"); });
+  } finally { await cleanup(); }
 });
 
-test("DB 에는 평문이 아니라 SHA-256 해시만 저장된다", () => {
-  const { db, cleanup } = tempDb();
+test("DB 에는 평문이 아니라 SHA-256 해시만 저장된다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    const issued = issueTeamToken(db, DEFAULT_TEAM_ID);
-    const rows = db
-      .prepare("SELECT token_hash FROM team_tokens")
-      .all() as Array<{ token_hash: string }>;
+    const issued = await issueTeamToken(db, DEFAULT_TEAM_ID);
+    const rows = await db.all("SELECT token_hash FROM team_tokens") as Array<{ token_hash: string }>;
 
     assert.equal(rows.length, 1);
     // 저장된 값은 평문 토큰과 다르고, 평문의 SHA-256 해시와 일치해야 한다
@@ -87,14 +85,14 @@ test("DB 에는 평문이 아니라 SHA-256 해시만 저장된다", () => {
     assert.equal(rows[0]?.token_hash, sha256Hex(issued.token));
     // 평문이 DB 어디에도 부분 문자열로도 섞여 있지 않아야 한다
     assert.ok(!rows[0]?.token_hash.includes(issued.token));
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test("listTeamTokens 는 평문·전체 해시를 노출하지 않고 메타만 돌려준다", () => {
-  const { db, cleanup } = tempDb();
+test("listTeamTokens 는 평문·전체 해시를 노출하지 않고 메타만 돌려준다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    const issued = issueTeamToken(db, DEFAULT_TEAM_ID, "설명용 라벨");
-    const list = listTeamTokens(db, DEFAULT_TEAM_ID);
+    const issued = await issueTeamToken(db, DEFAULT_TEAM_ID, "설명용 라벨");
+    const list = await listTeamTokens(db, DEFAULT_TEAM_ID);
 
     assert.equal(list.length, 1);
     const meta = list[0]!;
@@ -112,59 +110,59 @@ test("listTeamTokens 는 평문·전체 해시를 노출하지 않고 메타만 
     const serialized = JSON.stringify(meta);
     assert.ok(!serialized.includes(issued.token));
     assert.ok(!serialized.includes(fullHash));
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test("verifyTeamToken 성공 시 last_used_at 이 갱신된다", () => {
-  const { db, cleanup } = tempDb();
+test("verifyTeamToken 성공 시 last_used_at 이 갱신된다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    const issued = issueTeamToken(db, DEFAULT_TEAM_ID);
-    assert.equal(listTeamTokens(db, DEFAULT_TEAM_ID)[0]?.lastUsedAt, null);
+    const issued = await issueTeamToken(db, DEFAULT_TEAM_ID);
+    assert.equal((await listTeamTokens(db, DEFAULT_TEAM_ID))[0]?.lastUsedAt, null);
 
-    verifyTeamToken(db, issued.token);
+    await verifyTeamToken(db, issued.token);
 
-    const after = listTeamTokens(db, DEFAULT_TEAM_ID)[0];
+    const after = (await listTeamTokens(db, DEFAULT_TEAM_ID))[0];
     assert.ok(after?.lastUsedAt);
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test("서로 다른 팀의 토큰은 각자의 팀 id 로만 검증된다", () => {
-  const { db, cleanup } = tempDb();
+test("서로 다른 팀의 토큰은 각자의 팀 id 로만 검증된다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    upsertTeam(db, { team_id: "acme", team_name: "Acme", broadcom_username: "" });
+    await upsertTeam(db, { team_id: "acme", team_name: "Acme", broadcom_username: "" });
 
-    const defaultIssued = issueTeamToken(db, DEFAULT_TEAM_ID);
-    const acmeIssued = issueTeamToken(db, "acme");
+    const defaultIssued = await issueTeamToken(db, DEFAULT_TEAM_ID);
+    const acmeIssued = await issueTeamToken(db, "acme");
 
-    assert.deepEqual(verifyTeamToken(db, defaultIssued.token), { teamId: DEFAULT_TEAM_ID });
-    assert.deepEqual(verifyTeamToken(db, acmeIssued.token), { teamId: "acme" });
-  } finally { cleanup(); }
+    assert.deepEqual(await verifyTeamToken(db, defaultIssued.token), { teamId: DEFAULT_TEAM_ID });
+    assert.deepEqual(await verifyTeamToken(db, acmeIssued.token), { teamId: "acme" });
+  } finally { await cleanup(); }
 });
 
-test("listTeamTokens 를 teamId 없이 부르면 전체 팀의 토큰을 돌려준다", () => {
-  const { db, cleanup } = tempDb();
+test("listTeamTokens 를 teamId 없이 부르면 전체 팀의 토큰을 돌려준다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    upsertTeam(db, { team_id: "acme", team_name: "Acme", broadcom_username: "" });
-    issueTeamToken(db, DEFAULT_TEAM_ID);
-    issueTeamToken(db, "acme");
+    await upsertTeam(db, { team_id: "acme", team_name: "Acme", broadcom_username: "" });
+    await issueTeamToken(db, DEFAULT_TEAM_ID);
+    await issueTeamToken(db, "acme");
 
-    const all = listTeamTokens(db);
+    const all = await listTeamTokens(db);
     assert.equal(all.length, 2);
     const teamIds = all.map((t) => t.teamId).sort();
     assert.deepEqual(teamIds, ["acme", DEFAULT_TEAM_ID].sort());
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test("해지하지 않은 다른 팀의 토큰은 영향받지 않는다", () => {
-  const { db, cleanup } = tempDb();
+test("해지하지 않은 다른 팀의 토큰은 영향받지 않는다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    upsertTeam(db, { team_id: "acme", team_name: "Acme", broadcom_username: "" });
-    const defaultIssued = issueTeamToken(db, DEFAULT_TEAM_ID);
-    const acmeIssued = issueTeamToken(db, "acme");
+    await upsertTeam(db, { team_id: "acme", team_name: "Acme", broadcom_username: "" });
+    const defaultIssued = await issueTeamToken(db, DEFAULT_TEAM_ID);
+    const acmeIssued = await issueTeamToken(db, "acme");
 
-    revokeTeamToken(db, defaultIssued.token);
+    await revokeTeamToken(db, defaultIssued.token);
 
-    assert.equal(verifyTeamToken(db, defaultIssued.token), null);
-    assert.deepEqual(verifyTeamToken(db, acmeIssued.token), { teamId: "acme" });
-  } finally { cleanup(); }
+    assert.equal(await verifyTeamToken(db, defaultIssued.token), null);
+    assert.deepEqual(await verifyTeamToken(db, acmeIssued.token), { teamId: "acme" });
+  } finally { await cleanup(); }
 });

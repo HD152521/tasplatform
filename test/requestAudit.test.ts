@@ -60,16 +60,16 @@ test("경로 탈출을 노리는 team id 도 거부한다", () => {
 
 // ── recordWriteAudit ────────────────────────────────────────────────
 
-test("성공 기록: actor·team·action·result=ok 가 남는다", () => {
+test("성공 기록: actor·team·action·result=ok 가 남는다", async () => {
   const { file, cleanup } = tempDbFile();
   try {
-    recordWriteAudit(
+    await recordWriteAudit(
       { actor: "alice", teamId: "acme", action: "reply", requestId: 37074096, result: "ok" },
       file,
     );
-    const db = openDb(file);
+    const db = await openDb(file);
     try {
-      const rows = listAudit(db);
+      const rows = await listAudit(db);
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.actor, "alice");
       assert.equal(rows[0]?.team_id, "acme");
@@ -77,94 +77,94 @@ test("성공 기록: actor·team·action·result=ok 가 남는다", () => {
       assert.equal(rows[0]?.request_id, 37074096);
       assert.equal(rows[0]?.result, "ok");
     } finally {
-      db.close();
+      await db.close();
     }
   } finally {
     cleanup();
   }
 });
 
-test("실패 기록: 종료 케이스 답변처럼 실행 전 거부돼도 result=failed:<code> 로 남는다", () => {
+test("실패 기록: 종료 케이스 답변처럼 실행 전 거부돼도 result=failed:<code> 로 남는다", async () => {
   const { file, cleanup } = tempDbFile();
   try {
-    recordWriteAudit(
+    await recordWriteAudit(
       { actor: "bob", teamId: DEFAULT_TEAM_ID, action: "reply", requestId: 1, result: "failed:closed" },
       file,
     );
-    const db = openDb(file);
+    const db = await openDb(file);
     try {
-      const rows = listAudit(db);
+      const rows = await listAudit(db);
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.result, "failed:closed");
     } finally {
-      db.close();
+      await db.close();
     }
   } finally {
     cleanup();
   }
 });
 
-test("실패 기록: 세션 없음(session) 도 result=failed:session 으로 남는다", () => {
+test("실패 기록: 세션 없음(session) 도 result=failed:session 으로 남는다", async () => {
   const { file, cleanup } = tempDbFile();
   try {
-    recordWriteAudit(
+    await recordWriteAudit(
       { actor: "", teamId: DEFAULT_TEAM_ID, action: "create_sr", requestId: null, result: "failed:session" },
       file,
     );
-    const db = openDb(file);
+    const db = await openDb(file);
     try {
-      const rows = listAudit(db);
+      const rows = await listAudit(db);
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.request_id, null);
       assert.equal(rows[0]?.result, "failed:session");
     } finally {
-      db.close();
+      await db.close();
     }
   } finally {
     cleanup();
   }
 });
 
-test("actor/team 미제공 흐름(resolveActorTeam 기본값)이 그대로 감사 로그에 남는다", () => {
+test("actor/team 미제공 흐름(resolveActorTeam 기본값)이 그대로 감사 로그에 남는다", async () => {
   const { file, cleanup } = tempDbFile();
   try {
     const actorTeam = resolveActorTeam({}); // 기존 화면 호출을 흉내
     assert.equal(actorTeam.ok, true);
     if (!actorTeam.ok) return;
-    recordWriteAudit(
+    await recordWriteAudit(
       { actor: actorTeam.actor, teamId: actorTeam.teamId, action: "reply", requestId: 5, result: "ok" },
       file,
     );
-    const db = openDb(file);
+    const db = await openDb(file);
     try {
-      const rows = listAudit(db);
+      const rows = await listAudit(db);
       assert.equal(rows[0]?.actor, "");
       assert.equal(rows[0]?.team_id, DEFAULT_TEAM_ID);
     } finally {
-      db.close();
+      await db.close();
     }
   } finally {
     cleanup();
   }
 });
 
-test("여러 번 기록하면 감사 로그가 누적된다", () => {
+test("여러 번 기록하면 감사 로그가 누적된다", async () => {
   const { file, cleanup } = tempDbFile();
   try {
-    recordWriteAudit({ actor: "a", teamId: DEFAULT_TEAM_ID, action: "reply", requestId: 1, result: "ok" }, file);
-    recordWriteAudit({ actor: "a", teamId: DEFAULT_TEAM_ID, action: "reply", requestId: 2, result: "failed:version" }, file);
-    const db = openDb(file);
+    await recordWriteAudit({ actor: "a", teamId: DEFAULT_TEAM_ID, action: "reply", requestId: 1, result: "ok" }, file);
+    await recordWriteAudit({ actor: "a", teamId: DEFAULT_TEAM_ID, action: "reply", requestId: 2, result: "failed:version" }, file);
+    const db = await openDb(file);
     try {
-      assert.equal(listAudit(db).length, 2);
+      assert.equal((await listAudit(db)).length, 2);
     } finally {
-      db.close();
+      await db.close();
     }
   } finally {
     cleanup();
   }
 });
 
-test("DB 를 열 수 없어도 예외를 던지지 않는다 (감사 로그 실패가 본 작업을 막지 않는다)", () => {
+test("DB 를 열 수 없어도 예외를 던지지 않는다 (감사 로그 실패가 본 작업을 막지 않는다)", async () => {
   const dir = mkdtempSync(join(tmpdir(), "srhub-audit-badpath-"));
   try {
     // 디렉터리여야 할 자리에 파일을 만들어서, DB 파일 경로의 부모를
@@ -173,8 +173,8 @@ test("DB 를 열 수 없어도 예외를 던지지 않는다 (감사 로그 실�
     writeFileSync(blocker, "x");
     const badDbFile = join(blocker, "nested", "test.db");
 
-    assert.doesNotThrow(() => {
-      recordWriteAudit(
+    await assert.doesNotReject(async () => {
+      await recordWriteAudit(
         { actor: "x", teamId: DEFAULT_TEAM_ID, action: "reply", requestId: 1, result: "ok" },
         badDbFile,
       );
@@ -211,14 +211,14 @@ test("기본 팀은 기존 SESSION_FILE 경로로 세션 유무를 확인한다 
   assert.equal(hasTeamSession(DEFAULT_TEAM_ID), expected);
 });
 
-test("세션 없음(failed:session) 이 reply/create 양쪽에서 같은 모양으로 기록된다 (대칭)", () => {
+test("세션 없음(failed:session) 이 reply/create 양쪽에서 같은 모양으로 기록된다 (대칭)", async () => {
   const { file, cleanup } = tempDbFile();
   try {
-    recordWriteAudit({ actor: "d", teamId: "acme", action: "reply", requestId: 9, result: "failed:session" }, file);
-    recordWriteAudit({ actor: "d", teamId: "acme", action: "create_sr", requestId: null, result: "failed:session" }, file);
-    const db = openDb(file);
+    await recordWriteAudit({ actor: "d", teamId: "acme", action: "reply", requestId: 9, result: "failed:session" }, file);
+    await recordWriteAudit({ actor: "d", teamId: "acme", action: "create_sr", requestId: null, result: "failed:session" }, file);
+    const db = await openDb(file);
     try {
-      const rows = listAudit(db).sort((a, b) => a.log_id - b.log_id);
+      const rows = (await listAudit(db)).sort((a, b) => a.log_id - b.log_id);
       assert.equal(rows.length, 2);
       assert.equal(rows[0]?.action, "reply");
       assert.equal(rows[0]?.result, "failed:session");
@@ -226,7 +226,7 @@ test("세션 없음(failed:session) 이 reply/create 양쪽에서 같은 모양�
       assert.equal(rows[1]?.result, "failed:session");
       assert.equal(rows[1]?.request_id, null);
     } finally {
-      db.close();
+      await db.close();
     }
   } finally {
     cleanup();
@@ -278,7 +278,7 @@ test(
       });
       assert.equal(persistAttempted, true);
 
-      recordWriteAudit(
+      await recordWriteAudit(
         {
           actor: "carol", teamId: "acme", action: "reply", requestId: 42,
           result: postReplyResult.ok ? "ok" : "failed:x",
@@ -286,14 +286,14 @@ test(
         file,
       );
 
-      const db = openDb(file);
+      const db = await openDb(file);
       try {
-        const rows = listAudit(db);
+        const rows = await listAudit(db);
         assert.equal(rows.length, 1);
         assert.equal(rows[0]?.result, "ok");
         assert.equal(rows[0]?.request_id, 42);
       } finally {
-        db.close();
+        await db.close();
       }
     } finally {
       cleanup();
@@ -322,7 +322,7 @@ test(
       });
       assert.equal(refreshAttempted, true);
 
-      recordWriteAudit(
+      await recordWriteAudit(
         {
           actor: "dave", teamId: DEFAULT_TEAM_ID, action: "create_sr",
           requestId: createResult.ok ? createResult.requestId : null,
@@ -331,14 +331,14 @@ test(
         file,
       );
 
-      const db = openDb(file);
+      const db = await openDb(file);
       try {
-        const rows = listAudit(db);
+        const rows = await listAudit(db);
         assert.equal(rows.length, 1);
         assert.equal(rows[0]?.result, "ok");
         assert.equal(rows[0]?.request_id, 555); // null 로 떨어지지 않는다
       } finally {
-        db.close();
+        await db.close();
       }
     } finally {
       cleanup();

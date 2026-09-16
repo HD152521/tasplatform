@@ -20,12 +20,12 @@ export default async function CaseDetailPage({
   const requestId = Number(id);
   if (!Number.isFinite(requestId)) notFound();
 
-  const detail = getCase(requestId);
+  const detail = await getCase(requestId);
   if (detail === null) notFound();
 
-  const threads = listThreads(requestId);
-  const attachments = listAttachments(requestId);
-  markCaseRead(requestId);
+  const threads = await listThreads(requestId);
+  const attachments = await listAttachments(requestId);
+  await markCaseRead(requestId);
 
   const closed = isClosedStatus(detail.status);
   const tone = statusColors(detail.status);

@@ -47,7 +47,7 @@ export default async function CveDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const rows = getCve(decodeURIComponent(id));
+  const rows = await getCve(decodeURIComponent(id));
   if (rows.length === 0) notFound();
 
   const c = rows[0]!;

@@ -32,13 +32,13 @@ export async function POST(request: Request) {
   const { actor, teamId } = actorTeam;
 
   // 종료된 케이스에는 보내지 않는다.
-  const detail = getCase(requestId);
+  const detail = await getCase(requestId);
   if (detail === null) {
-    recordWriteAudit({ actor, teamId, action: "reply", requestId, result: "failed:not_found" });
+    await recordWriteAudit({ actor, teamId, action: "reply", requestId, result: "failed:not_found" });
     return NextResponse.json({ ok: false, message: "케이스를 찾을 수 없습니다." }, { status: 404 });
   }
   if (isClosedStatus(detail.status)) {
-    recordWriteAudit({ actor, teamId, action: "reply", requestId, result: "failed:closed" });
+    await recordWriteAudit({ actor, teamId, action: "reply", requestId, result: "failed:closed" });
     return NextResponse.json(
       { ok: false, message: "종료된 케이스에는 답변할 수 없습니다." },
       { status: 400 },
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
   // 쓰기 시도 전에 세션 파일부터 확인한다. 없으면 브로드컴에 요청조차 보내지 않는다.
   if (!hasTeamSession(teamId)) {
-    recordWriteAudit({ actor, teamId, action: "reply", requestId, result: "failed:session" });
+    await recordWriteAudit({ actor, teamId, action: "reply", requestId, result: "failed:session" });
     return NextResponse.json(
       { ok: false, code: "session", message: "세션이 없습니다. SR 페이지에서 로그인하세요." },
       { status: 401 },
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
       await runSideEffect("reply refresh", () => refreshCaseThreads(client, requestId));
     }
 
-    recordWriteAudit({
+    await recordWriteAudit({
       actor, teamId, action: "reply", requestId,
       result: result.ok ? "ok" : `failed:${result.code}`,
     });
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
     // 여기 닿는 것은 postReply 자체(또는 fetchClient 생성)가 던진, 진짜 예상 못한
     // 오류뿐이다 — 세션 없음은 위에서 이미 걸렀다.
     const message = error instanceof Error ? error.message : String(error);
-    recordWriteAudit({ actor, teamId, action: "reply", requestId, result: "failed:session" });
+    await recordWriteAudit({ actor, teamId, action: "reply", requestId, result: "failed:session" });
     return NextResponse.json(
       { ok: false, code: "session", message },
       { status: 401 },

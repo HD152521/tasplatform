@@ -1,47 +1,42 @@
-/** node:sqlite(Node 24 내장) 위의 얇은 래퍼. 네이티브 빌드가 필요 없다. */
-import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { DB_FILE, DEFAULT_TEAM_ID } from "./config.ts";
-import { SCHEMA_SQL } from "./schema.ts";
+/**
+ * 데이터 접근 계층.
+ *
+ * SQLite(로컬/테스트)와 Postgres(TAS)를 lib/dbCore.ts 의 비동기 Db 추상화로 가린다.
+ * 모든 쿼리 함수는 async 다 — 방언에 상관없이 같은 코드가 돈다.
+ */
+import { DEFAULT_TEAM_ID } from "./config.ts";
+import { schemaSqlFor } from "./schema.ts";
 import { isoNow } from "./dates.ts";
+import { createDb, type Db } from "./dbCore.ts";
+import { resolveDbTarget } from "./dbConn.ts";
 import type { AttachmentRow, CaseRow, RunRow, RunStatus, ThreadRow } from "./types.ts";
 
-export function openDb(file: string = DB_FILE): DatabaseSync {
-  const path = resolve(file);
-  mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA foreign_keys = ON");
-  db.exec(SCHEMA_SQL);
-  migrate(db);
-  seedDefaults(db);
+export type { Db } from "./dbCore.ts";
+
+/**
+ * DB 를 연다. file 을 주면 그 SQLite 파일(테스트·명시 경로)을, 안 주면 환경(DATABASE_URL/
+ * VCAP_SERVICES → Postgres, 없으면 기본 SQLite)을 따른다. 스키마·마이그레이션·기본 팀 시드까지 마친다.
+ */
+export async function openDb(file?: string): Promise<Db> {
+  const target = file ? { dialect: "sqlite" as const, file } : resolveDbTarget();
+  const db = createDb(target);
+  await db.exec(schemaSqlFor(db.dialect));
+  await migrate(db);
+  await seedDefaults(db);
   return db;
 }
 
 /** 기본 팀이 없으면 만든다. 기존 케이스가 이 팀에 귀속되므로 반드시 존재해야 한다. */
-function seedDefaults(db: DatabaseSync): void {
-  db.prepare(
-    "INSERT OR IGNORE INTO teams (team_id, team_name, broadcom_username, created_at) VALUES (?,?,?,?)",
-  ).run(DEFAULT_TEAM_ID, "기본 팀", process.env.SR_USERNAME ?? "", isoNow());
+async function seedDefaults(db: Db): Promise<void> {
+  await db.run(
+    "INSERT INTO teams (team_id, team_name, broadcom_username, created_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING",
+    [DEFAULT_TEAM_ID, "기본 팀", process.env.SR_USERNAME ?? "", isoNow()],
+  );
 }
 
-/**
- * 여러 행 쓰기를 한 트랜잭션으로 묶는다.
- *
- * WAL 이라도 문장마다 개별 커밋되면 그때마다 디스크 동기화가 일어난다.
- * 실측: 292행 쓰기가 478ms -> 18ms (26배). 예외가 나면 되돌린다.
- */
-export function inTransaction<T>(db: DatabaseSync, run: () => T): T {
-  db.exec("BEGIN");
-  try {
-    const result = run();
-    db.exec("COMMIT");
-    return result;
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+/** 여러 행 쓰기를 한 트랜잭션으로 묶는다. 콜백에서 던지면 되돌린다. */
+export function inTransaction<T>(db: Db, run: (tx: Db) => Promise<T>): Promise<T> {
+  return db.tx(run);
 }
 
 /**
@@ -79,36 +74,56 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: string 
   { table: "instance_counts", column: "prev_central_dev", ddl: "REAL NOT NULL DEFAULT 0" },
 ];
 
-function migrate(db: DatabaseSync): void {
+/** 테이블의 현재 컬럼 이름 집합(방언별 조회). */
+async function columnNames(db: Db, table: string): Promise<Set<string>> {
+  if (db.dialect === "postgres") {
+    const rows = await db.all<{ column_name: string }>(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+      [table],
+    );
+    return new Set(rows.map((r) => r.column_name));
+  }
+  const rows = await db.all<{ name: string }>(`PRAGMA table_info(${table})`);
+  return new Set(rows.map((r) => r.name));
+}
+
+async function migrate(db: Db): Promise<void> {
+  // 테이블별로 한 번만 컬럼을 조회해 반복 질의를 줄인다.
+  const seen = new Map<string, Set<string>>();
   for (const { table, column, ddl } of ADDED_COLUMNS) {
-    const existing = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-    if (existing.some((c) => c.name === column)) continue;
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    let cols = seen.get(table);
+    if (!cols) {
+      cols = await columnNames(db, table);
+      seen.set(table, cols);
+    }
+    if (cols.has(column)) continue;
+    await db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    cols.add(column);
   }
 }
 
-export function getExistingCaseIndex(db: DatabaseSync): Map<number, string> {
-  const rows = db
-    .prepare("SELECT request_id, last_updated FROM cases")
-    .all() as Array<{ request_id: number; last_updated: string }>;
+export async function getExistingCaseIndex(db: Db): Promise<Map<number, string>> {
+  const rows = await db.all<{ request_id: number; last_updated: string }>(
+    "SELECT request_id, last_updated FROM cases",
+  );
   return new Map(rows.map((r) => [r.request_id, r.last_updated]));
 }
 
-export function getKnownThreadIds(db: DatabaseSync, requestId: number): Set<number> {
-  const rows = db
-    .prepare("SELECT thread_id FROM threads WHERE request_id = ?")
-    .all(requestId) as Array<{ thread_id: number }>;
+export async function getKnownThreadIds(db: Db, requestId: number): Promise<Set<number>> {
+  const rows = await db.all<{ thread_id: number }>(
+    "SELECT thread_id FROM threads WHERE request_id = ?",
+    [requestId],
+  );
   return new Set(rows.map((r) => r.thread_id));
 }
 
 /**
  * team_id 는 이월 항목 처리: 새/갱신 케이스가 어느 팀 소유인지 기록한다.
- * row.team_id 를 생략하면(기존 수집기·기본팀 호출부) 기본 팀으로 채운다 —
- * 컬럼 기본값과 동일해서 기존 동작이 바뀌지 않는다.
+ * row.team_id 를 생략하면(기존 수집기·기본팀 호출부) 기본 팀으로 채운다.
  */
-export function upsertCase(db: DatabaseSync, row: Omit<CaseRow, "first_seen_at">): void {
+export async function upsertCase(db: Db, row: Omit<CaseRow, "first_seen_at">): Promise<void> {
   const teamId = row.team_id ?? DEFAULT_TEAM_ID;
-  db.prepare(
+  await db.run(
     `INSERT INTO cases (
        request_id, request_id_formatted, subject, status, priority, category,
        party_name, party_site_number, created_on, created_on_ms,
@@ -130,28 +145,26 @@ export function upsertCase(db: DatabaseSync, row: Omit<CaseRow, "first_seen_at">
        last_updated_ms      = excluded.last_updated_ms,
        last_fetched_at      = excluded.last_fetched_at,
        raw_json             = excluded.raw_json,
-       -- 본문 조회에 실패한 회차가 기존 본문을 지우지 않도록 빈 값이면 유지한다
        description_html     = CASE WHEN excluded.description_html = '' THEN cases.description_html ELSE excluded.description_html END,
        description_text     = CASE WHEN excluded.description_text = '' THEN cases.description_text ELSE excluded.description_text END,
        case_version         = COALESCE(excluded.case_version, cases.case_version),
        product_id           = COALESCE(excluded.product_id, cases.product_id),
        product_name         = CASE WHEN excluded.product_name = '' THEN cases.product_name ELSE excluded.product_name END,
        component_id         = COALESCE(excluded.component_id, cases.component_id),
-       component_name       = CASE WHEN excluded.component_name = '' THEN cases.component_name ELSE excluded.component_name END
-       -- team_id 는 갱신에서 건드리지 않는다: 팀 = 계정은 케이스 생성 시 한 번 정해지면
-       -- 바뀌지 않는다. 여기서 덮어쓰면 다른 경로의 재수집이 소유 팀을 되돌릴 위험이 있다.`,
-  ).run(
-    row.request_id, row.request_id_formatted, row.subject, row.status,
-    row.priority, row.category, row.party_name, row.party_site_number,
-    row.created_on, row.created_on_ms, row.last_updated, row.last_updated_ms,
-    row.last_fetched_at, row.last_fetched_at, row.raw_json,
-    row.description_html, row.description_text, row.case_version,
-    row.product_id, row.product_name, row.component_id, row.component_name, teamId,
+       component_name       = CASE WHEN excluded.component_name = '' THEN cases.component_name ELSE excluded.component_name END`,
+    [
+      row.request_id, row.request_id_formatted, row.subject, row.status,
+      row.priority, row.category, row.party_name, row.party_site_number,
+      row.created_on, row.created_on_ms, row.last_updated, row.last_updated_ms,
+      row.last_fetched_at, row.last_fetched_at, row.raw_json,
+      row.description_html, row.description_text, row.case_version,
+      row.product_id, row.product_name, row.component_id, row.component_name, teamId,
+    ],
   );
 }
 
-export function upsertThread(db: DatabaseSync, row: ThreadRow): void {
-  db.prepare(
+export async function upsertThread(db: Db, row: ThreadRow): Promise<void> {
+  await db.run(
     `INSERT INTO threads (
        thread_id, request_id, author_unit, author_unit_id, is_ours,
        res_date_ms, res_date_val, body_html, body_text, fetched_at
@@ -162,15 +175,16 @@ export function upsertThread(db: DatabaseSync, row: ThreadRow): void {
        body_html    = excluded.body_html,
        body_text    = excluded.body_text,
        fetched_at   = excluded.fetched_at`,
-  ).run(
-    row.thread_id, row.request_id, row.author_unit, row.author_unit_id,
-    row.is_ours, row.res_date_ms, row.res_date_val,
-    row.body_html, row.body_text, row.fetched_at,
+    [
+      row.thread_id, row.request_id, row.author_unit, row.author_unit_id,
+      row.is_ours, row.res_date_ms, row.res_date_val,
+      row.body_html, row.body_text, row.fetched_at,
+    ],
   );
 }
 
-export function upsertAttachment(db: DatabaseSync, row: AttachmentRow): void {
-  db.prepare(
+export async function upsertAttachment(db: Db, row: AttachmentRow): Promise<void> {
+  await db.run(
     `INSERT INTO attachments (
        document_id, request_id, thread_id, doc_name, doc_path, content_type,
        file_size, uploaded_by, uploaded_at, uploaded_ms, fetched_at
@@ -180,15 +194,16 @@ export function upsertAttachment(db: DatabaseSync, row: AttachmentRow): void {
        doc_path   = excluded.doc_path,
        file_size  = excluded.file_size,
        fetched_at = excluded.fetched_at`,
-  ).run(
-    row.document_id, row.request_id, row.thread_id, row.doc_name, row.doc_path,
-    row.content_type, row.file_size, row.uploaded_by, row.uploaded_at,
-    row.uploaded_ms, row.fetched_at,
+    [
+      row.document_id, row.request_id, row.thread_id, row.doc_name, row.doc_path,
+      row.content_type, row.file_size, row.uploaded_by, row.uploaded_at,
+      row.uploaded_ms, row.fetched_at,
+    ],
   );
 }
 
-export function upsertCve(
-  db: DatabaseSync,
+export async function upsertCve(
+  db: Db,
   row: {
     cve_id: string; product: string; keyword: string; severity: string;
     score: number | null; published: string; modified: string;
@@ -198,11 +213,12 @@ export function upsertCve(
     impact_c: string; impact_i: string; impact_a: string;
     cwe: string; references_json: string; affected_json: string;
   },
-): boolean {
-  const before = db
-    .prepare("SELECT 1 AS x FROM cves WHERE cve_id = ? AND product = ?")
-    .all(row.cve_id, row.product);
-  db.prepare(
+): Promise<boolean> {
+  const before = await db.all(
+    "SELECT 1 AS x FROM cves WHERE cve_id = ? AND product = ?",
+    [row.cve_id, row.product],
+  );
+  await db.run(
     `INSERT INTO cves (
        cve_id, product, keyword, severity, score, published, modified,
        summary, url, fetched_at, first_seen,
@@ -227,25 +243,27 @@ export function upsertCve(
        cwe = excluded.cwe,
        references_json = excluded.references_json,
        affected_json = excluded.affected_json`,
-  ).run(
-    row.cve_id, row.product, row.keyword, row.severity, row.score,
-    row.published, row.modified, row.summary, row.url, row.fetched_at, row.fetched_at,
-    row.vector, row.attack_vector, row.attack_complexity, row.privileges_required,
-    row.user_interaction, row.impact_c, row.impact_i, row.impact_a, row.cwe,
-    row.references_json, row.affected_json,
+    [
+      row.cve_id, row.product, row.keyword, row.severity, row.score,
+      row.published, row.modified, row.summary, row.url, row.fetched_at, row.fetched_at,
+      row.vector, row.attack_vector, row.attack_complexity, row.privileges_required,
+      row.user_interaction, row.impact_c, row.impact_i, row.impact_a, row.cwe,
+      row.references_json, row.affected_json,
+    ],
   );
   return before.length === 0; // 새로 들어온 것인지
 }
 
-export function startRun(db: DatabaseSync): number {
-  const info = db
-    .prepare("INSERT INTO runs (started_at, status, session_state) VALUES (?, 'failed', 'unknown')")
-    .run(isoNow());
-  return Number(info.lastInsertRowid);
+export async function startRun(db: Db): Promise<number> {
+  return db.insertReturning(
+    "INSERT INTO runs (started_at, status, session_state) VALUES (?, 'failed', 'unknown')",
+    [isoNow()],
+    "run_id",
+  );
 }
 
-export function finishRun(
-  db: DatabaseSync,
+export async function finishRun(
+  db: Db,
   runId: number,
   patch: {
     status: RunStatus;
@@ -255,23 +273,21 @@ export function finishRun(
     sessionState: string;
     error?: string | null;
   },
-): void {
-  db.prepare(
+): Promise<void> {
+  await db.run(
     `UPDATE runs SET finished_at = ?, status = ?, cases_seen = ?, cases_changed = ?,
                      new_threads = ?, session_state = ?, error = ?
      WHERE run_id = ?`,
-  ).run(
-    isoNow(), patch.status, patch.casesSeen ?? 0, patch.casesChanged ?? 0,
-    patch.newThreads ?? 0, patch.sessionState, patch.error ?? null, runId,
+    [
+      isoNow(), patch.status, patch.casesSeen ?? 0, patch.casesChanged ?? 0,
+      patch.newThreads ?? 0, patch.sessionState, patch.error ?? null, runId,
+    ],
   );
 }
 
-export function listRuns(db: DatabaseSync, limit = 30): RunRow[] {
-  // node:sqlite 결과는 프로토타입이 없다. 클라이언트로 넘어갈 수 있으므로 평범한 객체로 바꾼다.
-  return db
-    .prepare("SELECT * FROM runs ORDER BY run_id DESC LIMIT ?")
-    .all(limit)
-    .map((row) => ({ ...(row as object) })) as RunRow[];
+export async function listRuns(db: Db, limit = 30): Promise<RunRow[]> {
+  const rows = await db.all("SELECT * FROM runs ORDER BY run_id DESC LIMIT ?", [limit]);
+  return rows.map((row) => ({ ...(row as object) })) as RunRow[];
 }
 
 // ── 팀 / 감사 로그 ─────────────────────────────────────────────────
@@ -283,26 +299,25 @@ export interface TeamRow {
   created_at: string;
 }
 
-export function listTeams(db: DatabaseSync): TeamRow[] {
-  return db
-    .prepare("SELECT * FROM teams ORDER BY created_at")
-    .all()
-    .map((row) => ({ ...(row as object) })) as TeamRow[];
+export async function listTeams(db: Db): Promise<TeamRow[]> {
+  const rows = await db.all("SELECT * FROM teams ORDER BY created_at");
+  return rows.map((row) => ({ ...(row as object) })) as TeamRow[];
 }
 
-export function getTeam(db: DatabaseSync, teamId: string): TeamRow | null {
-  const row = db.prepare("SELECT * FROM teams WHERE team_id = ?").get(teamId);
+export async function getTeam(db: Db, teamId: string): Promise<TeamRow | null> {
+  const row = await db.get("SELECT * FROM teams WHERE team_id = ?", [teamId]);
   return row ? ({ ...(row as object) } as TeamRow) : null;
 }
 
-export function upsertTeam(db: DatabaseSync, team: Omit<TeamRow, "created_at">): void {
-  db.prepare(
+export async function upsertTeam(db: Db, team: Omit<TeamRow, "created_at">): Promise<void> {
+  await db.run(
     `INSERT INTO teams (team_id, team_name, broadcom_username, created_at)
      VALUES (?,?,?,?)
      ON CONFLICT(team_id) DO UPDATE SET
        team_name         = excluded.team_name,
        broadcom_username = excluded.broadcom_username`,
-  ).run(team.team_id, team.team_name, team.broadcom_username, isoNow());
+    [team.team_id, team.team_name, team.broadcom_username, isoNow()],
+  );
 }
 
 export interface AuditEntry {
@@ -315,18 +330,18 @@ export interface AuditEntry {
 }
 
 /**
- * 감사 로그 한 줄 기록.
- * 쓰기(작성/답변)가 공용 계정으로 나가도, 우리 서비스 사용자 중 누가 시켰는지 남긴다.
- * 로그 실패가 본 작업을 막지 않도록 예외를 삼킨다.
+ * 감사 로그 한 줄 기록. 로그 실패가 본 작업을 막지 않도록 예외를 삼킨다.
+ * 호출부는 await 로 기다린 뒤 db.close 해야 한다(닫힌 뒤 쓰기 방지).
  */
-export function recordAudit(db: DatabaseSync, entry: AuditEntry): void {
+export async function recordAudit(db: Db, entry: AuditEntry): Promise<void> {
   try {
-    db.prepare(
+    await db.run(
       `INSERT INTO audit_log (at, actor, team_id, action, request_id, result, detail)
        VALUES (?,?,?,?,?,?,?)`,
-    ).run(
-      isoNow(), entry.actor, entry.teamId, entry.action,
-      entry.requestId ?? null, entry.result, entry.detail ?? "",
+      [
+        isoNow(), entry.actor, entry.teamId, entry.action,
+        entry.requestId ?? null, entry.result, entry.detail ?? "",
+      ],
     );
   } catch {
     // 감사 로그 실패는 본 작업을 막지 않는다
@@ -344,9 +359,7 @@ export interface AuditRow {
   detail: string;
 }
 
-export function listAudit(db: DatabaseSync, limit = 100): AuditRow[] {
-  return db
-    .prepare("SELECT * FROM audit_log ORDER BY log_id DESC LIMIT ?")
-    .all(limit)
-    .map((row) => ({ ...(row as object) })) as AuditRow[];
+export async function listAudit(db: Db, limit = 100): Promise<AuditRow[]> {
+  const rows = await db.all("SELECT * FROM audit_log ORDER BY log_id DESC LIMIT ?", [limit]);
+  return rows.map((row) => ({ ...(row as object) })) as AuditRow[];
 }

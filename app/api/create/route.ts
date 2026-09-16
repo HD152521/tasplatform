@@ -42,7 +42,7 @@ export async function POST(request: Request) {
   // fetchClient 는 SessionExpiredError/SessionMissingError 를 던지지 않으므로
   // (그건 브라우저 로그인 경로 전용), 세션 없음은 반드시 여기서 걸러야 한다.
   if (!hasTeamSession(teamId)) {
-    recordWriteAudit({ actor, teamId, action: "create_sr", requestId: null, result: "failed:session" });
+    await recordWriteAudit({ actor, teamId, action: "create_sr", requestId: null, result: "failed:session" });
     return NextResponse.json(
       { ok: false, code: "session", message: "세션이 없습니다. SR 페이지에서 로그인하세요." },
       { status: 401 },
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
       await runSideEffect("create refresh", () => refreshOpenCases(client, teamId));
     }
 
-    recordWriteAudit({
+    await recordWriteAudit({
       actor, teamId, action: "create_sr",
       requestId: result.ok ? result.requestId : null,
       result: result.ok ? "ok" : `failed:${result.code}`,
@@ -82,7 +82,7 @@ export async function POST(request: Request) {
     // 오류뿐이다 — 세션 없음은 위에서 이미 걸렀다.
     const message = error instanceof Error ? error.message : String(error);
     console.error("[api/create]", error);
-    recordWriteAudit({ actor, teamId, action: "create_sr", requestId: null, result: "failed:error" });
+    await recordWriteAudit({ actor, teamId, action: "create_sr", requestId: null, result: "failed:error" });
     return NextResponse.json(
       { ok: false, code: "failed", message },
       { status: 500 },

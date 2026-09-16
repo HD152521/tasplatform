@@ -12,14 +12,14 @@ export const metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
   const session = getSessionStatus();
   const signedIn = session.exists && !session.expired;
 
   // DB가 아직 없어도 화면은 떠야 하므로 실패하면 0으로 둔다.
   let counts = { open: 0, closed: 0, unread: 0, cves: 0, criticalCves: 0 };
   try {
-    counts = countsForNav();
+    counts = await countsForNav();
   } catch {
     counts = { open: 0, closed: 0, unread: 0, cves: 0, criticalCves: 0 };
   }

@@ -4,10 +4,10 @@ import { DraftForm } from "./DraftForm.tsx";
 
 export const dynamic = "force-dynamic";
 
-export default function NewCasePage() {
+export default async function NewCasePage() {
   let combos: ProductComponent[] = [];
   try {
-    combos = listProductComponents();
+    combos = await listProductComponents();
   } catch {
     combos = [];
   }

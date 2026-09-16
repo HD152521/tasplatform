@@ -14,7 +14,7 @@
  */
 import "server-only";
 import { openDb } from "./db.ts";
-import { chat } from "./ai.ts";
+import { chat, hasOpenAi } from "./ai.ts";
 import { isoNow } from "./dates.ts";
 import { getCase, listThreads } from "./queries.ts";
 import { buildSourceText, parseSrReport, type SrReport } from "./srReportFormat.ts";
@@ -126,32 +126,34 @@ export function hasSrReporter(): boolean {
   return (process.env.OPENAI_API_KEY ?? "").trim() !== "";
 }
 
-function readCached(requestId: number): SrReport | null {
-  const db = openDb();
+async function readCached(requestId: number): Promise<SrReport | null> {
+  const db = await openDb();
   try {
-    const rows = db
-      .prepare("SELECT content FROM case_summaries WHERE request_id = ? AND kind = 'ppt'")
-      .all(requestId) as unknown as Array<{ content: string }>;
+    const rows = (await db.all(
+      "SELECT content FROM case_summaries WHERE request_id = ? AND kind = 'ppt'",
+      [requestId],
+    )) as Array<{ content: string }>;
     const row = rows[0];
     return row === undefined ? null : parseSrReport(row.content);
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
-function writeCached(requestId: number, raw: string): void {
-  const db = openDb();
+async function writeCached(requestId: number, raw: string): Promise<void> {
+  const db = await openDb();
   try {
-    db.prepare(
+    await db.run(
       `INSERT INTO case_summaries (request_id, kind, content, source, generated_at)
        VALUES (?, 'ppt', ?, 'ai', ?)
        ON CONFLICT(request_id, kind) DO UPDATE SET
          content = excluded.content,
          source = excluded.source,
          generated_at = excluded.generated_at`,
-    ).run(requestId, raw, isoNow());
+      [requestId, raw, isoNow()],
+    );
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
@@ -164,14 +166,14 @@ export async function getSrReport(
   force = false,
 ): Promise<SrReport & { cached: boolean }> {
   if (!force) {
-    const cached = readCached(requestId);
+    const cached = await readCached(requestId);
     if (cached !== null) return { ...cached, cached: true };
   }
-  if (!hasSrReporter()) {
-    throw new SrReportError(0, ".env 에 OPENAI_API_KEY 가 필요합니다.");
+  if (!(await hasOpenAi())) {
+    throw new SrReportError(0, "LLM 연결이 설정되지 않았습니다 (설정 > LLM 또는 OPENAI_API_KEY).");
   }
 
-  const detail = getCase(requestId);
+  const detail = await getCase(requestId);
   if (detail === null) throw new SrReportError(404, "케이스를 찾을 수 없습니다.");
 
   const source = buildSourceText({
@@ -183,7 +185,7 @@ export async function getSrReport(
     createdOn: detail.created_on,
     closedOn: detail.last_updated,
     description: detail.description_text,
-    threads: listThreads(requestId).map((t) => ({
+    threads: (await listThreads(requestId)).map((t) => ({
       isOurs: t.is_ours === 1,
       at: t.res_date_val,
       body: t.body_text,
@@ -193,6 +195,6 @@ export async function getSrReport(
   const raw = await chat(SYSTEM_PROMPT, `${source}
 
 ${USER_INSTRUCTION}`, { maxTokens: 2000 });
-  writeCached(requestId, raw);
+  await writeCached(requestId, raw);
   return { ...parseSrReport(raw), cached: false };
 }

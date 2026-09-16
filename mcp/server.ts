@@ -44,7 +44,7 @@ const PORT = Number(process.env.PORT ?? process.env.MCP_PORT ?? 3900);
 const HOST = process.env.HOST ?? "127.0.0.1";
 
 // 토큰 검증용 DB 커넥션 하나를 계속 물고 있는다(요청마다 열고 닫지 않는다).
-const authDb = openDb();
+const authDb = await openDb();
 const limiter = new AuthRateLimiter();
 
 function firstHeaderValue(value: string | string[] | undefined): string | undefined {
@@ -52,7 +52,9 @@ function firstHeaderValue(value: string | string[] | undefined): string | undefi
 }
 
 /** extra.requestInfo?.headers 에서 도구 호출 시점의 팀을 다시 확정한다. */
-function authenticateFromToolHeaders(headers: Record<string, string | string[] | undefined> | undefined): AuthResult {
+function authenticateFromToolHeaders(
+  headers: Record<string, string | string[] | undefined> | undefined,
+): Promise<AuthResult> {
   const raw = headers ? firstHeaderValue(headers["authorization"] ?? headers["Authorization"]) : undefined;
   return authenticateToken(authDb, raw);
 }
@@ -90,9 +92,9 @@ function registerTools(server: McpServer): void {
       },
     },
     async (args, extra) => {
-      const auth = authenticateFromToolHeaders(extra.requestInfo?.headers);
+      const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
       if (!auth.ok) return toolAuthError(auth);
-      return toolJson(listCasesHandler(auth.teamId, args));
+      return toolJson(await listCasesHandler(auth.teamId, args));
     },
   );
 
@@ -103,9 +105,9 @@ function registerTools(server: McpServer): void {
       inputSchema: { requestId: z.number() },
     },
     async (args, extra) => {
-      const auth = authenticateFromToolHeaders(extra.requestInfo?.headers);
+      const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
       if (!auth.ok) return toolAuthError(auth);
-      return toolJson(getCaseHandler(auth.teamId, args));
+      return toolJson(await getCaseHandler(auth.teamId, args));
     },
   );
 
@@ -120,7 +122,7 @@ function registerTools(server: McpServer): void {
       },
     },
     async (args, extra) => {
-      const auth = authenticateFromToolHeaders(extra.requestInfo?.headers);
+      const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
       if (!auth.ok) return toolAuthError(auth);
       return toolJson(await getSummaryHandler(summaryDeps, auth.teamId, args));
     },
@@ -140,7 +142,7 @@ function registerTools(server: McpServer): void {
       },
     },
     async (args, extra) => {
-      const auth = authenticateFromToolHeaders(extra.requestInfo?.headers);
+      const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
       if (!auth.ok) return toolAuthError(auth);
       return toolJson(await createSrHandler(writeDeps, auth.teamId, args));
     },
@@ -157,7 +159,7 @@ function registerTools(server: McpServer): void {
       },
     },
     async (args, extra) => {
-      const auth = authenticateFromToolHeaders(extra.requestInfo?.headers);
+      const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
       if (!auth.ok) return toolAuthError(auth);
       return toolJson(await replyHandler(writeDeps, auth.teamId, args));
     },
@@ -190,7 +192,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   // 접속(요청) 시점의 1차 인증 — 실패는 여기서 401 로 끝내고 rate limit 카운터를 올린다.
   // 도구 호출 시점에는 각 도구 콜백이 헤더를 다시 검증해 teamId 를 확정한다.
-  const auth = authenticateToken(authDb, req.headers.authorization);
+  const auth = await authenticateToken(authDb, req.headers.authorization);
   if (!auth.ok) {
     limiter.recordFailure(key);
     sendJson(res, auth.status, { error: auth.message });

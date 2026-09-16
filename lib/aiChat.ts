@@ -26,12 +26,12 @@ export type { ChatOptions } from "./llmClient.ts";
  * 설정된 LLM 이 있으면 그쪽, 없으면 OpenAI 폴백.
  */
 export async function chat(system: string, user: string, options: ChatOptions = {}): Promise<string> {
-  const db = openDb();
+  const db = await openDb();
   let config;
   try {
-    config = getLlmConfig(db);
+    config = await getLlmConfig(db);
   } finally {
-    db.close();
+    await db.close();
   }
 
   if (config) return chatWithConfig(config, system, user, options);
@@ -43,12 +43,12 @@ export async function chat(system: string, user: string, options: ChatOptions = 
  * AI 를 쓸 수 있는지. 설정된 LLM 이 있거나 OPENAI_API_KEY 가 있으면 true.
  * (이름은 기존 호출부 호환을 위해 hasOpenAi 를 유지한다.)
  */
-export function hasOpenAi(): boolean {
-  const db = openDb();
+export async function hasOpenAi(): Promise<boolean> {
+  const db = await openDb();
   try {
-    if (getLlmConfig(db) !== null) return true;
+    if ((await getLlmConfig(db)) !== null) return true;
   } finally {
-    db.close();
+    await db.close();
   }
   return hasOpenAiKey();
 }

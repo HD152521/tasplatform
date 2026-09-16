@@ -24,7 +24,7 @@ import { OtpRequiredError, performCredentialLogin, saveSession } from "./autoLog
 import { isoNow } from "../lib/dates.ts";
 import {
   finishRun, getExistingCaseIndex, getKnownThreadIds, inTransaction,
-  openDb, startRun, upsertAttachment, upsertCase, upsertThread,
+  openDb, startRun, upsertAttachment, upsertCase, upsertThread, type Db,
 } from "../lib/db.ts";
 import {
   dedupeReplies, htmlToText, selectChangedCases, selectNewReplies,
@@ -191,8 +191,8 @@ async function main(): Promise<void> {
     return;
   }
 
-  const db = openDb();
-  const runId = startRun(db);
+  const db = await openDb();
+  const runId = await startRun(db);
   let session: CollectSession | null = null;
 
   try {
@@ -203,7 +203,7 @@ async function main(): Promise<void> {
     await session.persist();
 
     const cases = await gatherCases(session.client);
-    const known = getExistingCaseIndex(db);
+    const known = await getExistingCaseIndex(db);
     const changes = selectChangedCases(cases, known);
     const now = isoNow();
 
@@ -213,7 +213,7 @@ async function main(): Promise<void> {
 
     for (const change of changes) {
       const threads = await fetchThreads(session.client, change.item.requestId);
-      const knownIds = getKnownThreadIds(db, change.item.requestId);
+      const knownIds = await getKnownThreadIds(db, change.item.requestId);
       // DB에는 원본 전부를 저장하고, 알림 판정에서만 내부/외부 중복을 합친다.
       const fresh = dedupeReplies(selectNewReplies(threads, knownIds));
       newThreadCount += fresh.length;
@@ -234,10 +234,10 @@ async function main(): Promise<void> {
       details.set(change.item.requestId, await fetchCaseDescription(session.client, change.item.requestId));
 
       if (!DRY_RUN) {
-        inTransaction(db, () => {
+        await inTransaction(db, async (tx) => {
           for (const thread of threads) {
-            upsertThread(db, toThreadRow(thread, now));
-            for (const doc of toAttachmentRows(thread, now)) upsertAttachment(db, doc);
+            await upsertThread(tx, toThreadRow(thread, now));
+            for (const doc of toAttachmentRows(thread, now)) await upsertAttachment(tx, doc);
           }
         });
       }
@@ -246,16 +246,16 @@ async function main(): Promise<void> {
 
     if (!DRY_RUN) {
       // 변경이 0건이어도 292행을 매번 다시 쓴다. 트랜잭션으로 묶어야 한다.
-      inTransaction(db, () => {
+      await inTransaction(db, async (tx) => {
         for (const item of cases) {
-          upsertCase(db, toCaseRow(item, now, details.get(item.requestId)));
+          await upsertCase(tx, toCaseRow(item, now, details.get(item.requestId)));
         }
       });
     }
     // 수집 도중에도 쿠키가 갱신되므로 마지막 상태를 한 번 더 저장한다.
     await session.persist();
 
-    finishRun(db, runId, {
+    await finishRun(db, runId, {
       status: "success",
       casesSeen: cases.length,
       casesChanged: changes.length,
@@ -272,7 +272,7 @@ async function main(): Promise<void> {
       error instanceof OtpRequiredError;
     const message = error instanceof Error ? error.message : String(error);
 
-    finishRun(db, runId, {
+    await finishRun(db, runId, {
       status: expired ? "session_expired" : "failed",
       sessionState: expired ? "expired" : "unknown",
       error: message,
@@ -330,7 +330,7 @@ async function announceReplies(replies: readonly NewReply[]): Promise<void> {
  * 이미 알린 것이므로 건너뛴다 — 상태가 바뀌는 순간에만 알린다.
  */
 async function announceFailure(
-  db: ReturnType<typeof openDb>,
+  db: Db,
   runId: number,
   kind: "session" | "failed",
   message: string,
@@ -339,11 +339,12 @@ async function announceFailure(
   const status = kind === "session" ? "session_expired" : "failed";
   // 끝까지 못 간 회차(startRun 이 넣어 둔 'failed' 자리표)는 알림을 보낸 적이 없으므로
   // 직전 회차로 세지 않는다. 이걸 빼면 중단된 회차 뒤의 진짜 첫 실패가 묻힌다.
-  const rows = db
-    .prepare(`SELECT status FROM runs
-               WHERE run_id < ? AND finished_at IS NOT NULL
-               ORDER BY run_id DESC LIMIT 1`)
-    .all(runId) as Array<{ status: string }>;
+  const rows = (await db.all(
+    `SELECT status FROM runs
+      WHERE run_id < ? AND finished_at IS NOT NULL
+      ORDER BY run_id DESC LIMIT 1`,
+    [runId],
+  )) as Array<{ status: string }>;
   if (rows[0]?.status === status) return;
 
   const result = await send(formatFailure(kind, message));

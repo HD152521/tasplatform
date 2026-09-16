@@ -48,16 +48,16 @@ export interface ListCasesResult {
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
 
-export function listCasesHandler(
+export async function listCasesHandler(
   teamId: string,
   args: ListCasesArgs,
   dbFile?: string,
-): ListCasesResult {
+): Promise<ListCasesResult> {
   const scope = args.scope ?? "all";
   const limit = clamp(args.limit ?? DEFAULT_LIST_LIMIT, 1, MAX_LIST_LIMIT);
   const offset = clamp(args.offset ?? 0, 0, Number.MAX_SAFE_INTEGER);
 
-  const all = listCases({ teamId, dbFile });
+  const all = await listCases({ teamId, dbFile });
   const filtered =
     scope === "all" ? all : all.filter((c) => isClosedStatus(c.status) === (scope === "closed"));
 
@@ -78,14 +78,18 @@ export type GetCaseResult =
   | { ok: true; case: CaseListRow; threads: ThreadViewRow[]; attachments: AttachmentViewRow[] }
   | { ok: false; message: string };
 
-export function getCaseHandler(teamId: string, args: GetCaseArgs, dbFile?: string): GetCaseResult {
+export async function getCaseHandler(
+  teamId: string,
+  args: GetCaseArgs,
+  dbFile?: string,
+): Promise<GetCaseResult> {
   const requestId = Number(args.requestId);
   if (!Number.isFinite(requestId)) {
     return { ok: false, message: "requestId 가 올바르지 않습니다." };
   }
 
   // teamId 로 좁혀서 조회한다 — 다른 팀 케이스는 없는 것과 동일하게 취급된다.
-  const detail = queryGetCase(requestId, { teamId, dbFile });
+  const detail = await queryGetCase(requestId, { teamId, dbFile });
   if (detail === null) {
     return { ok: false, message: "케이스를 찾을 수 없습니다." };
   }
@@ -93,8 +97,8 @@ export function getCaseHandler(teamId: string, args: GetCaseArgs, dbFile?: strin
   return {
     ok: true,
     case: detail,
-    threads: listThreads(requestId, dbFile),
-    attachments: listAttachments(requestId, dbFile),
+    threads: await listThreads(requestId, dbFile),
+    attachments: await listAttachments(requestId, dbFile),
   };
 }
 
@@ -131,7 +135,7 @@ export async function getSummaryHandler(
   }
 
   // 다른 팀 케이스의 정리본을 못 얻어가도록, 소유 확인을 먼저 한다.
-  const owned = queryGetCase(requestId, { teamId, dbFile: deps.dbFile });
+  const owned = await queryGetCase(requestId, { teamId, dbFile: deps.dbFile });
   if (owned === null) {
     return { ok: false, message: "케이스를 찾을 수 없습니다." };
   }

@@ -7,22 +7,22 @@ import { SettingsForm } from "./SettingsForm.tsx";
 // DB 를 매 요청 읽어야 하므로 캐싱하지 않는다.
 export const dynamic = "force-dynamic";
 
-function readInitial(): { teams: TeamRow[]; integrations: TeamIntegrationMeta[] } {
-  const db = openDb();
+async function readInitial(): Promise<{ teams: TeamRow[]; integrations: TeamIntegrationMeta[] }> {
+  const db = await openDb();
   try {
-    return { teams: listTeams(db), integrations: listIntegrations(db, DEFAULT_TEAM_ID) };
+    return { teams: await listTeams(db), integrations: await listIntegrations(db, DEFAULT_TEAM_ID) };
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
   let teams: TeamRow[] = [];
   let integrations: TeamIntegrationMeta[] = [];
   let loadError: string | null = null;
 
   try {
-    ({ teams, integrations } = readInitial());
+    ({ teams, integrations } = await readInitial());
   } catch (error) {
     loadError = error instanceof Error ? error.message : String(error);
   }

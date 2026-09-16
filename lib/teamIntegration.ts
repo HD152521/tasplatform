@@ -11,10 +11,9 @@
  * lib/atlassian.ts 의 기존 env 기반 Jira 설정(ATLASSIAN_BASE 등)은 이 모듈과 무관하게
  * 그대로 동작한다 — 여기서는 건드리지 않는다.
  */
-import type { DatabaseSync } from "node:sqlite";
 import { assertValidTeamId } from "./config.ts";
 import { isoNow } from "./dates.ts";
-import { getTeam } from "./db.ts";
+import { getTeam, type Db } from "./db.ts";
 import { decryptSecret, encryptSecret } from "./secretBox.ts";
 
 const KIND_PATTERN = /^[a-z0-9_]+$/;
@@ -64,9 +63,9 @@ export interface UpsertIntegrationInput {
  * - secret 이 채워져 있는데 SR_SECRET_KEY 가 없으면 encryptSecret 이 던지고, 그 예외가 그대로
  *   올라간다 — INSERT 문 실행 전이므로 행이 부분적으로도 남지 않는다(평문 저장 폴백 금지).
  */
-export function upsertIntegration(db: DatabaseSync, input: UpsertIntegrationInput): void {
+export async function upsertIntegration(db: Db, input: UpsertIntegrationInput): Promise<void> {
   assertValidTeamId(input.teamId);
-  const team = getTeam(db, input.teamId);
+  const team = await getTeam(db, input.teamId);
   if (!team) {
     throw new Error(`연동을 등록할 팀이 존재하지 않습니다: ${input.teamId}`);
   }
@@ -84,7 +83,7 @@ export function upsertIntegration(db: DatabaseSync, input: UpsertIntegrationInpu
   // 빈 문자열을 그대로 바인딩하면 ON CONFLICT 쪽 CASE 식이 "값 유지"로 해석한다.
   const secretEnc = secretInput === "" ? "" : encryptSecret(secretInput);
 
-  db.prepare(
+  await db.run(
     `INSERT INTO team_integrations (team_id, kind, base_url, project, secret_enc, updated_at)
      VALUES (?,?,?,?,?,?)
      ON CONFLICT(team_id, kind) DO UPDATE SET
@@ -92,7 +91,8 @@ export function upsertIntegration(db: DatabaseSync, input: UpsertIntegrationInpu
        project    = excluded.project,
        secret_enc = CASE WHEN excluded.secret_enc = '' THEN team_integrations.secret_enc ELSE excluded.secret_enc END,
        updated_at = excluded.updated_at`,
-  ).run(input.teamId, input.kind, baseUrl, project, secretEnc, isoNow());
+    [input.teamId, input.kind, baseUrl, project, secretEnc, isoNow()],
+  );
 }
 
 interface IntegrationRowRaw {
@@ -118,15 +118,16 @@ export interface TeamIntegration {
  * 내부용. 복호화된 평문 토큰을 돌려준다.
  * 화면/HTTP 응답에는 절대 그대로 노출하지 말 것 — Jira 호출 같은 서버 내부 리졸버 전용이다.
  */
-export function getIntegration(
-  db: DatabaseSync,
+export async function getIntegration(
+  db: Db,
   teamId: string,
   kind: string,
-): TeamIntegration | null {
+): Promise<TeamIntegration | null> {
   assertValidTeamId(teamId);
-  const row = db
-    .prepare("SELECT * FROM team_integrations WHERE team_id = ? AND kind = ?")
-    .get(teamId, kind) as IntegrationRowRaw | undefined;
+  const row = await db.get<IntegrationRowRaw>(
+    "SELECT * FROM team_integrations WHERE team_id = ? AND kind = ?",
+    [teamId, kind],
+  );
   if (!row) return null;
 
   return {
@@ -150,14 +151,13 @@ export interface TeamIntegrationMeta {
 }
 
 /** 화면용 목록. 복호화하지 않는다 — 반환값에 평문·암호문이 전혀 담기지 않는다. */
-export function listIntegrations(db: DatabaseSync, teamId: string): TeamIntegrationMeta[] {
+export async function listIntegrations(db: Db, teamId: string): Promise<TeamIntegrationMeta[]> {
   assertValidTeamId(teamId);
-  const rows = db
-    .prepare(
-      `SELECT team_id, kind, base_url, project, secret_enc, updated_at
-       FROM team_integrations WHERE team_id = ? ORDER BY kind`,
-    )
-    .all(teamId) as unknown as IntegrationRowRaw[];
+  const rows = await db.all<IntegrationRowRaw>(
+    `SELECT team_id, kind, base_url, project, secret_enc, updated_at
+     FROM team_integrations WHERE team_id = ? ORDER BY kind`,
+    [teamId],
+  );
 
   return rows.map((row) => ({
     teamId: row.team_id,
@@ -170,7 +170,7 @@ export function listIntegrations(db: DatabaseSync, teamId: string): TeamIntegrat
 }
 
 /** 삭제. 존재하지 않아도 조용히 반환한다(teamToken.ts revoke 와 같은 관례). */
-export function deleteIntegration(db: DatabaseSync, teamId: string, kind: string): void {
+export async function deleteIntegration(db: Db, teamId: string, kind: string): Promise<void> {
   assertValidTeamId(teamId);
-  db.prepare("DELETE FROM team_integrations WHERE team_id = ? AND kind = ?").run(teamId, kind);
+  await db.run("DELETE FROM team_integrations WHERE team_id = ? AND kind = ?", [teamId, kind]);
 }

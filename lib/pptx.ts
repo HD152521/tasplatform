@@ -76,16 +76,16 @@ export async function buildMonthlyReport(
   }
 
   // 1) 클라우드 운영 현황
-  const saved = loadMonth(month);
+  const saved = await loadMonth(month);
   if (saved === null) {
     throw new ReportBuildError("1단계 인스턴스 수가 저장되어 있지 않습니다.");
   }
-  const previous = resolvePrevious(month);
+  const previous = await resolvePrevious(month);
   const instances = calculateInstances(saved.input, previous.values);
 
   // 2) SR — 고른 것만
-  const pickedSr = new Set(loadPicks(month, "sr"));
-  const cases = listCasesInMonth(month).filter((c) => pickedSr.has(String(c.request_id)));
+  const pickedSr = new Set(await loadPicks(month, "sr"));
+  const cases = (await listCasesInMonth(month)).filter((c) => pickedSr.has(String(c.request_id)));
   if (cases.length === 0) {
     throw new ReportBuildError("2단계에서 고른 SR 이 없습니다.");
   }
@@ -115,7 +115,7 @@ export async function buildMonthlyReport(
   const config = atlassianConfig();
   let work: Array<Record<string, string>> = [];
   if (config !== null && config.jiraProject !== "") {
-    const pickedWork = new Set(loadPicks(month, "jira"));
+    const pickedWork = new Set(await loadPicks(month, "jira"));
     const fetched = await fetchMonthlyWork(config, month);
     const rows = pickedWork.size > 0
       ? fetched.rows.filter((r) => pickedWork.has(r.key))

@@ -163,7 +163,7 @@ export async function summarizeReplies(
   onWarn: (message: string) => void = () => undefined,
 ): Promise<Summary[]> {
   const out: Summary[] = [];
-  const usable = hasOpenAi();
+  const usable = await hasOpenAi();
   if (!usable && inputs.length > 0) {
     onWarn("OPENAI_API_KEY 가 없어 원문 발췌로 대신합니다.");
   }

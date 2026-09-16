@@ -49,18 +49,18 @@ export function resolveActorTeam(body: { actor?: unknown; team?: unknown }): Act
  * dbFile 은 테스트에서 임시 DB 를 쓰기 위한 것이다. 실제 라우트는 생략해서
  * 기본 DB(DB_FILE)를 쓴다.
  */
-export function recordWriteAudit(entry: AuditEntry, dbFile?: string): void {
+export async function recordWriteAudit(entry: AuditEntry, dbFile?: string): Promise<void> {
   let db;
   try {
-    db = openDb(dbFile);
+    db = await openDb(dbFile);
   } catch (error) {
     console.error("[audit] DB 를 열지 못해 감사 로그를 남기지 못했습니다", error);
     return;
   }
   try {
-    recordAudit(db, entry);
+    await recordAudit(db, entry);
   } finally {
-    db.close();
+    await db.close();
   }
 }
 

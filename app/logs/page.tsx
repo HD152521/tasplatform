@@ -12,12 +12,12 @@ const STATUS: Record<RunStatus, { label: string; fg: string; bg: string }> = {
   failed: { label: "실패", fg: COLOR.waitUs, bg: COLOR.waitUsBg },
 };
 
-function readRuns(): RunRow[] {
-  const db = openDb();
+async function readRuns(): Promise<RunRow[]> {
+  const db = await openDb();
   try {
-    return listRuns(db, 30);
+    return await listRuns(db, 30);
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
@@ -27,12 +27,12 @@ function formatTime(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? iso : formatStamp(d.getTime());
 }
 
-export default function LogsPage() {
+export default async function LogsPage() {
   let runs: RunRow[] = [];
   let loadError: string | null = null;
 
   try {
-    runs = readRuns();
+    runs = await readRuns();
   } catch (error) {
     loadError = error instanceof Error ? error.message : String(error);
   }

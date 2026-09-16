@@ -11,10 +11,9 @@
  * - 검증 실패는 이유를 세분화해 노출하지 않는다 — 항상 null.
  */
 import { createHash, randomBytes } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
 import { assertValidTeamId } from "./config.ts";
 import { isoNow } from "./dates.ts";
-import { getTeam } from "./db.ts";
+import { getTeam, type Db } from "./db.ts";
 
 /** 토큰 엔트로피. 32바이트 = 256비트. base64url 인코딩이라 URL/헤더에 안전하다. */
 const TOKEN_BYTES = 32;
@@ -41,13 +40,13 @@ export interface IssuedTeamToken {
  * 팀이 존재하지 않으면(getTeam 이 null) 거부한다 — 존재하지 않는 팀으로 발급을 시도하는
  * 것 자체가 설정 오류이므로 여기서 막는다.
  */
-export function issueTeamToken(
-  db: DatabaseSync,
+export async function issueTeamToken(
+  db: Db,
   teamId: string,
   label?: string,
-): IssuedTeamToken {
+): Promise<IssuedTeamToken> {
   assertValidTeamId(teamId);
-  const team = getTeam(db, teamId);
+  const team = await getTeam(db, teamId);
   if (!team) {
     throw new Error(`토큰을 발급할 팀이 존재하지 않습니다: ${teamId}`);
   }
@@ -55,10 +54,11 @@ export function issueTeamToken(
   const token = generateToken();
   const tokenHash = hashToken(token);
 
-  db.prepare(
+  await db.run(
     `INSERT INTO team_tokens (token_hash, team_id, label, created_at, last_used_at, revoked)
      VALUES (?,?,?,?,NULL,0)`,
-  ).run(tokenHash, teamId, label ?? "", isoNow());
+    [tokenHash, teamId, label ?? "", isoNow()],
+  );
 
   return { token, teamId };
 }
@@ -72,29 +72,27 @@ export interface VerifiedTeamToken {
  * 없음 / 형식이 다름 / 해지됨 — 이유를 구분하지 않고 전부 null 로 돌려준다.
  * 성공하면 last_used_at 을 갱신한다.
  */
-export function verifyTeamToken(db: DatabaseSync, token: string): VerifiedTeamToken | null {
+export async function verifyTeamToken(db: Db, token: string): Promise<VerifiedTeamToken | null> {
   if (!token) return null;
   const tokenHash = hashToken(token);
 
-  const row = db
-    .prepare("SELECT team_id, revoked FROM team_tokens WHERE token_hash = ?")
-    .get(tokenHash) as { team_id: string; revoked: number } | undefined;
+  const row = (await db.get(
+    "SELECT team_id, revoked FROM team_tokens WHERE token_hash = ?",
+    [tokenHash],
+  )) as { team_id: string; revoked: number } | undefined;
 
   if (!row || row.revoked) return null;
 
-  db.prepare("UPDATE team_tokens SET last_used_at = ? WHERE token_hash = ?").run(
-    isoNow(),
-    tokenHash,
-  );
+  await db.run("UPDATE team_tokens SET last_used_at = ? WHERE token_hash = ?", [isoNow(), tokenHash]);
 
   return { teamId: row.team_id };
 }
 
 /** 토큰을 해지한다(삭제하지 않고 revoked 플래그만 세운다). 존재하지 않아도 조용히 반환한다. */
-export function revokeTeamToken(db: DatabaseSync, token: string): void {
+export async function revokeTeamToken(db: Db, token: string): Promise<void> {
   if (!token) return;
   const tokenHash = hashToken(token);
-  db.prepare("UPDATE team_tokens SET revoked = 1 WHERE token_hash = ?").run(tokenHash);
+  await db.run("UPDATE team_tokens SET revoked = 1 WHERE token_hash = ?", [tokenHash]);
 }
 
 export interface TeamTokenMeta {
@@ -108,21 +106,18 @@ export interface TeamTokenMeta {
 }
 
 /** 팀 토큰 메타 목록. 평문·전체 해시는 절대 포함하지 않는다. */
-export function listTeamTokens(db: DatabaseSync, teamId?: string): TeamTokenMeta[] {
+export async function listTeamTokens(db: Db, teamId?: string): Promise<TeamTokenMeta[]> {
   const rows = (
     teamId
-      ? db
-          .prepare(
-            `SELECT token_hash, team_id, label, created_at, last_used_at, revoked
-             FROM team_tokens WHERE team_id = ? ORDER BY created_at DESC`,
-          )
-          .all(teamId)
-      : db
-          .prepare(
-            `SELECT token_hash, team_id, label, created_at, last_used_at, revoked
-             FROM team_tokens ORDER BY created_at DESC`,
-          )
-          .all()
+      ? await db.all(
+          `SELECT token_hash, team_id, label, created_at, last_used_at, revoked
+           FROM team_tokens WHERE team_id = ? ORDER BY created_at DESC`,
+          [teamId],
+        )
+      : await db.all(
+          `SELECT token_hash, team_id, label, created_at, last_used_at, revoked
+           FROM team_tokens ORDER BY created_at DESC`,
+        )
   ) as Array<{
     token_hash: string;
     team_id: string;

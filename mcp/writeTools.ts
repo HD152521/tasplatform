@@ -85,7 +85,7 @@ export async function createSrHandler(
   }
 
   if (!deps.hasTeamSession(teamId)) {
-    recordWriteAudit(
+    await recordWriteAudit(
       { actor, teamId, action: "create_sr", requestId: null, result: "failed:session" },
       deps.dbFile,
     );
@@ -111,7 +111,7 @@ export async function createSrHandler(
     await runSideEffect("mcp create refresh", () => deps.refreshOpenCases(client, teamId));
   }
 
-  recordWriteAudit(
+  await recordWriteAudit(
     {
       actor,
       teamId,
@@ -151,16 +151,16 @@ export async function replyHandler(
   }
 
   // 그 팀 소유 케이스가 아니면 답할 수 없다 — 다른 팀 케이스는 없는 것과 동일하게 취급한다.
-  const detail = queryGetCase(requestId, { teamId, dbFile: deps.dbFile });
+  const detail = await queryGetCase(requestId, { teamId, dbFile: deps.dbFile });
   if (detail === null) {
-    recordWriteAudit(
+    await recordWriteAudit(
       { actor, teamId, action: "reply", requestId, result: "failed:not_found" },
       deps.dbFile,
     );
     return { ok: false, code: "not_found", message: "케이스를 찾을 수 없습니다." };
   }
   if (isClosedStatus(detail.status)) {
-    recordWriteAudit(
+    await recordWriteAudit(
       { actor, teamId, action: "reply", requestId, result: "failed:closed" },
       deps.dbFile,
     );
@@ -168,7 +168,7 @@ export async function replyHandler(
   }
 
   if (!deps.hasTeamSession(teamId)) {
-    recordWriteAudit(
+    await recordWriteAudit(
       { actor, teamId, action: "reply", requestId, result: "failed:session" },
       deps.dbFile,
     );
@@ -183,7 +183,7 @@ export async function replyHandler(
     await runSideEffect("mcp reply refresh", () => deps.refreshCaseThreads(client, requestId));
   }
 
-  recordWriteAudit(
+  await recordWriteAudit(
     {
       actor,
       teamId,

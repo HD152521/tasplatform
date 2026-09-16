@@ -9,14 +9,14 @@ function formatRunTime(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : formatStamp(d.getTime());
 }
 
-export default function CaseListPage() {
+export default async function CaseListPage() {
   let open: CaseListRow[] = [];
   let lastRun = null;
   let loadError: string | null = null;
 
   try {
-    open = listCasesSplit().open;
-    lastRun = getLastRun();
+    open = (await listCasesSplit()).open;
+    lastRun = await getLastRun();
   } catch (error) {
     loadError = error instanceof Error ? error.message : String(error);
   }

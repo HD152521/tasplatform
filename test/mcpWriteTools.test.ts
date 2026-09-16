@@ -7,11 +7,11 @@ import { listAudit, openDb, upsertCase } from "../lib/db.ts";
 import type { WriteDeps } from "../mcp/writeTools.ts";
 import { createSrHandler, replyHandler } from "../mcp/writeTools.ts";
 
-function tempDb() {
+async function tempDb() {
   const dir = mkdtempSync(join(tmpdir(), "srhub-mcp-write-"));
   const file = join(dir, "test.db");
-  const db = openDb(file);
-  return { db, file, cleanup: () => { db.close(); rmSync(dir, { recursive: true, force: true }); } };
+  const db = await openDb(file);
+  return { db, file, cleanup: async () => { await db.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
 const sampleCase = (requestId: number, status: string, teamId: string) => ({
@@ -78,7 +78,7 @@ test("우선순위 id 가 목록에 없으면 거부한다", async () => {
 });
 
 test("세션이 없으면 code=session 을 돌려주고 감사 로그에 failed:session 을 남긴다", async () => {
-  const { file, cleanup } = tempDb();
+  const { file, cleanup } = await tempDb();
   try {
     const tracker = fakeDeps({ hasSession: false, dbFile: file });
     const result = await createSrHandler(tracker.deps, "acme", { subject: "제목", content: "내용", priorityId: 3 });
@@ -86,19 +86,19 @@ test("세션이 없으면 code=session 을 돌려주고 감사 로그에 failed:
       ok: false, code: "session", message: "세션이 없습니다. SR 페이지에서 로그인하세요.",
     });
 
-    const db = openDb(file);
+    const db = await openDb(file);
     try {
-      const rows = listAudit(db);
+      const rows = await listAudit(db);
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.action, "create_sr");
       assert.equal(rows[0]?.result, "failed:session");
       assert.equal(rows[0]?.team_id, "acme");
-    } finally { db.close(); }
-  } finally { cleanup(); }
+    } finally { await db.close(); }
+  } finally { await cleanup(); }
 });
 
 test("성공하면 감사 로그에 ok 와 새 requestId 가 남고, refreshOpenCases 가 그 팀으로 호출된다", async () => {
-  const { file, cleanup } = tempDb();
+  const { file, cleanup } = await tempDb();
   try {
     const tracker = fakeDeps({ dbFile: file });
     const result = await createSrHandler(tracker.deps, "acme", {
@@ -110,20 +110,20 @@ test("성공하면 감사 로그에 ok 와 새 requestId 가 남고, refreshOpen
 
     assert.deepEqual(tracker.refreshOpenCasesCalls, [{ teamId: "acme" }]);
 
-    const db = openDb(file);
+    const db = await openDb(file);
     try {
-      const rows = listAudit(db);
+      const rows = await listAudit(db);
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.result, "ok");
       assert.equal(rows[0]?.request_id, 555);
       assert.equal(rows[0]?.actor, "alice");
       assert.equal(rows[0]?.team_id, "acme");
-    } finally { db.close(); }
-  } finally { cleanup(); }
+    } finally { await db.close(); }
+  } finally { await cleanup(); }
 });
 
 test("createCase 가 실패를 돌려주면 감사 로그에 failed:<code> 가 남고 refresh 는 부르지 않는다", async () => {
-  const { file, cleanup } = tempDb();
+  const { file, cleanup } = await tempDb();
   try {
     const tracker = fakeDeps({
       dbFile: file,
@@ -133,24 +133,24 @@ test("createCase 가 실패를 돌려주면 감사 로그에 failed:<code> 가 �
     assert.equal(result.ok, false);
     assert.equal(tracker.refreshOpenCasesCalls.length, 0);
 
-    const db = openDb(file);
+    const db = await openDb(file);
     try {
-      const rows = listAudit(db);
+      const rows = await listAudit(db);
       assert.equal(rows[0]?.result, "failed:failed");
-    } finally { db.close(); }
-  } finally { cleanup(); }
+    } finally { await db.close(); }
+  } finally { await cleanup(); }
 });
 
 test("actor 를 생략하면 빈 문자열로 기록된다 (하위호환)", async () => {
-  const { file, cleanup } = tempDb();
+  const { file, cleanup } = await tempDb();
   try {
     const tracker = fakeDeps({ dbFile: file });
     await createSrHandler(tracker.deps, "acme", { subject: "제목", content: "내용", priorityId: 3 });
-    const db = openDb(file);
+    const db = await openDb(file);
     try {
-      assert.equal(listAudit(db)[0]?.actor, "");
-    } finally { db.close(); }
-  } finally { cleanup(); }
+      assert.equal((await listAudit(db))[0]?.actor, "");
+    } finally { await db.close(); }
+  } finally { await cleanup(); }
 });
 
 // ── reply ───────────────────────────────────────────────────────────
@@ -162,7 +162,7 @@ test("내용이 비면 즉시 거부한다", async () => {
 });
 
 test("케이스가 없으면(또는 다른 팀 소유면) not_found 를 돌려주고 감사 로그를 남긴다", async () => {
-  const { file, cleanup } = tempDb();
+  const { file, cleanup } = await tempDb();
   try {
     const tracker = fakeDeps({ dbFile: file });
     const result = await replyHandler(tracker.deps, "acme", { requestId: 999, text: "답변" });
@@ -170,59 +170,59 @@ test("케이스가 없으면(또는 다른 팀 소유면) not_found 를 돌려�
     if (result.ok) return;
     assert.equal(result.code, "not_found");
 
-    const db = openDb(file);
+    const db = await openDb(file);
     try {
-      assert.equal(listAudit(db)[0]?.result, "failed:not_found");
-    } finally { db.close(); }
-  } finally { cleanup(); }
+      assert.equal((await listAudit(db))[0]?.result, "failed:not_found");
+    } finally { await db.close(); }
+  } finally { await cleanup(); }
 });
 
 test("종료된 케이스에는 답할 수 없다", async () => {
-  const { db, file, cleanup } = tempDb();
+  const { db, file, cleanup } = await tempDb();
   try {
-    upsertCase(db, sampleCase(1, "Closed", "acme"));
+    await upsertCase(db, sampleCase(1, "Closed", "acme"));
     const tracker = fakeDeps({ dbFile: file });
     const result = await replyHandler(tracker.deps, "acme", { requestId: 1, text: "답변" });
     assert.equal(result.ok, false);
     if (result.ok) return;
     assert.equal(result.code, "closed");
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 test("세션이 없으면 code=session 을 돌려준다", async () => {
-  const { db, file, cleanup } = tempDb();
+  const { db, file, cleanup } = await tempDb();
   try {
-    upsertCase(db, sampleCase(1, "Open", "acme"));
+    await upsertCase(db, sampleCase(1, "Open", "acme"));
     const tracker = fakeDeps({ hasSession: false, dbFile: file });
     const result = await replyHandler(tracker.deps, "acme", { requestId: 1, text: "답변" });
     assert.deepEqual(result, {
       ok: false, code: "session", message: "세션이 없습니다. SR 페이지에서 로그인하세요.",
     });
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 test("성공하면 감사 로그에 ok 가 남고 refreshCaseThreads 가 그 requestId 로 호출된다", async () => {
-  const { db, file, cleanup } = tempDb();
+  const { db, file, cleanup } = await tempDb();
   try {
-    upsertCase(db, sampleCase(1, "Open", "acme"));
+    await upsertCase(db, sampleCase(1, "Open", "acme"));
     const tracker = fakeDeps({ dbFile: file });
     const result = await replyHandler(tracker.deps, "acme", { requestId: 1, text: "답변", actor: "bob" });
     assert.equal(result.ok, true);
 
     assert.deepEqual(tracker.refreshCaseThreadsCalls, [{ requestId: 1 }]);
 
-    const rows = listAudit(db);
+    const rows = await listAudit(db);
     assert.equal(rows.length, 1);
     assert.equal(rows[0]?.result, "ok");
     assert.equal(rows[0]?.request_id, 1);
     assert.equal(rows[0]?.actor, "bob");
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 test("postReply 가 실패를 돌려주면 failed:<code> 로 기록되고 refresh 는 부르지 않는다", async () => {
-  const { db, file, cleanup } = tempDb();
+  const { db, file, cleanup } = await tempDb();
   try {
-    upsertCase(db, sampleCase(1, "Open", "acme"));
+    await upsertCase(db, sampleCase(1, "Open", "acme"));
     const tracker = fakeDeps({
       dbFile: file,
       postReply: async () => ({ ok: false, code: "version", message: "충돌" }),
@@ -231,15 +231,15 @@ test("postReply 가 실패를 돌려주면 failed:<code> 로 기록되고 refres
     assert.equal(result.ok, false);
     assert.equal(tracker.refreshCaseThreadsCalls.length, 0);
 
-    const rows = listAudit(db);
+    const rows = await listAudit(db);
     assert.equal(rows[0]?.result, "failed:version");
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
 test("persist 가 실패해도(runSideEffect 가 삼킨다) 성공 응답과 감사 로그는 흔들리지 않는다", async () => {
-  const { db, file, cleanup } = tempDb();
+  const { db, file, cleanup } = await tempDb();
   try {
-    upsertCase(db, sampleCase(1, "Open", "acme"));
+    await upsertCase(db, sampleCase(1, "Open", "acme"));
     const throwingClient = {
       get: async () => { throw new Error("unused"); },
       post: async () => { throw new Error("unused"); },
@@ -248,6 +248,6 @@ test("persist 가 실패해도(runSideEffect 가 삼킨다) 성공 응답과 감
     const tracker = fakeDeps({ dbFile: file, fetchClient: () => throwingClient });
     const result = await replyHandler(tracker.deps, "acme", { requestId: 1, text: "답변" });
     assert.equal(result.ok, true);
-    assert.equal(listAudit(db)[0]?.result, "ok");
-  } finally { cleanup(); }
+    assert.equal((await listAudit(db))[0]?.result, "ok");
+  } finally { await cleanup(); }
 });

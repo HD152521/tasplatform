@@ -132,10 +132,10 @@ test(
     const dbFile = join(dir, "test.db");
 
     // 서버를 띄우기 전에 테스트 데이터를 심는다(같은 db 파일, 서버 시작 전 close).
-    const db = openDb(dbFile);
-    upsertTeam(db, { team_id: "e2e-team", team_name: "E2E 팀", broadcom_username: "" });
-    const issued = issueTeamToken(db, "e2e-team", "e2e 테스트");
-    upsertCase(db, {
+    const db = await openDb(dbFile);
+    await upsertTeam(db, { team_id: "e2e-team", team_name: "E2E 팀", broadcom_username: "" });
+    const issued = await issueTeamToken(db, "e2e-team", "e2e 테스트");
+    await upsertCase(db, {
       request_id: 990001, request_id_formatted: "990001", subject: "e2e 테스트 케이스",
       status: "Open", priority: "P3", category: "Ops", party_name: "고객사",
       party_site_number: "1", created_on: "01-September-2026 23:39:29",
@@ -145,7 +145,7 @@ test(
       product_id: null, product_name: "", component_id: null, component_name: "",
       team_id: "e2e-team",
     });
-    db.close();
+    await db.close();
 
     const server = await startServer(dbFile);
     try {

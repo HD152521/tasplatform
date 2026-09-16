@@ -8,10 +8,10 @@ import {
   listRuns, openDb, startRun, upsertCase, upsertThread,
 } from "../lib/db.ts";
 
-function tempDb() {
+async function tempDb() {
   const dir = mkdtempSync(join(tmpdir(), "srhub-"));
-  const db = openDb(join(dir, "test.db"));
-  return { db, cleanup: () => { db.close(); rmSync(dir, { recursive: true, force: true }); } };
+  const db = await openDb(join(dir, "test.db"));
+  return { db, cleanup: async () => { await db.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
 const sampleCase = (lastUpdated: string) => ({
@@ -24,49 +24,49 @@ const sampleCase = (lastUpdated: string) => ({
   product_id: null, product_name: "", component_id: null, component_name: "",
 });
 
-test("스키마가 적용되고 케이스를 저장한다", () => {
-  const { db, cleanup } = tempDb();
+test("스키마가 적용되고 케이스를 저장한다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    upsertCase(db, sampleCase("a"));
-    const index = getExistingCaseIndex(db);
+    await upsertCase(db, sampleCase("a"));
+    const index = await getExistingCaseIndex(db);
     assert.equal(index.get(37074096), "a");
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test("같은 케이스를 두 번 넣어도 행이 늘지 않는다 (멱등)", () => {
-  const { db, cleanup } = tempDb();
+test("같은 케이스를 두 번 넣어도 행이 늘지 않는다 (멱등)", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    upsertCase(db, sampleCase("a"));
-    upsertCase(db, sampleCase("b"));
-    assert.equal(getExistingCaseIndex(db).size, 1);
-    assert.equal(getExistingCaseIndex(db).get(37074096), "b");
-  } finally { cleanup(); }
+    await upsertCase(db, sampleCase("a"));
+    await upsertCase(db, sampleCase("b"));
+    assert.equal((await getExistingCaseIndex(db)).size, 1);
+    assert.equal((await getExistingCaseIndex(db)).get(37074096), "b");
+  } finally { await cleanup(); }
 });
 
-test("스레드를 저장하고 아는 id 집합을 돌려준다", () => {
-  const { db, cleanup } = tempDb();
+test("스레드를 저장하고 아는 id 집합을 돌려준다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    upsertThread(db, {
+    await upsertThread(db, {
       thread_id: 157212720, request_id: 37074096, author_unit: "Broadcom Internal",
       author_unit_id: 1498068, is_ours: 0, res_date_ms: 1788332081701,
       res_date_val: "01-September-2026 23:54:41", body_html: "<p>hi</p>",
       body_text: "hi", fetched_at: "2026-09-02T00:00:00Z",
     });
-    assert.ok(getKnownThreadIds(db, 37074096).has(157212720));
-    assert.equal(getKnownThreadIds(db, 999).size, 0);
-  } finally { cleanup(); }
+    assert.ok((await getKnownThreadIds(db, 37074096)).has(157212720));
+    assert.equal((await getKnownThreadIds(db, 999)).size, 0);
+  } finally { await cleanup(); }
 });
 
-test("run 은 세 가지 상태를 구분해 기록한다", () => {
-  const { db, cleanup } = tempDb();
+test("run 은 세 가지 상태를 구분해 기록한다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    const okId = startRun(db);
-    finishRun(db, okId, { status: "success", casesSeen: 6, casesChanged: 1, newThreads: 2, sessionState: "valid" });
+    const okId = await startRun(db);
+    await finishRun(db, okId, { status: "success", casesSeen: 6, casesChanged: 1, newThreads: 2, sessionState: "valid" });
 
-    const expiredId = startRun(db);
-    finishRun(db, expiredId, { status: "session_expired", sessionState: "expired", error: "세션 만료" });
+    const expiredId = await startRun(db);
+    await finishRun(db, expiredId, { status: "session_expired", sessionState: "expired", error: "세션 만료" });
 
-    const runs = listRuns(db);
+    const runs = await listRuns(db);
     assert.equal(runs.length, 2);
     assert.equal(runs[0]?.status, "session_expired");
     assert.equal(runs[1]?.status, "success");
@@ -74,18 +74,19 @@ test("run 은 세 가지 상태를 구분해 기록한다", () => {
     assert.equal(runs[0]?.new_threads, 0);
     assert.equal(runs[0]?.session_state, "expired");
     assert.equal(runs[1]?.new_threads, 2);
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });
 
-test("본문을 한 번 저장하면 빈 값 업데이트로 지워지지 않는다", () => {
-  const { db, cleanup } = tempDb();
+test("본문을 한 번 저장하면 빈 값 업데이트로 지워지지 않는다", async () => {
+  const { db, cleanup } = await tempDb();
   try {
-    upsertCase(db, { ...sampleCase("a"), description_html: "<p>원문</p>", description_text: "원문" });
+    await upsertCase(db, { ...sampleCase("a"), description_html: "<p>원문</p>", description_text: "원문" });
     // 다음 회차에 본문 조회가 실패해 빈 값으로 들어와도 기존 본문은 남아야 한다
-    upsertCase(db, sampleCase("b"));
-    const row = db
-      .prepare("SELECT description_text FROM cases WHERE request_id = ?")
-      .all(37074096) as Array<{ description_text: string }>;
+    await upsertCase(db, sampleCase("b"));
+    const row = await db.all<{ description_text: string }>(
+      "SELECT description_text FROM cases WHERE request_id = ?",
+      [37074096],
+    );
     assert.equal(row[0]?.description_text, "원문");
-  } finally { cleanup(); }
+  } finally { await cleanup(); }
 });

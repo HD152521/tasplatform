@@ -7,22 +7,22 @@ import { LlmSettingsForm } from "./LlmSettingsForm.tsx";
 // 설정을 매 요청 읽어야 하므로 캐싱하지 않는다.
 export const dynamic = "force-dynamic";
 
-function readInitial(): { config: LlmConfigMeta | null; keyPresent: boolean } {
-  const db = openDb();
+async function readInitial(): Promise<{ config: LlmConfigMeta | null; keyPresent: boolean }> {
+  const db = await openDb();
   try {
-    return { config: getLlmConfigMeta(db), keyPresent: hasSecretKey() };
+    return { config: await getLlmConfigMeta(db), keyPresent: hasSecretKey() };
   } finally {
-    db.close();
+    await db.close();
   }
 }
 
-export default function LlmSettingsPage() {
+export default async function LlmSettingsPage() {
   let config: LlmConfigMeta | null = null;
   let keyPresent = false;
   let loadError: string | null = null;
 
   try {
-    ({ config, keyPresent } = readInitial());
+    ({ config, keyPresent } = await readInitial());
   } catch (error) {
     loadError = error instanceof Error ? error.message : String(error);
   }

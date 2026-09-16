@@ -4,12 +4,12 @@ import { CveList } from "./CveList.tsx";
 
 export const dynamic = "force-dynamic";
 
-export default function CvesPage() {
+export default async function CvesPage() {
   let cves: CveViewRow[] = [];
   let loadError: string | null = null;
 
   try {
-    cves = listCves();
+    cves = await listCves();
   } catch (error) {
     loadError = error instanceof Error ? error.message : String(error);
   }

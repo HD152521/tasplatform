@@ -24,13 +24,17 @@ export async function refreshCaseThreads(client: ApiClient, requestId: number): 
     if (threads.length === 0) return false;
 
     const now = isoNow();
-    const db = openDb();
-    inTransaction(db, () => {
-      for (const thread of threads) {
-        upsertThread(db, toThreadRow(thread, now));
-        for (const doc of toAttachmentRows(thread, now)) upsertAttachment(db, doc);
-      }
-    });
+    const db = await openDb();
+    try {
+      await inTransaction(db, async (tx) => {
+        for (const thread of threads) {
+          await upsertThread(tx, toThreadRow(thread, now));
+          for (const doc of toAttachmentRows(thread, now)) await upsertAttachment(tx, doc);
+        }
+      });
+    } finally {
+      await db.close();
+    }
     return true;
   } catch {
     return false;
@@ -56,10 +60,14 @@ export async function refreshOpenCases(
     if (items.length === 0) return false;
 
     const now = isoNow();
-    const db = openDb();
-    inTransaction(db, () => {
-      for (const item of items) upsertCase(db, toCaseRow(item, now, undefined, teamId));
-    });
+    const db = await openDb();
+    try {
+      await inTransaction(db, async (tx) => {
+        for (const item of items) await upsertCase(tx, toCaseRow(item, now, undefined, teamId));
+      });
+    } finally {
+      await db.close();
+    }
     return true;
   } catch {
     return false;

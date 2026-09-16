@@ -11,7 +11,7 @@
  * - 실패 이유는 세분화해 노출하지 않는다(teamToken.ts 와 동일한 원칙) — 항상
  *   같은 모양의 401 을 돌려준다.
  */
-import type { DatabaseSync } from "node:sqlite";
+import type { Db } from "../lib/db.ts";
 import { verifyTeamToken } from "../lib/teamToken.ts";
 
 /**
@@ -56,16 +56,19 @@ function fail(): AuthFailure {
  * 오직 테스트 때문이다 — "너무 긴 토큰은 verify 를 아예 부르지 않는다"를
  * 스파이로 직접 확인하기 위해서다. 실제 서버(mcp/server.ts)는 기본값을 그대로 쓴다.
  */
-export function authenticateToken(
-  db: DatabaseSync,
+export async function authenticateToken(
+  db: Db,
   rawHeader: HeaderValue,
-  verify: (db: DatabaseSync, token: string) => { teamId: string } | null = verifyTeamToken,
-): AuthResult {
+  verify: (
+    db: Db,
+    token: string,
+  ) => Promise<{ teamId: string } | null> | ({ teamId: string } | null) = verifyTeamToken,
+): Promise<AuthResult> {
   const token = extractBearerToken(rawHeader);
   if (token === null) return fail();
   if (token.length > MAX_TOKEN_LENGTH) return fail();
 
-  const verified = verify(db, token);
+  const verified = await verify(db, token);
   if (verified === null) return fail();
 
   return { ok: true, teamId: verified.teamId };

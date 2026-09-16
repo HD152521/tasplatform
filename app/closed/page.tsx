@@ -4,14 +4,14 @@ import { COLOR, Card, Notice } from "../ui.tsx";
 
 export const dynamic = "force-dynamic";
 
-export default function ClosedCasesPage() {
+export default async function ClosedCasesPage() {
   let closed: CaseListRow[] = [];
   let summaries = 0;
   let loadError: string | null = null;
 
   try {
-    closed = listCasesSplit().closed;
-    summaries = countSummaries();
+    closed = (await listCasesSplit()).closed;
+    summaries = await countSummaries();
   } catch (error) {
     loadError = error instanceof Error ? error.message : String(error);
   }

@@ -13,8 +13,8 @@
  *
  * server-only 를 붙이지 않는다. 수집기(Node)에서도 부른다.
  */
-import type { DatabaseSync } from "node:sqlite";
 import { isoNow } from "./dates.ts";
+import type { Db } from "./db.ts";
 import { decryptSecret, encryptSecret } from "./secretBox.ts";
 
 export const DEFAULT_LLM_ID = "default";
@@ -124,7 +124,7 @@ export interface UpsertLlmInput {
  * - secret 이 채워졌는데 SR_SECRET_KEY 가 없으면 encryptSecret 이 던지고 저장을 거부한다
  *   (평문 저장 폴백 금지, 행이 부분적으로도 남지 않음).
  */
-export function upsertLlmConfig(db: DatabaseSync, input: UpsertLlmInput): void {
+export async function upsertLlmConfig(db: Db, input: UpsertLlmInput): Promise<void> {
   const name = input.name.trim();
   const modelId = input.modelId.trim();
   const baseUrl = normalizeBaseUrl(input.baseUrl);
@@ -154,7 +154,7 @@ export function upsertLlmConfig(db: DatabaseSync, input: UpsertLlmInput): void {
   const secretInput = (input.secret ?? "").trim();
   const secretEnc = secretInput === "" ? "" : encryptSecret(secretInput);
 
-  db.prepare(
+  await db.run(
     `INSERT INTO llm_connections
        (llm_id, name, model_id, base_url, auth_kind, token_url, client_id, auth_username,
         secret_enc, chat_path, max_tokens, temperature, system_prompt, updated_at)
@@ -173,16 +173,15 @@ export function upsertLlmConfig(db: DatabaseSync, input: UpsertLlmInput): void {
        temperature   = excluded.temperature,
        system_prompt = excluded.system_prompt,
        updated_at    = excluded.updated_at`,
-  ).run(
-    DEFAULT_LLM_ID, name, modelId, baseUrl, authKind, tokenUrl, clientId, authUsername,
-    secretEnc, chatPath, maxTokens, temperature, systemPrompt, isoNow(),
+    [
+      DEFAULT_LLM_ID, name, modelId, baseUrl, authKind, tokenUrl, clientId, authUsername,
+      secretEnc, chatPath, maxTokens, temperature, systemPrompt, isoNow(),
+    ],
   );
 }
 
-function readRow(db: DatabaseSync): LlmRowRaw | undefined {
-  return db
-    .prepare("SELECT * FROM llm_connections WHERE llm_id = ?")
-    .get(DEFAULT_LLM_ID) as LlmRowRaw | undefined;
+function readRow(db: Db): Promise<LlmRowRaw | undefined> {
+  return db.get<LlmRowRaw>("SELECT * FROM llm_connections WHERE llm_id = ?", [DEFAULT_LLM_ID]);
 }
 
 /** 환경변수 폴백. LLM_BASE_URL 이 있으면 .env 기반 설정을 만든다. */
@@ -234,15 +233,15 @@ function rowToConfig(row: LlmRowRaw): LlmConfig {
  * 내부 리졸버용. 복호화된 secret 을 포함한 설정을 돌려준다(없으면 null).
  * DB 우선, 없으면 환경변수 폴백. 화면/HTTP 응답에 그대로 실어 보내지 말 것.
  */
-export function getLlmConfig(db: DatabaseSync): LlmConfig | null {
-  const row = readRow(db);
+export async function getLlmConfig(db: Db): Promise<LlmConfig | null> {
+  const row = await readRow(db);
   if (row) return rowToConfig(row);
   return fromEnv();
 }
 
 /** 화면용. 민감값 없이. */
-export function getLlmConfigMeta(db: DatabaseSync): LlmConfigMeta | null {
-  const row = readRow(db);
+export async function getLlmConfigMeta(db: Db): Promise<LlmConfigMeta | null> {
+  const row = await readRow(db);
   if (row) {
     return {
       name: row.name,
@@ -282,6 +281,6 @@ export function getLlmConfigMeta(db: DatabaseSync): LlmConfigMeta | null {
 }
 
 /** 삭제(단일 행). 없어도 조용히 반환한다. */
-export function deleteLlmConfig(db: DatabaseSync): void {
-  db.prepare("DELETE FROM llm_connections WHERE llm_id = ?").run(DEFAULT_LLM_ID);
+export async function deleteLlmConfig(db: Db): Promise<void> {
+  await db.run("DELETE FROM llm_connections WHERE llm_id = ?", [DEFAULT_LLM_ID]);
 }
