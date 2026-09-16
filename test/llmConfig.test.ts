@@ -88,6 +88,69 @@ test("비밀번호를 비워 수정하면 기존 값이 유지된다", async () 
   await db.close();
 });
 
+const clientCreds = {
+  ...base,
+  authKind: "client_credentials" as const,
+  authUsername: "",
+  secret: "cli-secret",
+};
+
+test("client_credentials: username 없이 저장·복원된다", async () => {
+  const db = await freshDb();
+  await upsertLlmConfig(db, clientCreds);
+  const got = await getLlmConfig(db);
+  assert.ok(got);
+  assert.equal(got.authKind, "client_credentials");
+  assert.equal(got.authUsername, "");
+  assert.equal(got.secret, "cli-secret");
+  await db.close();
+});
+
+test("client_credentials 인데 client_secret 이 없으면(신규) 거부한다", async () => {
+  const db = await freshDb();
+  await assert.rejects(
+    upsertLlmConfig(db, { ...clientCreds, secret: "" }),
+    /client_secret/,
+  );
+  await db.close();
+});
+
+test("client_credentials 인데 토큰 URL 이 없으면 거부한다", async () => {
+  const db = await freshDb();
+  await assert.rejects(upsertLlmConfig(db, { ...clientCreds, tokenUrl: "" }), /토큰 발급 URL/);
+  await db.close();
+});
+
+test("client_credentials 수정 시 secret 을 비우면 기존 값이 유지된다", async () => {
+  const db = await freshDb();
+  await upsertLlmConfig(db, clientCreds);
+  await upsertLlmConfig(db, { ...clientCreds, name: "이름만 변경", secret: "" });
+  const got = await getLlmConfig(db);
+  assert.equal(got?.name, "이름만 변경");
+  assert.equal(got?.secret, "cli-secret");
+  await db.close();
+});
+
+test("인증 방식을 바꾸면서 secret 을 비우면 거부한다 (옛 grant 시크릿 재사용 방지)", async () => {
+  const db = await freshDb();
+  await upsertLlmConfig(db, base); // keycloak, 비밀번호 저장됨
+  await assert.rejects(
+    upsertLlmConfig(db, { ...clientCreds, secret: "" }),
+    /인증 방식을 바꾸면/,
+  );
+  await db.close();
+});
+
+test("같은 인증 방식이면 secret 을 비워도 기존 값이 유지된다 (전환 아님)", async () => {
+  const db = await freshDb();
+  await upsertLlmConfig(db, base);
+  await upsertLlmConfig(db, { ...base, name: "이름만", secret: "" });
+  const got = await getLlmConfig(db);
+  assert.equal(got?.authKind, "keycloak");
+  assert.equal(got?.secret, "s3cret");
+  await db.close();
+});
+
 test("keycloak 인데 토큰 URL 이 없으면 거부한다", async () => {
   const db = await freshDb();
   await assert.rejects(upsertLlmConfig(db, { ...base, tokenUrl: "" }), /토큰 발급 URL/);

@@ -81,6 +81,40 @@ test("토큰은 캐시된다 — 두 번 불러도 발급은 한 번", async () 
   assert.equal(calls.filter((c) => c.url.endsWith("/v1/chat/completions")).length, 2);
 });
 
+test("client_credentials: client_secret 으로 토큰을 받아 Bearer 로 chat 을 부른다", async () => {
+  installFetch((url) => (url === TOKEN_URL ? tokenResponse("cc-tok", 300) : chatResponse("결과")));
+  const out = await chatWithConfig(
+    cfg({ authKind: "client_credentials", clientId: "svc-client", authUsername: "", secret: "cli-secret" }),
+    "sys",
+    "user",
+  );
+  assert.equal(out, "결과");
+
+  const tokenCall = calls.find((c) => c.url === TOKEN_URL);
+  assert.ok(tokenCall);
+  const body = String(tokenCall.init.body);
+  assert.match(body, /grant_type=client_credentials/);
+  assert.match(body, /client_id=svc-client/);
+  assert.match(body, /client_secret=cli-secret/);
+  // password 그랜트의 흔적(username·password)은 없어야 한다.
+  assert.doesNotMatch(body, /(^|&)username=/);
+  assert.doesNotMatch(body, /(^|&)password=/);
+  assert.doesNotMatch(body, /grant_type=password/);
+
+  const chatCall = calls.find((c) => c.url.endsWith("/v1/chat/completions"));
+  assert.ok(chatCall);
+  const headers = chatCall.init.headers as Record<string, string>;
+  assert.equal(headers.Authorization, "Bearer cc-tok");
+});
+
+test("client_credentials 토큰도 캐시된다 — 두 번 불러도 발급은 한 번", async () => {
+  installFetch((url) => (url === TOKEN_URL ? tokenResponse("cc-tok") : chatResponse()));
+  const config = cfg({ authKind: "client_credentials", authUsername: "", secret: "cli-secret" });
+  await chatWithConfig(config, "s", "u");
+  await chatWithConfig(config, "s", "u");
+  assert.equal(calls.filter((c) => c.url === TOKEN_URL).length, 1);
+});
+
 test("bearer 방식은 토큰을 발급하지 않고 secret 을 그대로 Bearer 로 쓴다", async () => {
   installFetch(() => chatResponse());
   await chatWithConfig(cfg({ authKind: "bearer", secret: "api-key-xyz" }), "s", "u");

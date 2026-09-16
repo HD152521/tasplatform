@@ -17,6 +17,7 @@ import { openDb } from "./db.ts";
 import { chat, hasOpenAi } from "./ai.ts";
 import { isoNow } from "./dates.ts";
 import { getCase, listThreads } from "./queries.ts";
+import { promptOverride } from "./prompts.ts";
 import { buildSourceText, parseSrReport, type SrReport } from "./srReportFormat.ts";
 
 export class SrReportError extends Error {
@@ -29,7 +30,7 @@ export class SrReportError extends Error {
   }
 }
 
-const SYSTEM_PROMPT = `너는 Broadcom TAC SR(Service Request) 문서를 표준화된 한국어 보고서로 정리하는 전문가다.
+const SYSTEM_PROMPT_DEFAULT = `너는 Broadcom TAC SR(Service Request) 문서를 표준화된 한국어 보고서로 정리하는 전문가다.
 입력으로 SR 내역이 주어지면, 아래 규칙에 따라 정확히 3개 항목의 보고서만 출력한다.
 
 # 절대 원칙
@@ -119,6 +120,11 @@ KPI/KCSI 기반 리소스 사용 적정성 검토
 
 Gemfire 등 부가 서비스 타일의 리소스 사용량 점검`;
 
+/** SR 보고서 시스템 프롬프트. env SR_PROMPT_SR_REPORT 로 덮어쓸 수 있다. */
+function systemPrompt(): string {
+  return promptOverride("SR_PROMPT_SR_REPORT", SYSTEM_PROMPT_DEFAULT);
+}
+
 const USER_INSTRUCTION = "위 SR 내역을 지침에 따라 보고서로 정리해라.";
 
 /** 케이스 본문을 보낼 수 있는 키가 있는가. */
@@ -192,7 +198,7 @@ export async function getSrReport(
     })),
   });
 
-  const raw = await chat(SYSTEM_PROMPT, `${source}
+  const raw = await chat(systemPrompt(), `${source}
 
 ${USER_INSTRUCTION}`, { maxTokens: 2000 });
   await writeCached(requestId, raw);

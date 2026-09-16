@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { DEFAULT_TEAM_ID } from "../../../../lib/config.ts";
 import { openDb, recordAudit } from "../../../../lib/db.ts";
 import { hasSecretKey, MissingSecretKeyError } from "../../../../lib/secretBox.ts";
+import { clearTokenCache } from "../../../../lib/llmClient.ts";
 import {
   deleteLlmConfig,
   getLlmConfigMeta,
@@ -21,7 +22,7 @@ function readActor(value: unknown): string {
 }
 
 function coerceAuthKind(value: unknown): LlmAuthKind {
-  return value === "bearer" || value === "none" ? value : "keycloak";
+  return value === "bearer" || value === "none" || value === "client_credentials" ? value : "keycloak";
 }
 
 /** 현재 LLM 설정(마스킹) + 암호화 키 유무. 평문·암호문은 반환하지 않는다. */
@@ -73,6 +74,9 @@ export async function POST(request: Request) {
       temperature: numOr(body.temperature, 0.1),
       systemPrompt: str(body.systemPrompt),
     });
+    // 시크릿을 회전해도 tokenUrl/clientId/username 이 같으면 캐시된 옛 토큰이 만료까지 쓰인다.
+    // 저장 직후 캐시를 비워 새 자격이 즉시 반영되게 한다.
+    clearTokenCache();
     await recordAudit(db, {
       actor, teamId: DEFAULT_TEAM_ID, action: "llm_upsert", requestId: null,
       result: "ok", detail: `model=${str(body.modelId)}`,

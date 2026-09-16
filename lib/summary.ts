@@ -11,7 +11,7 @@ import "server-only";
 import { openDb } from "./db.ts";
 import { isoNow } from "./dates.ts";
 import { chat } from "./ai.ts";
-import { CONFLUENCE_SYSTEM_PROMPT, CONFLUENCE_USER_PREFIX } from "./summaryPrompt.ts";
+import { confluenceSystemPrompt, CONFLUENCE_USER_PREFIX } from "./summaryPrompt.ts";
 import { getCase, listThreads } from "./queries.ts";
 import { buildSourceText } from "./srReportFormat.ts";
 
@@ -104,7 +104,7 @@ export async function getSummary(
   });
 
   const content = await chat(
-    CONFLUENCE_SYSTEM_PROMPT,
+    confluenceSystemPrompt(),
     CONFLUENCE_USER_PREFIX + source,
     { maxTokens: 4000 },
   );

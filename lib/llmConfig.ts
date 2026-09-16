@@ -22,8 +22,8 @@ export const DEFAULT_CHAT_PATH = "/v1/chat/completions";
 export const DEFAULT_MAX_TOKENS = 512;
 export const DEFAULT_TEMPERATURE = 0.1;
 
-export type LlmAuthKind = "keycloak" | "bearer" | "none";
-const AUTH_KINDS: readonly LlmAuthKind[] = ["keycloak", "bearer", "none"];
+export type LlmAuthKind = "keycloak" | "client_credentials" | "bearer" | "none";
+const AUTH_KINDS: readonly LlmAuthKind[] = ["keycloak", "client_credentials", "bearer", "none"];
 
 /** 내부 리졸버 전용. secret(복호화 평문)이 담긴다 — 화면/HTTP 응답에 노출 금지. */
 export interface LlmConfig {
@@ -119,7 +119,9 @@ export interface UpsertLlmInput {
 
 /**
  * 등록/수정(단일 'default' 행).
- * - base_url·model 필수, keycloak 이면 token_url·client_id·username 필수.
+ * - base_url·model 필수.
+ * - keycloak 이면 token_url·client_id·username 필수(비밀번호 그랜트).
+ * - client_credentials 이면 token_url·client_id·secret(=client_secret) 필수, username 불필요.
  * - secret 이 비어 있으면 기존 암호문을 유지한다.
  * - secret 이 채워졌는데 SR_SECRET_KEY 가 없으면 encryptSecret 이 던지고 저장을 거부한다
  *   (평문 저장 폴백 금지, 행이 부분적으로도 남지 않음).
@@ -139,11 +141,13 @@ export async function upsertLlmConfig(db: Db, input: UpsertLlmInput): Promise<vo
   if (baseUrl === "") throw new Error("API 기본 주소가 필요합니다.");
   assertHttpsUrl("API 기본 주소", baseUrl);
 
-  if (authKind === "keycloak") {
+  if (authKind === "keycloak" || authKind === "client_credentials") {
     if (tokenUrl === "") throw new Error("Keycloak 인증에는 토큰 발급 URL 이 필요합니다.");
     assertHttpsUrl("토큰 발급 URL", tokenUrl);
     if (clientId === "") throw new Error("Keycloak 인증에는 Client ID 가 필요합니다.");
-    if (authUsername === "") throw new Error("Keycloak 인증에는 인증 사용자 이름이 필요합니다.");
+  }
+  if (authKind === "keycloak" && authUsername === "") {
+    throw new Error("Keycloak 인증에는 인증 사용자 이름이 필요합니다.");
   }
 
   const maxTokens = Number.isFinite(input.maxTokens) && input.maxTokens > 0
@@ -152,6 +156,22 @@ export async function upsertLlmConfig(db: Db, input: UpsertLlmInput): Promise<vo
     ? input.temperature : DEFAULT_TEMPERATURE;
 
   const secretInput = (input.secret ?? "").trim();
+  // "빈 secret = 기존 유지" 는 편의지만, 인증 방식이 바뀌면 위험하다. 예를 들어 keycloak(관리자
+  // 비밀번호 저장) → client_credentials 로 바꾸면서 secret 을 안 넣으면 옛 비밀번호가 조용히
+  // client_secret 으로 재사용된다. 그래서 저장된 auth_kind 가 이번 authKind 와 같을 때만 기존
+  // 시크릿을 유지하고, 방식이 바뀌면 새 시크릿을 강제한다. (none 은 시크릿을 쓰지 않으므로 제외)
+  if (secretInput === "" && authKind !== "none") {
+    const existing = await readRow(db);
+    const hasStoredSecret = existing !== undefined && existing.secret_enc !== "";
+    const storedKind = existing !== undefined ? coerceAuthKind(existing.auth_kind) : undefined;
+
+    if (authKind === "client_credentials" && !hasStoredSecret) {
+      throw new Error("client_credentials 인증에는 client_secret 이 필요합니다.");
+    }
+    if (hasStoredSecret && storedKind !== authKind) {
+      throw new Error("인증 방식을 바꾸면 시크릿을 다시 입력해야 합니다.");
+    }
+  }
   const secretEnc = secretInput === "" ? "" : encryptSecret(secretInput);
 
   await db.run(

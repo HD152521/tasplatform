@@ -2,9 +2,12 @@
  * LLM 호출 클라이언트 (OpenAI-호환 엔드포인트 + Keycloak 토큰).
  *
  * 인증 방식(config.authKind):
- *   keycloak = 호출마다 액세스 토큰이 필요하다. token_url 에 비밀번호 그랜트로 발급받고
- *              Bearer 로 쓴다. 토큰은 만료 전까지 프로세스 메모리에 캐시한다(매 호출마다
- *              Keycloak 을 두드리지 않는다).
+ *   keycloak = 호출마다 액세스 토큰이 필요하다. token_url 에 비밀번호 그랜트(password)로
+ *              발급받고 Bearer 로 쓴다. 토큰은 만료 전까지 프로세스 메모리에 캐시한다(매
+ *              호출마다 Keycloak 을 두드리지 않는다).
+ *   client_credentials = keycloak 과 같은 토큰 경로지만 그랜트가 client_credentials 다.
+ *              username·password 대신 client_id·client_secret(=secret)만 보낸다. 관리자
+ *              계정 비밀번호를 앱에 넣지 않으려는 경우에 쓴다.
  *   bearer   = secret 을 그대로 Bearer(API 키)로 쓴다.
  *   none     = 인증 헤더 없음.
  *
@@ -38,22 +41,29 @@ interface CachedToken {
   expiresAt: number;
 }
 
-// (token_url|client_id|username) -> 캐시된 토큰. 여러 설정이 있어도 섞이지 않게 키에 담는다.
+// (authKind|token_url|client_id|username) -> 캐시된 토큰. 여러 설정이 있어도 섞이지 않게 키에
+// 담는다. grant 종류(authKind)도 넣어 password/client_credentials 토큰이 뒤섞이지 않게 한다.
 const tokenCache = new Map<string, CachedToken>();
 // 동시에 여러 호출이 만료를 발견해도 Keycloak 을 한 번만 두드리도록 진행 중 요청을 공유한다.
 const inflight = new Map<string, Promise<string>>();
 
 function tokenCacheKey(config: LlmConfig): string {
-  return `${config.tokenUrl}|${config.clientId}|${config.authUsername}`;
+  return `${config.authKind}|${config.tokenUrl}|${config.clientId}|${config.authUsername}`;
 }
 
 async function fetchKeycloakToken(config: LlmConfig): Promise<string> {
-  const body = new URLSearchParams({
-    grant_type: "password",
-    client_id: config.clientId,
-    username: config.authUsername,
-    password: config.secret,
-  });
+  const body = config.authKind === "client_credentials"
+    ? new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: config.clientId,
+        client_secret: config.secret,
+      })
+    : new URLSearchParams({
+        grant_type: "password",
+        client_id: config.clientId,
+        username: config.authUsername,
+        password: config.secret,
+      });
 
   let response: Response;
   try {
@@ -110,7 +120,7 @@ async function authHeader(config: LlmConfig): Promise<string | undefined> {
     if (config.secret.trim() === "") throw new LlmError(0, "Bearer 인증인데 토큰(secret)이 비어 있습니다.");
     return `Bearer ${config.secret.trim()}`;
   }
-  // keycloak
+  // keycloak · client_credentials — 둘 다 token_url 에서 발급받아 Bearer 로 쓴다.
   return `Bearer ${await getKeycloakToken(config)}`;
 }
 

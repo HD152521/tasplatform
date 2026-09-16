@@ -11,8 +11,13 @@
  *
  * 파일을 나눠 둔 이유는 lib/summary.ts 가 server-only 라서다.
  * 프롬프트만 따로 읽어 확인하거나 테스트할 수 있게 한다.
+ *
+ * 기본값은 상수로 두되, 실제 사용은 confluenceSystemPrompt() getter 로 감싼다.
+ * env SR_PROMPT_CONFLUENCE 가 있으면 그 값으로 덮어써 코드 수정 없이 튜닝한다.
  */
-export const CONFLUENCE_SYSTEM_PROMPT = `당신은 Broadcom TAC의 SR(Service Request) 대화 내역을 사내 기술 문서용 한국어 보고서로 정리하는 역할을 맡습니다.
+import { promptOverride } from "./prompts.ts";
+
+const CONFLUENCE_SYSTEM_PROMPT_DEFAULT = `당신은 Broadcom TAC의 SR(Service Request) 대화 내역을 사내 기술 문서용 한국어 보고서로 정리하는 역할을 맡습니다.
 입력으로 주어지는 SR 원문(고객 문의, TAC 답변, 첨부 로그·설정 등)을 읽고 아래 형식에 맞춘 보고서를 작성하세요.
 
 # 목적
@@ -114,5 +119,10 @@ export const CONFLUENCE_SYSTEM_PROMPT = `당신은 Broadcom TAC의 SR(Service Re
 두 설정 위치의 차이는 규칙이 평가되는 지점에 있습니다. TAS Tile 측 규칙은 로그가 VM을 떠나기 전에 평가되는 발신 측 필터링이며, 수신 서버 측 규칙은 이미 전달된 로그를 대상으로 저장과 분류를 결정하는 수신 측 필터링에 해당합니다.
 
 규칙 배치 위치는 두 지점 중 어디에 두더라도 최종 필터링 결과가 동일함을 확인했습니다. 다만 TAS Tile 측 설정은 변경할 때마다 전체 VM 재생성이 발생하므로, 이후 규칙 조정이 반복될 것을 고려하여 Syslog 수신 서버 측에 필터링 규칙을 구성하는 방향으로 결정했습니다."`;
+
+/** Confluence 문서 생성 시스템 프롬프트. env SR_PROMPT_CONFLUENCE 로 덮어쓸 수 있다. */
+export function confluenceSystemPrompt(): string {
+  return promptOverride("SR_PROMPT_CONFLUENCE", CONFLUENCE_SYSTEM_PROMPT_DEFAULT);
+}
 
 export const CONFLUENCE_USER_PREFIX = "아래는 정리 대상 SR 대화 내역입니다.\n\n";

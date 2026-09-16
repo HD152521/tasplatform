@@ -13,7 +13,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function coerceAuthKind(value: unknown): LlmAuthKind {
-  return value === "bearer" || value === "none" ? value : "keycloak";
+  return value === "bearer" || value === "none" || value === "client_credentials" ? value : "keycloak";
 }
 
 /**

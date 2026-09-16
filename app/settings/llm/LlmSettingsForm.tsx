@@ -5,7 +5,8 @@ import type { LlmConfigMeta } from "../../../lib/llmConfig.ts";
 import { COLOR, Card, Notice, RADIUS, controlStyle } from "../../ui.tsx";
 
 const AUTH_KINDS = [
-  { value: "keycloak", label: "Keycloak · 호출마다 토큰 발급" },
+  { value: "keycloak", label: "Keycloak · 호출마다 토큰 발급(비밀번호)" },
+  { value: "client_credentials", label: "Keycloak · client_credentials(클라이언트 시크릿)" },
   { value: "bearer", label: "Bearer · 고정 토큰(API 키)" },
   { value: "none", label: "인증 없음" },
 ] as const;
@@ -35,6 +36,8 @@ export function LlmSettingsForm({ initialConfig, keyPresent }: Props) {
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const hasStoredSecret = c?.hasSecret === true;
   const fromEnv = c?.source === "env";
+  // 인증 방식을 바꾸면 서버가 새 시크릿을 강제한다(옛 grant 시크릿 재사용 방지). 힌트를 그에 맞춘다.
+  const authKindChanged = c != null && c.authKind !== authKind;
 
   function payload(): Record<string, unknown> {
     return {
@@ -89,7 +92,14 @@ export function LlmSettingsForm({ initialConfig, keyPresent }: Props) {
   }
 
   const isKeycloak = authKind === "keycloak";
+  const isClientCredentials = authKind === "client_credentials";
+  const needsToken = isKeycloak || isClientCredentials;
   const needsSecret = authKind !== "none";
+  const secretLabel = isKeycloak
+    ? "인증 비밀번호"
+    : isClientCredentials
+      ? "client_secret"
+      : "토큰(API 키)";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 640 }}>
@@ -128,7 +138,7 @@ export function LlmSettingsForm({ initialConfig, keyPresent }: Props) {
           </select>
         </Field>
 
-        {isKeycloak && (
+        {needsToken && (
           <>
             <Field label="토큰 발급 URL" hint="Keycloak OpenID 토큰 엔드포인트. https 만 허용">
               <input value={tokenUrl} onChange={(e) => setTokenUrl(e.target.value)} placeholder="https://pai-keycloak.ds.lab/realms/pais/protocol/openid-connect/token" style={inputStyle} />
@@ -136,16 +146,24 @@ export function LlmSettingsForm({ initialConfig, keyPresent }: Props) {
             <Field label="Client ID">
               <input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="pais-client" style={inputStyle} />
             </Field>
-            <Field label="인증 사용자 이름">
-              <input value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} placeholder="pais-admin" style={inputStyle} />
-            </Field>
+            {isKeycloak && (
+              <Field label="인증 사용자 이름">
+                <input value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} placeholder="pais-admin" style={inputStyle} />
+              </Field>
+            )}
           </>
         )}
 
         {needsSecret && (
           <Field
-            label={isKeycloak ? "인증 비밀번호" : "토큰(API 키)"}
-            hint={hasStoredSecret ? "저장됨 · 변경할 때만 입력. 화면에는 다시 표시되지 않습니다." : "비워두면 저장되지 않습니다."}
+            label={secretLabel}
+            hint={
+              hasStoredSecret && authKindChanged
+                ? "인증 방식이 바뀌어 시크릿 재입력이 필요합니다."
+                : hasStoredSecret
+                  ? "저장됨 · 변경할 때만 입력. 화면에는 다시 표시되지 않습니다."
+                  : "비워두면 저장되지 않습니다."
+            }
           >
             <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={hasStoredSecret ? "••••••••" : ""} style={inputStyle} />
           </Field>
