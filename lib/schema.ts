@@ -276,6 +276,17 @@ CREATE INDEX IF NOT EXISTS idx_team_integrations_team ON team_integrations(team_
 --   none     = 인증 헤더 없음
 -- secret_enc 는 비밀번호(또는 API 키)를 AES-256-GCM 으로 암호화한 것(lib/secretBox.ts).
 -- 평문은 여기 절대 들어가지 않는다. 키(SR_SECRET_KEY)가 없으면 저장을 거부한다.
+-- 팀별 세션/기기신뢰 상태의 durable 백업.
+-- session.json(Playwright storageState)·device.json(MFA 신뢰기기) 을 통째 JSON 으로 담는다.
+-- TAS 파일시스템은 재시작마다 초기화되므로, 로그인/persist 때 여기로 밀어넣고(persist)
+-- 컨테이너 시작·쓰기 전에 여기서 파일로 복원한다(hydrate). 파일 로직 자체는 그대로 둔다.
+CREATE TABLE IF NOT EXISTS team_session_state (
+  team_id      TEXT PRIMARY KEY,
+  session_json TEXT NOT NULL DEFAULT '',
+  device_json  TEXT NOT NULL DEFAULT '',
+  updated_at   TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS llm_connections (
   llm_id        TEXT PRIMARY KEY,
   name          TEXT    NOT NULL DEFAULT '',

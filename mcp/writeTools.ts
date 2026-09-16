@@ -40,6 +40,10 @@ export interface WriteDeps {
   ) => Promise<CreateResult>;
   refreshCaseThreads: (client: ApiClient, requestId: number) => Promise<boolean>;
   refreshOpenCases: (client: ApiClient, teamId?: string) => Promise<boolean>;
+  /** 세션/기기 파일을 DB 백업에서 복원(쓰기 전). 재시작으로 파일이 없을 때 필요하다. */
+  hydrateSession?: (teamId: string) => Promise<void>;
+  /** 회전된 세션을 DB 로 백업(쓰기 후). */
+  persistSession?: (teamId: string) => Promise<void>;
   /** 테스트에서 임시 DB 를 가리키기 위한 것. 실제 서버 호출부는 생략한다. */
   dbFile?: string;
 }
@@ -84,6 +88,7 @@ export async function createSrHandler(
     return { ok: false, code: "invalid", message: "우선순위가 올바르지 않습니다." };
   }
 
+  if (deps.hydrateSession) await deps.hydrateSession(teamId);
   if (!deps.hasTeamSession(teamId)) {
     await recordWriteAudit(
       { actor, teamId, action: "create_sr", requestId: null, result: "failed:session" },
@@ -106,6 +111,9 @@ export async function createSrHandler(
 
   // 쓰기 성공/실패를 부수효과가 뒤집지 않도록 runSideEffect 로만 건드린다.
   await runSideEffect("mcp create persist", () => client.persist());
+  if (deps.persistSession) {
+    await runSideEffect("mcp create session→db", () => deps.persistSession!(teamId));
+  }
   if (result.ok) {
     // 새 케이스가 이 팀 소유로 찍히도록 teamId 를 넘긴다 (이월 항목: team_id 배선).
     await runSideEffect("mcp create refresh", () => deps.refreshOpenCases(client, teamId));
@@ -167,6 +175,7 @@ export async function replyHandler(
     return { ok: false, code: "closed", message: "종료된 케이스에는 답변할 수 없습니다." };
   }
 
+  if (deps.hydrateSession) await deps.hydrateSession(teamId);
   if (!deps.hasTeamSession(teamId)) {
     await recordWriteAudit(
       { actor, teamId, action: "reply", requestId, result: "failed:session" },
@@ -179,6 +188,9 @@ export async function replyHandler(
   const result = await deps.postReply(client, requestId, text);
 
   await runSideEffect("mcp reply persist", () => client.persist());
+  if (deps.persistSession) {
+    await runSideEffect("mcp reply session→db", () => deps.persistSession!(teamId));
+  }
   if (result.ok) {
     await runSideEffect("mcp reply refresh", () => deps.refreshCaseThreads(client, requestId));
   }

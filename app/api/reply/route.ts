@@ -5,6 +5,7 @@ import { fetchClient } from "../../../collector/httpClient.ts";
 import { sessionFileForTeam } from "../../../lib/config.ts";
 import { refreshCaseThreads } from "../../../lib/refreshCase.ts";
 import { hasTeamSession, recordWriteAudit, resolveActorTeam, runSideEffect } from "../../../lib/requestAudit.ts";
+import { hydrateTeamSessionFromDb, persistTeamSessionToDb } from "../../../lib/sessionStore.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,6 +31,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: actorTeam.message }, { status: 400 });
   }
   const { actor, teamId } = actorTeam;
+
+  // 재시작으로 로컬 세션 파일이 없을 수 있으니 DB 백업에서 먼저 복원한다(hasTeamSession 전).
+  await hydrateTeamSessionFromDb(teamId);
 
   // 종료된 케이스에는 보내지 않는다.
   const detail = await getCase(requestId);
@@ -64,6 +68,8 @@ export async function POST(request: Request) {
     // 실패해도 성공을 실패로 뒤집으면 안 된다 — 안 그러면 사용자가 재시도해서
     // 브로드컴에 중복 답변이 생긴다. 그래서 예외를 삼키는 runSideEffect 로만 건드린다.
     await runSideEffect("reply persist", () => client.persist());
+    // 회전된 세션 쿠키를 DB 로 백업(재시작 후 hydrate 로 복원).
+    await runSideEffect("reply session→db", () => persistTeamSessionToDb(teamId));
 
     // 전송에 성공했으면 그 케이스만 즉시 다시 읽어 화면에 바로 보이게 한다.
     // 정기 수집(15분)을 기다리면 자기가 방금 쓴 글이 안 보인다.

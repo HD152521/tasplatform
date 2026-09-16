@@ -39,6 +39,7 @@ import {
   SessionExpiredError, SessionMissingError,
   ensureSessionValid, launchBrowser, openSavedSession, persistSession,
 } from "./session.ts";
+import { hydrateTeamSessionFromDb, persistTeamSessionToDb } from "../lib/sessionStore.ts";
 
 const DRY_RUN = process.argv.includes("--dry-run");
 
@@ -196,6 +197,9 @@ async function main(): Promise<void> {
   let session: CollectSession | null = null;
 
   try {
+    // TAS 재시작으로 로컬 세션/기기 파일이 날아갔을 수 있다 — DB 백업에서 먼저 복원한다.
+    // (파일이 있으면 최신으로 덮어써 DB 를 정본으로 삼는다.)
+    await hydrateTeamSessionFromDb(DEFAULT_TEAM_ID, db);
     session = await acquireSession();
     // 접속하는 순간 서버가 세션 쿠키를 회전시킨다.
     // 갱신분을 저장하지 않으면 파일에 남은 옛 쿠키가 무효화되어 다음 실행이 실패한다.
@@ -254,6 +258,12 @@ async function main(): Promise<void> {
     }
     // 수집 도중에도 쿠키가 갱신되므로 마지막 상태를 한 번 더 저장한다.
     await session.persist();
+    // 회전된 세션·기기신뢰를 DB 로 백업한다(재시작 후 hydrate 로 복원). 실패해도 수집은 성공.
+    try {
+      await persistTeamSessionToDb(DEFAULT_TEAM_ID, db);
+    } catch (error) {
+      console.error("세션 DB 백업 실패(수집 자체는 성공):", error instanceof Error ? error.message : String(error));
+    }
 
     await finishRun(db, runId, {
       status: "success",

@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
+import { DEFAULT_TEAM_ID } from "../lib/config.ts";
 import { getSessionStatus } from "../lib/sessionFile.ts";
+import { hydrateTeamSessionFromDb } from "../lib/sessionStore.ts";
 import { countsForNav } from "../lib/queries.ts";
 import { AuthNav } from "./AuthNav.tsx";
 import { SideNav } from "./SideNav.tsx";
@@ -13,6 +15,12 @@ export const metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
+  // 재시작으로 세션 파일이 없으면 DB 백업에서 복원한다(파일이 있으면 즉시 반환 — 저렴).
+  try {
+    await hydrateTeamSessionFromDb(DEFAULT_TEAM_ID);
+  } catch {
+    // 세션 복원 실패가 화면 렌더를 막지 않는다.
+  }
   const session = getSessionStatus();
   const signedIn = session.exists && !session.expired;
 

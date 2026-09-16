@@ -15,6 +15,7 @@ import { createCase } from "../lib/createCase.ts";
 import { hasTeamSession } from "../lib/requestAudit.ts";
 import { refreshCaseThreads, refreshOpenCases } from "../lib/refreshCase.ts";
 import { postReply } from "../lib/reply.ts";
+import { hydrateTeamSessionFromDb, persistTeamSessionToDb } from "../lib/sessionStore.ts";
 import { getSummary } from "../lib/summary.ts";
 import type { GetSummaryDeps } from "./readTools.ts";
 import type { WriteDeps } from "./writeTools.ts";
@@ -27,6 +28,8 @@ export const writeDeps: WriteDeps = {
   createCase,
   refreshCaseThreads,
   refreshOpenCases,
+  hydrateSession: hydrateTeamSessionFromDb,
+  persistSession: persistTeamSessionToDb,
 };
 
 export const summaryDeps: GetSummaryDeps = {

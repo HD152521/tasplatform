@@ -4,6 +4,7 @@ import { fetchClient } from "../../../collector/httpClient.ts";
 import { sessionFileForTeam } from "../../../lib/config.ts";
 import { refreshOpenCases } from "../../../lib/refreshCase.ts";
 import { hasTeamSession, recordWriteAudit, resolveActorTeam, runSideEffect } from "../../../lib/requestAudit.ts";
+import { hydrateTeamSessionFromDb, persistTeamSessionToDb } from "../../../lib/sessionStore.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,6 +39,9 @@ export async function POST(request: Request) {
   }
   const { actor, teamId } = actorTeam;
 
+  // 재시작으로 로컬 세션 파일이 없을 수 있으니 DB 백업에서 먼저 복원한다(hasTeamSession 전).
+  await hydrateTeamSessionFromDb(teamId);
+
   // 쓰기 시도 전에 세션 파일부터 확인한다. 없으면 브로드컴에 요청조차 보내지 않는다.
   // fetchClient 는 SessionExpiredError/SessionMissingError 를 던지지 않으므로
   // (그건 브라우저 로그인 경로 전용), 세션 없음은 반드시 여기서 걸러야 한다.
@@ -64,6 +68,8 @@ export async function POST(request: Request) {
     // 새로고침)가 실패해도 성공을 실패로 뒤집으면 안 된다 — 안 그러면 사용자가
     // 재시도해서 브로드컴에 중복 케이스가 생긴다. 그래서 runSideEffect 로만 건드린다.
     await runSideEffect("create persist", () => client.persist());
+    // 회전된 세션 쿠키를 DB 로 백업(재시작 후 hydrate 로 복원).
+    await runSideEffect("create session→db", () => persistTeamSessionToDb(teamId));
 
     // 새 케이스는 DB 에 행 자체가 없다. 진행중 목록을 한 번 받아 채워 넣는다.
     if (result.ok) {
