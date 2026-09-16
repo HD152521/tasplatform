@@ -20,6 +20,10 @@ export type { Db } from "./dbCore.ts";
 export async function openDb(file?: string): Promise<Db> {
   const target = file ? { dialect: "sqlite" as const, file } : resolveDbTarget();
   const db = createDb(target);
+  // 전용 스키마를 쓰면 먼저 만든다(공유 DB 에서 다른 앱과 격리). search_path 는 이미 그 스키마다.
+  if (target.dialect === "postgres" && target.schema && target.schema !== "public") {
+    await db.exec(`CREATE SCHEMA IF NOT EXISTS "${target.schema}"`);
+  }
   await db.exec(schemaSqlFor(db.dialect));
   await migrate(db);
   await seedDefaults(db);
@@ -77,8 +81,10 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: string 
 /** 테이블의 현재 컬럼 이름 집합(방언별 조회). */
 async function columnNames(db: Db, table: string): Promise<Set<string>> {
   if (db.dialect === "postgres") {
+    // 현재 스키마(search_path)로 한정한다 — 공유 DB 의 public 에 같은 이름 테이블이 있어도
+    // 우리 스키마의 컬럼만 본다.
     const rows = await db.all<{ column_name: string }>(
-      "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+      "SELECT column_name FROM information_schema.columns WHERE table_name = ? AND table_schema = current_schema()",
       [table],
     );
     return new Set(rows.map((r) => r.column_name));

@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"test/**/*.test.ts\"",
+    "test": "node scripts/test.mjs",
     "capture": "node collector/capture.ts",
     "collect:cve": "node collector/collect-cves.ts",
     "translate:cve": "node collector/translate-cves.ts",

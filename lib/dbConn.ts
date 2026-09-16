@@ -18,6 +18,24 @@ export interface DbTarget {
   file?: string;
   /** postgres 전용 */
   connectionString?: string;
+  /** postgres 전용. 우리 테이블을 담을 전용 스키마(공유 DB 에서 이름 충돌·소유권 격리). */
+  schema?: string;
+}
+
+const PG_SCHEMA_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * 우리 앱 전용 Postgres 스키마. 공유 인스턴스에서 다른 앱과 테이블 이름이 겹치지 않도록
+ * 별도 네임스페이스에 둔다. SR_PG_SCHEMA 미설정이면 public(기존 동작).
+ * 식별자만 허용한다 — search_path/DDL 에 문자열로 들어가므로 주입을 막는다.
+ */
+export function pgSchema(): string {
+  const raw = (process.env.SR_PG_SCHEMA ?? "").trim();
+  if (raw === "") return "public";
+  if (!PG_SCHEMA_PATTERN.test(raw) || raw.length > 63) {
+    throw new Error(`SR_PG_SCHEMA 형식이 올바르지 않습니다(식별자만): ${JSON.stringify(raw)}`);
+  }
+  return raw;
 }
 
 interface VcapCredentials {
@@ -77,10 +95,10 @@ export function parseVcapPostgres(raw: string | undefined): string | null {
 
 export function resolveDbTarget(): DbTarget {
   const url = (process.env.DATABASE_URL ?? "").trim();
-  if (url.startsWith("postgres")) return { dialect: "postgres", connectionString: url };
+  if (url.startsWith("postgres")) return { dialect: "postgres", connectionString: url, schema: pgSchema() };
 
   const fromVcap = parseVcapPostgres(process.env.VCAP_SERVICES);
-  if (fromVcap) return { dialect: "postgres", connectionString: fromVcap };
+  if (fromVcap) return { dialect: "postgres", connectionString: fromVcap, schema: pgSchema() };
 
   return { dialect: "sqlite", file: (process.env.SR_DB_FILE ?? "").trim() || DB_FILE };
 }
