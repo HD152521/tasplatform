@@ -1,0 +1,32 @@
+# TAS 배포 manifest — web / mcp 두 앱.
+# worker(수집기)는 앱이 아니라 Scheduler 잡으로 등록한다(아래 deploy.sh 주석 참고).
+#
+# ⚠ 선결(안 하면 런타임이 제대로 안 돎):
+#   - SQLite → Postgres 이전 + 세션/기기신뢰를 DB 로 (TAS 파일시스템은 ephemeral)
+#   - 빌드팩 Node 버전 확인(문서 예시는 22; 우리는 .ts 실행/ node:sqlite 때문에 24 필요)
+#   - 시크릿은 cf set-env / CredHub: SR_SECRET_KEY, SR_USERNAME, SR_PASSWORD
+
+applications:
+  - name: broadcom-sr-web
+    buildpacks:
+      - nodejs_buildpack
+    command: npm start          # next start (.next 빌드 필요)
+    memory: 512M
+    instances: 1
+    env:
+      NODE_ENV: production
+      TZ: Asia/Seoul
+    # services:
+    #   - sr-postgres           # Postgres 이전 후 바인딩
+
+  - name: broadcom-sr-mcp
+    buildpacks:
+      - nodejs_buildpack
+    command: node --conditions=react-server mcp/server.ts   # TODO: prod 는 JS 컴파일 권장
+    memory: 512M
+    instances: 1
+    env:
+      HOST: 0.0.0.0             # 라우트는 GoRouter 가 TLS 종단
+      TZ: Asia/Seoul
+    # services:
+    #   - sr-postgres
