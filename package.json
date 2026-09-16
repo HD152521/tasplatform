@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "login": "node collector/login.ts",
+    "seed:session": "node scripts/seed-session.ts",
     "collect": "node collector/collect.ts",
     "dev": "next dev",
     "build": "next build",
