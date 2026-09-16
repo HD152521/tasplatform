@@ -13,7 +13,7 @@
  *
  * server-only 를 붙이지 않는다. 수집기(Node)에서 부른다.
  */
-import { OpenAiError, chat, hasOpenAi } from "./openaiClient.ts";
+import { OpenAiError, chat, hasOpenAi } from "./aiChat.ts";
 
 /** 요약에 쓸 본문 길이 상한. 실측 답변은 2천자 미만이라 잘릴 일이 거의 없다. */
 const BODY_LIMIT = 6000;

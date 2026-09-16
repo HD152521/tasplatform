@@ -37,6 +37,7 @@ export function SideNav({
     { href: "/report", label: "정기점검", count: null, badge: 0 },
     { href: "/logs", label: "수집 로그", count: null, badge: 0 },
     { href: "/settings", label: "연동 설정", count: null, badge: 0 },
+    { href: "/settings/llm", label: "LLM 연결", count: null, badge: 0 },
   ];
 
   return (

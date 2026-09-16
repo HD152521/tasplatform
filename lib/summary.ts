@@ -10,7 +10,7 @@
 import "server-only";
 import { openDb } from "./db.ts";
 import { isoNow } from "./dates.ts";
-import { chat } from "./openai.ts";
+import { chat } from "./ai.ts";
 import { CONFLUENCE_SYSTEM_PROMPT, CONFLUENCE_USER_PREFIX } from "./summaryPrompt.ts";
 import { getCase, listThreads } from "./queries.ts";
 import { buildSourceText } from "./srReportFormat.ts";

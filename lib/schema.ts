@@ -249,4 +249,30 @@ CREATE TABLE IF NOT EXISTS team_integrations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_team_integrations_team ON team_integrations(team_id);
+
+-- LLM 연결 설정.
+-- 지금은 전역 단일 활성 연결(llm_id='default'). 앞으로 여러 개가 필요하면 id 로 늘린다.
+-- 요약·리포트·답변요약이 이 설정을 읽어 OpenAI 대신 지정한 엔드포인트를 쓴다.
+-- auth_kind:
+--   keycloak = 호출마다 token_url 에서 액세스 토큰 발급(비밀번호 그랜트) 후 Bearer 로 사용
+--   bearer   = secret_enc 를 그대로 Bearer 토큰(API 키)으로 사용
+--   none     = 인증 헤더 없음
+-- secret_enc 는 비밀번호(또는 API 키)를 AES-256-GCM 으로 암호화한 것(lib/secretBox.ts).
+-- 평문은 여기 절대 들어가지 않는다. 키(SR_SECRET_KEY)가 없으면 저장을 거부한다.
+CREATE TABLE IF NOT EXISTS llm_connections (
+  llm_id        TEXT PRIMARY KEY,
+  name          TEXT    NOT NULL DEFAULT '',
+  model_id      TEXT    NOT NULL DEFAULT '',
+  base_url      TEXT    NOT NULL DEFAULT '',
+  auth_kind     TEXT    NOT NULL DEFAULT 'keycloak',
+  token_url     TEXT    NOT NULL DEFAULT '',
+  client_id     TEXT    NOT NULL DEFAULT '',
+  auth_username TEXT    NOT NULL DEFAULT '',
+  secret_enc    TEXT    NOT NULL DEFAULT '',
+  chat_path     TEXT    NOT NULL DEFAULT '/v1/chat/completions',
+  max_tokens    INTEGER NOT NULL DEFAULT 512,
+  temperature   REAL    NOT NULL DEFAULT 0.1,
+  system_prompt TEXT    NOT NULL DEFAULT '',
+  updated_at    TEXT    NOT NULL DEFAULT ''
+);
 `;

@@ -14,7 +14,7 @@
  */
 import "server-only";
 import { openDb } from "./db.ts";
-import { chat } from "./openai.ts";
+import { chat } from "./ai.ts";
 import { isoNow } from "./dates.ts";
 import { getCase, listThreads } from "./queries.ts";
 import { buildSourceText, parseSrReport, type SrReport } from "./srReportFormat.ts";
