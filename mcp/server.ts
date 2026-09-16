@@ -32,7 +32,10 @@ import {
 import { summaryDeps, writeDeps } from "./serverDeps.ts";
 import { createSrHandler, replyHandler } from "./writeTools.ts";
 
-const PORT = Number(process.env.MCP_PORT ?? 3900);
+// Cloud Foundry/TAS 는 앱이 반드시 자기가 지정한 $PORT 에 바인딩하길 요구한다
+// (그 포트로 헬스체크를 한다). 그래서 PORT 를 최우선으로 본다. 없으면(로컬)
+// MCP_PORT, 그것도 없으면 3900.
+const PORT = Number(process.env.PORT ?? process.env.MCP_PORT ?? 3900);
 /**
  * 안전기본: 명시하지 않으면 루프백(127.0.0.1)에만 바인딩한다.
  * 배포에서 외부로 열려면 HOST=0.0.0.0 을 명시적으로 줘야 한다 — TLS 없이
