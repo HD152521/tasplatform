@@ -1,12 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { htmlToText, isOurThread, selectChangedCases, selectNewReplies } from "../lib/diff.ts";
 import type { RequestThreadVo, SearchResultItem, UnifiedHistoryEntry } from "../lib/types.ts";
 
+// captured/ 는 조사단계 캡처(실제 고객 SR 응답)라 커밋하지 않는다(.gitignore).
+// 배포/CI 처럼 픽스처가 없는 환경에서는 이 픽스처에 의존하는 테스트를 건너뛴다.
+const FIXTURE = "captured/094_get_unified_history.json";
+const SKIP_NO_FIXTURE = existsSync(FIXTURE) ? false : "captured 픽스처 없음";
+
 /** 실제 캡처된 응답을 픽스처로 쓴다. */
 function realThreads(): RequestThreadVo[] {
-  const raw = JSON.parse(readFileSync("captured/094_get_unified_history.json", "utf8")) as {
+  const raw = JSON.parse(readFileSync(FIXTURE, "utf8")) as {
     response_preview: string;
   };
   const body = JSON.parse(raw.response_preview) as {
@@ -42,7 +47,7 @@ test("lastUpdated 가 달라지면 변경으로 잡는다", () => {
   assert.equal(changes[0]?.reason, "updated");
 });
 
-test("실제 캡처된 스레드는 Broadcom 답변으로 판정된다", () => {
+test("실제 캡처된 스레드는 Broadcom 답변으로 판정된다", { skip: SKIP_NO_FIXTURE }, () => {
   const threads = realThreads();
   assert.ok(threads.length >= 2);
   for (const t of threads) {
@@ -59,14 +64,14 @@ test("작성자를 알 수 없으면 답변으로 간주한다 (놓치지 않기
   assert.equal(isOurThread({ creatorFlag: false, createdUserUnitName: "" }), false);
 });
 
-test("이미 아는 스레드는 새 답변이 아니다", () => {
+test("이미 아는 스레드는 새 답변이 아니다", { skip: SKIP_NO_FIXTURE }, () => {
   const threads = realThreads();
   const knownAll = new Set(threads.map((t) => t.requestThreadId));
   assert.equal(selectNewReplies(threads, knownAll).length, 0);
   assert.equal(selectNewReplies(threads, new Set()).length, threads.length);
 });
 
-test("우리 글만 추가되면 새 답변 0건", () => {
+test("우리 글만 추가되면 새 답변 0건", { skip: SKIP_NO_FIXTURE }, () => {
   const ours: RequestThreadVo = {
     ...realThreads()[0]!, requestThreadId: 999, creatorFlag: true,
     createdUserUnitName: "데이터솔루션",
@@ -78,7 +83,7 @@ test("htmlToText 가 태그와 엔티티를 정리한다", () => {
   assert.equal(htmlToText("<p>Hi&nbsp;team</p><p>Thanks</p>"), "Hi team\n\nThanks");
 });
 
-test("내부/외부 중복 답변은 알림에서 한 건으로 합친다", async () => {
+test("내부/외부 중복 답변은 알림에서 한 건으로 합친다", { skip: SKIP_NO_FIXTURE }, async () => {
   const { dedupeReplies } = await import("../lib/diff.ts");
   const base = realThreads()[0]!;
   const pair = [
@@ -89,7 +94,7 @@ test("내부/외부 중복 답변은 알림에서 한 건으로 합친다", asyn
   assert.equal(dedupeReplies(pair).length, 1);
 });
 
-test("시간 간격이 크면 별개 답변으로 둔다", async () => {
+test("시간 간격이 크면 별개 답변으로 둔다", { skip: SKIP_NO_FIXTURE }, async () => {
   const { dedupeReplies } = await import("../lib/diff.ts");
   const base = realThreads()[0]!;
   const pair = [
@@ -100,7 +105,7 @@ test("시간 간격이 크면 별개 답변으로 둔다", async () => {
   assert.equal(dedupeReplies(pair).length, 2);
 });
 
-test("다른 케이스의 같은 문구는 합치지 않는다", async () => {
+test("다른 케이스의 같은 문구는 합치지 않는다", { skip: SKIP_NO_FIXTURE }, async () => {
   const { dedupeReplies } = await import("../lib/diff.ts");
   const base = realThreads()[0]!;
   const pair = [
