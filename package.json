@@ -7,6 +7,7 @@
     "login": "node collector/login.ts",
     "seed:session": "node scripts/seed-session.ts",
     "collect": "node collector/collect.ts",
+    "worker": "node collector/worker.ts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
