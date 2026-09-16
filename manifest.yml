@@ -1,10 +1,16 @@
 # TAS 배포 manifest — web / mcp 두 앱.
-# worker(수집기)는 앱이 아니라 Scheduler 잡으로 등록한다(아래 deploy.sh 주석 참고).
+# worker(수집기)는 아직 앱이 아니다(M2 에서 앱 내부 루프로 추가 예정). 지금은 필요 시
+# cf run-task 로 1회 실행한다(deploy.sh 참고).
 #
-# ⚠ 선결(안 하면 런타임이 제대로 안 돎):
-#   - SQLite → Postgres 이전 + 세션/기기신뢰를 DB 로 (TAS 파일시스템은 ephemeral)
-#   - 빌드팩 Node 버전 확인(문서 예시는 22; 우리는 .ts 실행/ node:sqlite 때문에 24 필요)
-#   - 시크릿은 cf set-env / CredHub: SR_SECRET_KEY, SR_USERNAME, SR_PASSWORD
+# 데이터: 두 앱이 sr-postgres 서비스를 바인딩한다. 앱은 VCAP_SERVICES 에서 접속정보를
+#   읽어(lib/dbConn.ts) Postgres 에 붙고, 첫 起動에 스키마를 자동 생성한다(lib/db.ts).
+#   서비스 인스턴스는 deploy.sh 5단계가 없으면 만든다(또는 안내한다).
+#
+# ⚠ 세션/기기신뢰는 아직 로컬 파일이다(session.json/device.json). Postgres 로 데이터는
+#   유지되지만, 재시작 시 로그인 세션은 날아간다(수집기 재로그인 필요). 세션 DB화는 다음 단계.
+#
+# ⚠ 시크릿(SR_SECRET_KEY/SR_USERNAME/SR_PASSWORD 등)은 .env(루트, .cfignore 로 push 포함)
+#   또는 cf set-env 로 넣는다. manifest 에는 비밀값을 두지 않는다.
 
 applications:
   - name: broadcom-sr-web
@@ -16,8 +22,8 @@ applications:
     env:
       NODE_ENV: production
       TZ: Asia/Seoul
-    # services:
-    #   - sr-postgres           # Postgres 이전 후 바인딩
+    services:
+      - sr-postgres
 
   - name: broadcom-sr-mcp
     buildpacks:
@@ -28,5 +34,5 @@ applications:
     env:
       HOST: 0.0.0.0             # 라우트는 GoRouter 가 TLS 종단
       TZ: Asia/Seoul
-    # services:
-    #   - sr-postgres
+    services:
+      - sr-postgres
