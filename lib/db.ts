@@ -20,14 +20,43 @@ export type { Db } from "./dbCore.ts";
 export async function openDb(file?: string): Promise<Db> {
   const target = file ? { dialect: "sqlite" as const, file } : resolveDbTarget();
   const db = createDb(target);
-  // 전용 스키마를 쓰면 먼저 만든다(공유 DB 에서 다른 앱과 격리). search_path 는 이미 그 스키마다.
-  if (target.dialect === "postgres" && target.schema && target.schema !== "public") {
-    await db.exec(`CREATE SCHEMA IF NOT EXISTS "${target.schema}"`);
+  if (target.dialect === "postgres") {
+    await preparePostgresSchema(db, target.schema ?? "public");
   }
   await db.exec(schemaSqlFor(db.dialect));
   await migrate(db);
   await seedDefaults(db);
   return db;
+}
+
+/**
+ * Postgres 전용 스키마 준비 + 진단 로그.
+ * - 어느 계정/search_path 로 붙는지 起動 로그에 남긴다(다중 바인딩 진단용).
+ * - 전용 스키마를 현재 계정 소유로 만든다(AUTHORIZATION CURRENT_USER).
+ *   이미 다른 계정이 만든 같은 이름 스키마가 있으면 IF NOT EXISTS 로 건너뛰는데,
+ *   그 경우 현재 계정이 그 스키마를 못 써 CREATE TABLE 이 "no schema ..." 로 실패한다
+ *   → 그때는 SR_PG_SCHEMA 를 아무도 안 쓴 새 이름으로 바꾸면 깔끔히 해결된다.
+ */
+async function preparePostgresSchema(db: Db, schema: string): Promise<void> {
+  try {
+    const who = await db.get<{ u: string; sp: string; d: string }>(
+      "SELECT current_user AS u, current_setting('search_path') AS sp, current_database() AS d",
+    );
+    console.log(
+      `[db] postgres db=${who?.d} user=${who?.u} search_path=${who?.sp} target_schema=${schema}`,
+    );
+  } catch {
+    // 진단 실패는 무시한다.
+  }
+  if (schema === "public") return;
+  try {
+    await db.exec(`CREATE SCHEMA IF NOT EXISTS "${schema}" AUTHORIZATION CURRENT_USER`);
+  } catch (error) {
+    console.error(
+      `[db] CREATE SCHEMA ${schema} 실패: ${error instanceof Error ? error.message : String(error)}` +
+        ` — SR_PG_SCHEMA 를 아무도 안 쓴 새 이름으로 바꿔보세요.`,
+    );
+  }
 }
 
 /** 기본 팀이 없으면 만든다. 기존 케이스가 이 팀에 귀속되므로 반드시 존재해야 한다. */
