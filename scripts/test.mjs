@@ -9,6 +9,10 @@
 import { spawn } from "node:child_process";
 
 const env = { ...process.env };
+// 테스트 중 .env 를 읽지 않게 한다(loadEnv 가드). 이게 없으면 config/서버가 로드될 때
+// loadEnv 가 .env 를 다시 읽어 DATABASE_URL 을 되살린다.
+env.SR_SKIP_DOTENV = "1";
+// 혹시 셸에서 export 된 값이 있어도 테스트로 새지 않게 제거(방어).
 for (const key of ["DATABASE_URL", "VCAP_SERVICES", "SR_PG_SCHEMA", "SR_DB_FILE"]) {
   delete env[key];
 }

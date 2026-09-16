@@ -7,6 +7,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 export function loadEnv(file = ".env"): void {
+  // 테스트(SR_SKIP_DOTENV)에서는 기본 .env 를 읽지 않는다 — 프로덕션 .env 의 DATABASE_URL
+  // 등이 테스트로 새어 도달 불가한 실제 DB 에 붙으려다 터지는 것을 막는다. 명시적 파일을
+  // 넘긴 호출(env.test.ts 등)은 그대로 동작한다.
+  if (file === ".env" && process.env.SR_SKIP_DOTENV) return;
   const path = resolve(file);
   if (!existsSync(path)) return;
 
