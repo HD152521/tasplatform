@@ -1,0 +1,161 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'IBM Plex Sans KR', -apple-system, 'Segoe UI', system-ui, sans-serif;
+      color: #14171a;
+      background: #f4f5f7;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: #1a56db; text-decoration: none; }
+    a:hover { color: #143f9e; }
+    .mono { font-family: ui-monospace, 'SF Mono', Consolas, monospace; font-variant-numeric: tabular-nums; }
+    button { font-family: inherit; }
+  </style>
+</helmet>
+
+<div style="height: 900px; overflow: auto; padding: 30px 34px 40px;">
+
+  <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 6px; letter-spacing: -0.02em;">수집 상태</h1>
+  <p style="margin: 0 0 22px; font-size: 13px; color: #6b7280;">15분마다 자동으로 케이스를 가져옵니다.</p>
+
+  <!-- 건강 상태 : 지금 믿을 수 있는 데이터인가를 한 줄로 -->
+  <div style="{{health.style}}">
+    <span style="{{health.dot}}"></span>
+    <div style="min-width: 0;">
+      <div style="font-size: 14px; font-weight: 600;">{{health.title}}</div>
+      <div style="font-size: 13px; margin-top: 3px; opacity: .88; line-height: 1.6;">{{health.detail}}</div>
+    </div>
+    <sc-if value="{{health.needsAction}}" hint-placeholder-val="{{false}}">
+      <button style="margin-left: auto; flex-shrink: 0; padding: 8px 14px; font-size: 13px; font-weight: 600; color: #ffffff; background: #b42318; border: none; border-radius: 8px; cursor: pointer;">
+        다시 로그인
+      </button>
+    </sc-if>
+  </div>
+
+  <!-- 요약 지표 -->
+  <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 20px 0 26px;">
+    <sc-for list="{{stats}}" as="s" hint-placeholder-count="4">
+      <div style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 15px 17px;">
+        <div style="font-size: 11px; color: #9aa1ac; letter-spacing: 0.02em;">{{s.label}}</div>
+        <div class="mono" style="{{s.valueStyle}}">{{s.value}}</div>
+        <div style="font-size: 11px; color: #9aa1ac; margin-top: 3px;">{{s.note}}</div>
+      </div>
+    </sc-for>
+  </div>
+
+  <!-- 실행 이력 -->
+  <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 11px;">
+    <h2 style="font-size: 14px; font-weight: 600; margin: 0;">실행 이력</h2>
+    <span style="font-size: 12px; color: #9aa1ac;">최근 8회</span>
+  </div>
+
+  <div style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;">
+    <div style="display: grid; grid-template-columns: 148px 116px 1fr 78px 78px 92px; gap: 12px; padding: 10px 18px; border-bottom: 1px solid #eef0f3; background: #fafbfc; font-size: 11px; color: #9aa1ac; letter-spacing: 0.02em;">
+      <span>시각</span><span>결과</span><span>비고</span>
+      <span style="text-align: right;">케이스</span><span style="text-align: right;">변경</span><span style="text-align: right;">새 답변</span>
+    </div>
+
+    <sc-for list="{{runs}}" as="r" hint-placeholder-count="8">
+      <div style="{{r.rowStyle}}">
+        <span class="mono" style="font-size: 12px; color: #4b5563;">{{r.at}}</span>
+        <span><span style="{{r.badgeStyle}}">{{r.label}}</span></span>
+        <span style="font-size: 12px; color: #9aa1ac; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{r.note}}</span>
+        <span class="mono" style="{{r.numStyle}}">{{r.cases}}</span>
+        <span class="mono" style="{{r.numStyle}}">{{r.changed}}</span>
+        <span class="mono" style="{{r.repliesStyle}}">{{r.replies}}</span>
+      </div>
+    </sc-for>
+  </div>
+
+  <p style="margin: 14px 2px 0; font-size: 12px; color: #9aa1ac; line-height: 1.75;">
+    조회하지 못한 회차는 건수를 <span class="mono" style="color: #6b7280;">—</span> 로 표시합니다.
+    <b style="color: #6b7280; font-weight: 600;">0</b>으로 적으면 “새 답변이 없다”는 뜻으로 읽히기 때문입니다.
+  </p>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "session": {"editor": "enum", "default": "healthy", "options": ["healthy", "expired"], "section": "상태"}
+}'>
+class Component extends DCLogic {
+  renderVals() {
+    const expired = (this.props.session ?? 'healthy') === 'expired';
+
+    const runs = [
+      { at: '09-03 11:00', kind: 'ok', cases: 298, changed: 0, replies: 0, note: '' },
+      { at: '09-03 10:45', kind: 'ok', cases: 298, changed: 2, replies: 2, note: '' },
+      { at: '09-03 10:30', kind: 'ok', cases: 298, changed: 0, replies: 0, note: '' },
+      { at: '09-03 10:15', kind: 'expired', cases: '—', changed: '—', replies: '—', note: '세션 만료 — 다시 로그인 필요' },
+      { at: '09-03 10:00', kind: 'ok', cases: 297, changed: 1, replies: 1, note: '' },
+      { at: '09-03 09:45', kind: 'fail', cases: '—', changed: '—', replies: '—', note: '브라우저 실행 실패 (재시도됨)' },
+      { at: '09-03 09:30', kind: 'ok', cases: 297, changed: 0, replies: 0, note: '' },
+      { at: '09-03 09:15', kind: 'ok', cases: 297, changed: 8, replies: 12, note: '' }
+    ];
+
+    const tone = {
+      ok: { fg: '#067647', bg: '#ecfdf3', label: '정상' },
+      expired: { fg: '#b42318', bg: '#fef3f2', label: '세션 만료' },
+      fail: { fg: '#b42318', bg: '#fef3f2', label: '실패' }
+    };
+
+    return {
+      health: expired
+        ? {
+            title: '세션이 만료되어 마지막 수집이 실패했습니다',
+            detail: '아래 건수는 10:00 기준이며 최신이 아닙니다. 새 답변이 없다는 뜻이 아닙니다.',
+            needsAction: true,
+            dot: 'width: 9px; height: 9px; border-radius: 50%; background: #b42318; margin-top: 6px; flex-shrink: 0;',
+            style: 'display: flex; gap: 13px; padding: 17px 19px; border-radius: 12px; color: #7a1c12; background: #fef3f2; border: 1px solid #f3c7c2;'
+          }
+        : {
+            title: '정상 수집 중',
+            detail: '12분 전 완료 · 다음 실행 11:15 · 세션은 오늘 21:41까지 유효합니다.',
+            needsAction: false,
+            dot: 'width: 9px; height: 9px; border-radius: 50%; background: #067647; margin-top: 6px; flex-shrink: 0;',
+            style: 'display: flex; gap: 13px; padding: 17px 19px; border-radius: 12px; color: #04502f; background: #ecfdf3; border: 1px solid #b9e6cd;'
+          },
+
+      stats: [
+        { label: '케이스', value: '298', note: '진행중 8 · 종료 290',
+          valueStyle: 'font-size: 24px; font-weight: 600; margin-top: 5px; letter-spacing: -0.02em;' },
+        { label: '오늘 새 답변', value: '15', note: '미확인 2건',
+          valueStyle: 'font-size: 24px; font-weight: 600; margin-top: 5px; color: #b42318; letter-spacing: -0.02em;' },
+        { label: '수집 성공률', value: '96%', note: '최근 24시간',
+          valueStyle: 'font-size: 24px; font-weight: 600; margin-top: 5px; letter-spacing: -0.02em;' },
+        { label: '회당 요청', value: '4', note: '사람 1회 접속 ≈ 29',
+          valueStyle: 'font-size: 24px; font-weight: 600; margin-top: 5px; letter-spacing: -0.02em;' }
+      ],
+
+      runs: runs.map((r) => {
+        const t = tone[r.kind];
+        const dim = r.kind !== 'ok';
+        return {
+          at: r.at, note: r.note, cases: r.cases, changed: r.changed, replies: r.replies,
+          label: t.label,
+          rowStyle: 'display: grid; grid-template-columns: 148px 116px 1fr 78px 78px 92px; gap: 12px; align-items: center; padding: 12px 18px; border-bottom: 1px solid #f0f1f4; background: ' +
+            (dim ? '#fffdfb' : '#ffffff') + ';',
+          badgeStyle: 'font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 5px; white-space: nowrap; color: ' +
+            t.fg + '; background: ' + t.bg + ';',
+          numStyle: 'font-size: 13px; text-align: right; color: ' + (dim ? '#c7ccd4' : '#4b5563') + ';',
+          repliesStyle: 'font-size: 13px; text-align: right; font-weight: ' +
+            (!dim && r.replies > 0 ? '700' : '400') + '; color: ' +
+            (dim ? '#c7ccd4' : (r.replies > 0 ? '#b42318' : '#4b5563')) + ';'
+        };
+      })
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,248 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'IBM Plex Sans KR', -apple-system, 'Segoe UI', system-ui, sans-serif;
+      color: #14171a;
+      background: #f4f5f7;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: #1a56db; text-decoration: none; }
+    a:hover { color: #143f9e; }
+    .mono { font-family: ui-monospace, 'SF Mono', Consolas, monospace; font-variant-numeric: tabular-nums; }
+    .file:hover { background: #f2f5fa; border-color: #c7d2e4; }
+    button { font-family: inherit; }
+  </style>
+</helmet>
+
+<div style="display: flex; flex-direction: column; height: 900px;">
+
+  <!-- 케이스 헤더 -->
+  <header style="background: #ffffff; border-bottom: 1px solid #e5e7eb; padding: 16px 32px 0; flex-shrink: 0;">
+    <div style="font-size: 12px; color: #6b7280; margin-bottom: 10px;">
+      <a href="#">진행중 케이스</a>
+      <span style="color: #c7ccd4; margin: 0 6px;">/</span>
+      <span class="mono">37074119</span>
+    </div>
+
+    <div style="display: flex; align-items: flex-start; gap: 18px;">
+      <div style="min-width: 0; flex: 1;">
+        <div style="display: flex; align-items: center; gap: 9px; margin-bottom: 7px;">
+          <span style="font-size: 11px; font-weight: 500; color: #067647; background: #ecfdf3; padding: 2px 8px; border-radius: 5px;">Open</span>
+          <span style="font-size: 11px; font-weight: 600; color: #b42318; background: #fef3f2; padding: 2px 8px; border-radius: 5px;">새 답변 2</span>
+          <span style="font-size: 11px; color: #6b7280;">Medium · P3</span>
+        </div>
+        <h1 style="font-size: 20px; font-weight: 600; margin: 0; line-height: 1.35; letter-spacing: -0.015em; text-wrap: pretty;">
+          [TAS] No CredHub domain identified
+        </h1>
+        <div style="display: flex; gap: 14px; margin-top: 9px; font-size: 12px; color: #6b7280;">
+          <span style="font-weight: 500; color: #4b5563;">NONGHYUP BANK (NH BANK)</span>
+          <span style="color: #d6dae0;">·</span>
+          <span>VMware Tanzu Application Service</span>
+          <span style="color: #d6dae0;">·</span>
+          <span>등록 09-01 23:57</span>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 8px; flex-shrink: 0;">
+        <button style="padding: 8px 13px; font-size: 13px; font-weight: 500; color: #14171a; background: #ffffff; border: 1px solid #dfe3e9; border-radius: 8px; cursor: pointer;">
+          포털에서 열기
+        </button>
+      </div>
+    </div>
+
+    <!-- 대화 필터 : 길어진 스레드에서 Broadcom 답변만 골라보기 -->
+    <div style="display: flex; gap: 4px; margin-top: 16px;">
+      <sc-for list="{{tabs}}" as="t" hint-placeholder-count="3">
+        <button onClick="{{t.pick}}" style="{{t.style}}">{{t.label}} <span style="{{t.countStyle}}">{{t.count}}</span></button>
+      </sc-for>
+    </div>
+  </header>
+
+  <div style="flex: 1; display: flex; min-height: 0;">
+
+    <!-- 대화 -->
+    <section style="flex: 1; min-width: 0; overflow: auto; padding: 24px 32px 40px;">
+
+      <!-- 최초 등록 내용 : 우리가 무엇을 물었는지가 맨 위에 -->
+      <sc-if value="{{showOpening}}" hint-placeholder-val="{{true}}">
+        <article style="border: 1px solid #e5e7eb; border-radius: 12px; background: #ffffff; padding: 18px 20px; margin-bottom: 18px;">
+          <div style="display: flex; align-items: center; gap: 9px; margin-bottom: 11px;">
+            <span style="width: 26px; height: 26px; border-radius: 7px; background: #eef1f6; color: #4b5563; font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center;">우리</span>
+            <span style="font-size: 13px; font-weight: 600;">최초 등록 내용</span>
+            <span style="margin-left: auto; font-size: 12px; color: #9aa1ac;">01-September 23:57</span>
+          </div>
+          <p style="margin: 0; font-size: 14px; line-height: 1.75; color: #374151; white-space: pre-line;">In the TPCF configuration, the domains for UAA, API, and other components are identified, but no domain is assigned to CredHub.
+
+Could you confirm whether CredHub requires its own domain entry, and what the impact would be if it is left unset?</p>
+        </article>
+      </sc-if>
+
+      <sc-for list="{{messages}}" as="m" hint-placeholder-count="3">
+        <article style="{{m.cardStyle}}">
+          <div style="display: flex; align-items: center; gap: 9px; margin-bottom: 11px;">
+            <span style="{{m.avatarStyle}}">{{m.initial}}</span>
+            <span style="font-size: 13px; font-weight: 600;">{{m.who}}</span>
+            <sc-if value="{{m.isLatest}}" hint-placeholder-val="{{true}}">
+              <span style="font-size: 11px; font-weight: 600; color: #b42318; background: #fef3f2; padding: 2px 7px; border-radius: 5px;">최신</span>
+            </sc-if>
+            <span style="margin-left: auto; font-size: 12px; color: #9aa1ac;">{{m.at}}</span>
+          </div>
+
+          <p style="margin: 0; font-size: 14px; line-height: 1.75; color: #374151; white-space: pre-line;">{{m.body}}</p>
+
+          <sc-if value="{{m.hasFiles}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top: 13px; display: flex; flex-direction: column; gap: 6px;">
+              <sc-for list="{{m.files}}" as="f" hint-placeholder-count="1">
+                <a class="file" href="#" style="display: flex; align-items: center; gap: 10px; padding: 8px 11px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fafbfc; text-decoration: none;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>
+                  </svg>
+                  <span style="font-size: 13px; color: #1a56db; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{f.name}}</span>
+                  <span class="mono" style="margin-left: auto; font-size: 11px; color: #9aa1ac; flex-shrink: 0;">{{f.size}}</span>
+                </a>
+              </sc-for>
+            </div>
+          </sc-if>
+        </article>
+      </sc-for>
+    </section>
+
+    <!-- 오른쪽 레일 -->
+    <aside style="width: 288px; flex-shrink: 0; border-left: 1px solid #e5e7eb; background: #ffffff; overflow: auto; padding: 22px 20px;">
+
+      <div style="font-size: 11px; font-weight: 600; color: #9aa1ac; letter-spacing: 0.04em; margin-bottom: 12px;">진행 상황</div>
+      <div style="display: flex; flex-direction: column; gap: 11px; margin-bottom: 26px;">
+        <sc-for list="{{facts}}" as="k" hint-placeholder-count="5">
+          <div style="display: flex; align-items: baseline; gap: 10px; font-size: 13px;">
+            <span style="width: 76px; flex-shrink: 0; color: #9aa1ac; font-size: 12px;">{{k.label}}</span>
+            <span style="{{k.valueStyle}}">{{k.value}}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="font-size: 11px; font-weight: 600; color: #9aa1ac; letter-spacing: 0.04em; margin-bottom: 12px;">
+        첨부파일 <span class="mono" style="color: #6b7280;">{{fileCount}}</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <sc-for list="{{allFiles}}" as="f" hint-placeholder-count="3">
+          <a class="file" href="#" style="display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid #eef0f3; border-radius: 8px; text-decoration: none;">
+            <span style="{{f.iconStyle}}">{{f.ext}}</span>
+            <span style="min-width: 0; flex: 1;">
+              <span style="display: block; font-size: 12px; color: #1a56db; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{f.name}}</span>
+              <span class="mono" style="display: block; font-size: 11px; color: #9aa1ac; margin-top: 2px;">{{f.size}} · {{f.at}}</span>
+            </span>
+          </a>
+        </sc-for>
+      </div>
+    </aside>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "accent": {"editor": "color", "default": "#1a56db", "options": ["#1a56db", "#0f766e", "#7c3aed", "#b42318"], "section": "테마"}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { tab: 'all' };
+  }
+
+  data() {
+    return [
+      { who: 'Broadcom Support', ours: false, at: '01-September 23:59',
+        body: 'Hi Team,\n\nMy name is David, and I am a Customer Engineer with Broadcom Tanzu. Thanks for contacting Broadcom Tanzu Support. I have received your request and will begin reviewing the issue.',
+        files: [] },
+      { who: '우리', ours: true, at: '02-September 00:34',
+        body: '확인 감사합니다. 아래 구성 파일과 로그를 함께 전달드립니다. CredHub 도메인 미지정 상태에서 재현된 내용입니다.',
+        files: [{ name: 'credhub_config_20260902.zip', size: '18.4MB' }] },
+      { who: 'Broadcom Support', ours: false, at: '02-September 00:59',
+        body: 'Hi Team,\n\nThanks for reaching out. Here are the answers to your questions regarding CredHub domain configuration:\n\nCredHub does not require a dedicated domain entry in a standard TPCF deployment. It is reached internally over the service network.',
+        files: [] },
+      { who: 'Broadcom Support', ours: false, at: '02-September 01:00', latest: true,
+        body: 'Additionally, if you plan to expose CredHub externally, a separate certificate and domain entry would be required. Could you confirm which of the two setups you are targeting?',
+        files: [] }
+    ];
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#1a56db';
+    const all = this.data();
+    const tab = this.state.tab;
+
+    const mkTab = (key, label, count) => {
+      const on = tab === key;
+      return {
+        label: label,
+        count: count,
+        pick: () => this.setState({ tab: key }),
+        style: 'padding: 7px 13px; font-size: 13px; border: none; background: transparent; cursor: pointer; border-bottom: 2px solid ' +
+          (on ? accent : 'transparent') + '; color: ' + (on ? '#14171a' : '#6b7280') + '; font-weight: ' + (on ? '600' : '400') + ';',
+        countStyle: 'font-size: 11px; color: ' + (on ? '#6b7280' : '#b6bcc5') + '; margin-left: 3px;'
+      };
+    };
+
+    const shown = all.filter((m) => {
+      if (tab === 'them') return !m.ours;
+      if (tab === 'ours') return m.ours;
+      return true;
+    });
+
+    const messages = shown.map((m) => ({
+      who: m.ours ? '우리' : 'Broadcom Support',
+      initial: m.ours ? '우리' : 'BC',
+      at: m.at,
+      body: m.body,
+      isLatest: m.latest === true,
+      files: m.files,
+      hasFiles: m.files.length > 0,
+      cardStyle: 'border: 1px solid ' + (m.latest ? '#f3c7c2' : '#e5e7eb') +
+        '; border-radius: 12px; padding: 18px 20px; margin-bottom: 14px; background: ' +
+        (m.ours ? '#fafbfc' : '#ffffff') + (m.latest ? '; box-shadow: 0 0 0 3px #fef3f2' : '') + ';',
+      avatarStyle: 'width: 26px; height: 26px; border-radius: 7px; font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; color: ' +
+        (m.ours ? '#4b5563' : '#175cd3') + '; background: ' + (m.ours ? '#eef1f6' : '#eff8ff') + ';'
+    }));
+
+    const files = [
+      { name: 'credhub_config_20260902.zip', size: '18.4MB', at: '09-02', ext: 'ZIP' },
+      { name: 'uaa_api_domains.log', size: '2.1MB', at: '09-02', ext: 'LOG' },
+      { name: 'topology_diagram.png', size: '640KB', at: '09-01', ext: 'PNG' }
+    ].map((f) => ({
+      name: f.name, size: f.size, at: f.at, ext: f.ext,
+      iconStyle: 'width: 30px; height: 30px; flex-shrink: 0; border-radius: 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.02em; display: flex; align-items: center; justify-content: center; color: #6b7280; background: #f0f2f5;'
+    }));
+
+    return {
+      tabs: [
+        mkTab('all', '전체 대화', all.length),
+        mkTab('them', 'Broadcom 답변', all.filter((m) => !m.ours).length),
+        mkTab('ours', '우리가 쓴 글', all.filter((m) => m.ours).length)
+      ],
+      messages: messages,
+      showOpening: tab !== 'them',
+      facts: [
+        { label: '상태', value: 'Open', valueStyle: 'color: #067647; font-weight: 500;' },
+        { label: '우리 차례', value: '예 — 답변 대기중', valueStyle: 'color: #b42318; font-weight: 500;' },
+        { label: '최종 응답', value: 'Broadcom · 3시간 전', valueStyle: 'color: #14171a;' },
+        { label: '경과', value: '1일 4시간', valueStyle: 'color: #14171a;' },
+        { label: '대화', value: all.length + '건', valueStyle: 'color: #14171a;' }
+      ],
+      fileCount: files.length,
+      allFiles: files
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,290 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'IBM Plex Sans KR', -apple-system, 'Segoe UI', system-ui, sans-serif;
+      color: #14171a;
+      background: #f4f5f7;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: #1a56db; text-decoration: none; }
+    a:hover { color: #143f9e; }
+    .mono { font-family: ui-monospace, 'SF Mono', Consolas, monospace; font-variant-numeric: tabular-nums; }
+    .row:hover { background: #f7f9fc; }
+    .navitem:hover { background: #eef1f6; }
+    .chip:hover { border-color: #b9c2d0; }
+    input { font-family: inherit; }
+    button { font-family: inherit; }
+  </style>
+</helmet>
+
+<div style="display: flex; height: 900px; background: #f4f5f7;">
+
+  <!-- 사이드바 : 어디에 무엇이 몇 건 있는지를 한눈에 -->
+  <aside style="width: 236px; flex-shrink: 0; background: #ffffff; border-right: 1px solid #e5e7eb; display: flex; flex-direction: column;">
+    <div style="padding: 20px 18px 16px; border-bottom: 1px solid #f0f1f4;">
+      <div style="font-size: 15px; font-weight: 700; letter-spacing: -0.01em;">Broadcom SR</div>
+      <div style="font-size: 12px; color: #6b7280; margin-top: 2px;">데이터솔루션 지원팀</div>
+    </div>
+
+    <nav style="padding: 12px 10px; display: flex; flex-direction: column; gap: 2px;">
+      <sc-for list="{{nav}}" as="n" hint-placeholder-count="3">
+        <div class="navitem" style="{{n.style}}">
+          <span style="display: flex; align-items: center; gap: 9px;">
+            <span style="{{n.dotStyle}}"></span>
+            {{n.label}}
+          </span>
+          <span class="mono" style="{{n.countStyle}}">{{n.count}}</span>
+        </div>
+      </sc-for>
+    </nav>
+
+    <div style="margin-top: auto; padding: 14px 16px; border-top: 1px solid #f0f1f4;">
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #067647;">
+        <span style="width: 7px; height: 7px; border-radius: 50%; background: #067647; flex-shrink: 0;"></span>
+        <span>세션 연결됨</span>
+      </div>
+      <div style="font-size: 11px; color: #9aa1ac; margin-top: 5px; padding-left: 15px;">
+        오늘 21:41까지 · 12분 전 수집
+      </div>
+    </div>
+  </aside>
+
+  <!-- 본문 -->
+  <main style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+
+    <!-- 상단: 지금 해야 할 일을 문장으로 -->
+    <header style="padding: 26px 32px 0; background: #f4f5f7;">
+      <div style="display: flex; align-items: flex-end; gap: 16px;">
+        <div>
+          <h1 style="font-size: 24px; font-weight: 700; margin: 0; letter-spacing: -0.02em;">진행중 케이스</h1>
+          <p style="margin: 6px 0 0; font-size: 13px; color: #6b7280;">
+            <span style="{{headline.style}}">{{headline.text}}</span>
+          </p>
+        </div>
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+          <input value="{{query}}" onInput="{{onQuery}}" placeholder="번호 · 제목 · 고객사 · 본문"
+                 style="width: 260px; padding: 8px 12px; font-size: 13px; border: 1px solid #dfe3e9; border-radius: 8px; background: #ffffff; outline: none;" />
+          <button onClick="{{onRefresh}}" style="padding: 8px 13px; font-size: 13px; font-weight: 500; color: #14171a; background: #ffffff; border: 1px solid #dfe3e9; border-radius: 8px; cursor: pointer;">
+            새로고침
+          </button>
+        </div>
+      </div>
+
+      <!-- 필터: 상태를 세는 게 아니라 '무엇을 해야 하나'로 -->
+      <div style="display: flex; gap: 7px; margin: 18px 0 0; flex-wrap: wrap;">
+        <sc-for list="{{filters}}" as="f" hint-placeholder-count="5">
+          <button class="chip" onClick="{{f.pick}}" style="{{f.style}}">
+            {{f.label}}
+            <span class="mono" style="{{f.badgeStyle}}">{{f.count}}</span>
+          </button>
+        </sc-for>
+      </div>
+    </header>
+
+    <!-- 목록 -->
+    <div style="flex: 1; overflow: auto; padding: 18px 32px 32px;">
+
+      <sc-if value="{{hasUnread}}" hint-placeholder-val="{{true}}">
+        <div style="display: flex; align-items: center; gap: 9px; margin: 4px 0 10px;">
+          <span style="width: 6px; height: 6px; border-radius: 50%; background: #b42318;"></span>
+          <span style="font-size: 12px; font-weight: 600; color: #b42318; letter-spacing: 0.01em;">답변 도착 — 확인 필요</span>
+        </div>
+      </sc-if>
+
+      <div style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;">
+        <sc-for list="{{rows}}" as="r" hint-placeholder-count="6">
+          <div class="row" style="{{r.rowStyle}}">
+            <div style="width: 3px; align-self: stretch; border-radius: 2px; background: {{r.bar}}; flex-shrink: 0;"></div>
+
+            <div style="flex: 1; min-width: 0;">
+              <div style="display: flex; align-items: center; gap: 9px; margin-bottom: 4px;">
+                <span class="mono" style="font-size: 11px; color: #9aa1ac;">{{r.id}}</span>
+                <span style="{{r.statusStyle}}">{{r.status}}</span>
+                <sc-if value="{{r.unread}}" hint-placeholder-val="{{true}}">
+                  <span style="font-size: 11px; font-weight: 600; color: #b42318; background: #fef3f2; padding: 2px 7px; border-radius: 5px;">새 답변 {{r.unreadCount}}</span>
+                </sc-if>
+              </div>
+
+              <div style="{{r.titleStyle}}">{{r.title}}</div>
+
+              <div style="display: flex; align-items: center; gap: 12px; margin-top: 5px; font-size: 12px; color: #6b7280;">
+                <span style="font-weight: 500; color: #4b5563;">{{r.party}}</span>
+                <span style="color: #d6dae0;">·</span>
+                <span>{{r.category}}</span>
+                <sc-if value="{{r.hasFiles}}" hint-placeholder-val="{{true}}">
+                  <span style="color: #d6dae0;">·</span>
+                  <span style="display: inline-flex; align-items: center; gap: 4px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9aa1ac" stroke-width="2" stroke-linecap="round">
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                    {{r.files}}
+                  </span>
+                </sc-if>
+              </div>
+            </div>
+
+            <div style="text-align: right; flex-shrink: 0; padding-left: 18px;">
+              <div style="{{r.timeStyle}}">{{r.ago}}</div>
+              <div style="font-size: 11px; color: #9aa1ac; margin-top: 3px;">{{r.threads}}개 대화</div>
+            </div>
+          </div>
+        </sc-for>
+
+        <sc-if value="{{empty}}" hint-placeholder-val="{{false}}">
+          <div style="padding: 44px 20px; text-align: center; color: #9aa1ac; font-size: 13px;">
+            조건에 맞는 케이스가 없습니다.
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "accent": {"editor": "color", "default": "#1a56db", "options": ["#1a56db", "#0f766e", "#7c3aed", "#b42318"], "section": "테마"},
+  "density": {"editor": "enum", "default": "comfortable", "options": ["comfortable", "compact"], "section": "테마"}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { filter: 'all', query: '' };
+  }
+
+  data() {
+    return [
+      { id: '37074168', status: 'Pending Customer', title: '[SCG] Root cause analysis needed for SCG instance crash',
+        party: 'NONGHYUP BANK', category: 'Tanzu Application Service', ago: '2시간 전', threads: 2, files: 3, unreadCount: 1 },
+      { id: '37074119', status: 'Open', title: '[TAS] No CredHub domain identified',
+        party: 'NONGHYUP BANK', category: 'Tanzu Application Service', ago: '3시간 전', threads: 4, files: 3, unreadCount: 2 },
+      { id: '37074111', status: 'Pending Support', title: '[Ops Manager] Whether the "other" permission can be removed from gcc/cc files',
+        party: 'NONGHYUP BANK', category: 'Operations Manager', ago: '3시간 전', threads: 1, files: 0, unreadCount: 0 },
+      { id: '37074096', status: 'Pending Support', title: '[Ops Manager] Inquiry on Whether sudo Access Control Settings (NOPASSWD:ALL) Can Be Changed',
+        party: 'NONGHYUP BANK', category: 'Operations Manager', ago: '5시간 전', threads: 2, files: 0, unreadCount: 0 },
+      { id: '37068075', status: 'Pending Customer', title: 'Gorouter drain script behaviour during rolling upgrade',
+        party: 'KB Life Insurance', category: 'Tanzu Application Service', ago: '어제', threads: 18, files: 5, unreadCount: 0 },
+      { id: '37067926', status: 'Open', title: 'Spring Cloud Gateway instance restarts after TAS upgrade',
+        party: 'KB Life Insurance', category: 'Tanzu Application Service', ago: '어제', threads: 19, files: 7, unreadCount: 0 },
+      { id: '37066647', status: 'Pending Customer', title: 'Buildpack version mismatch after offline mirror sync',
+        party: 'KB Life Insurance', category: 'Tanzu Application Service', ago: '2일 전', threads: 18, files: 2, unreadCount: 0 },
+      { id: '37064210', status: 'Open', title: 'Certificate expiration warning on UAA endpoint',
+        party: 'NONGHYUP BANK', category: 'Tanzu Platform', ago: '3일 전', threads: 6, files: 1, unreadCount: 0 }
+    ];
+  }
+
+  statusTone(status) {
+    if (status.indexOf('Pending Customer') === 0) return { fg: '#b42318', bg: '#fef3f2' };
+    if (status.indexOf('Pending') === 0) return { fg: '#175cd3', bg: '#eff8ff' };
+    return { fg: '#067647', bg: '#ecfdf3' };
+  }
+
+  renderVals() {
+    const accent = this.props.accent ?? '#1a56db';
+    const compact = (this.props.density ?? 'comfortable') === 'compact';
+    const pad = compact ? '11px 16px' : '15px 18px';
+    const q = (this.state.query || '').trim().toLowerCase();
+    const all = this.data();
+
+    const matches = (c) => {
+      if (q === '') return true;
+      return (c.title + ' ' + c.id + ' ' + c.party + ' ' + c.category).toLowerCase().indexOf(q) >= 0;
+    };
+    const inFilter = (c) => {
+      if (this.state.filter === 'all') return true;
+      if (this.state.filter === 'unread') return c.unreadCount > 0;
+      return c.status === this.state.filter;
+    };
+
+    const unreadTotal = all.filter((c) => c.unreadCount > 0).length;
+    const statuses = [];
+    all.forEach((c) => { if (statuses.indexOf(c.status) < 0) statuses.push(c.status); });
+
+    const mkFilter = (key, label, count) => {
+      const on = this.state.filter === key;
+      const tone = key === 'unread' ? '#b42318' : accent;
+      return {
+        label: label,
+        count: count,
+        pick: () => this.setState({ filter: key }),
+        style: 'display: inline-flex; align-items: center; gap: 7px; padding: 6px 11px 6px 13px; font-size: 13px; font-weight: ' +
+          (on ? '600' : '400') + '; color: ' + (on ? '#ffffff' : '#14171a') +
+          '; background: ' + (on ? tone : '#ffffff') + '; border: 1px solid ' + (on ? tone : '#dfe3e9') +
+          '; border-radius: 999px; cursor: pointer; transition: border-color .12s;',
+        badgeStyle: 'font-size: 11px; color: ' + (on ? 'rgba(255,255,255,.75)' : '#9aa1ac') + ';'
+      };
+    };
+
+    const filters = [mkFilter('all', '전체', all.length)];
+    if (unreadTotal > 0) filters.push(mkFilter('unread', '새 답변 있는 케이스', unreadTotal));
+    statuses.forEach((s) => filters.push(mkFilter(s, s, all.filter((c) => c.status === s).length)));
+
+    const shown = all.filter((c) => matches(c) && inFilter(c))
+      .sort((a, b) => (b.unreadCount > 0 ? 1 : 0) - (a.unreadCount > 0 ? 1 : 0));
+
+    const rows = shown.map((c) => {
+      const unread = c.unreadCount > 0;
+      const tone = this.statusTone(c.status);
+      return {
+        id: c.id,
+        status: c.status,
+        title: c.title,
+        party: c.party,
+        category: c.category,
+        ago: c.ago,
+        threads: c.threads,
+        files: c.files,
+        hasFiles: c.files > 0,
+        unread: unread,
+        unreadCount: c.unreadCount,
+        bar: unread ? '#b42318' : 'transparent',
+        rowStyle: 'display: flex; align-items: flex-start; gap: 14px; padding: ' + pad +
+          '; border-bottom: 1px solid #f0f1f4; cursor: pointer; background: ' + (unread ? '#fffdfd' : '#ffffff') + ';',
+        titleStyle: 'font-size: 14px; line-height: 1.45; letter-spacing: -0.005em; color: #14171a; font-weight: ' +
+          (unread ? '600' : '500') + '; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;',
+        statusStyle: 'font-size: 11px; font-weight: 500; color: ' + tone.fg + '; background: ' + tone.bg +
+          '; padding: 2px 8px; border-radius: 5px; white-space: nowrap;',
+        timeStyle: 'font-size: 12px; white-space: nowrap; color: ' + (unread ? '#b42318' : '#6b7280') +
+          '; font-weight: ' + (unread ? '600' : '400') + ';'
+      };
+    });
+
+    const navDot = (color) => 'width: 6px; height: 6px; border-radius: 50%; background: ' + color + '; flex-shrink: 0;';
+    const navBase = (on) => 'display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-radius: 7px; font-size: 13px; cursor: pointer; font-weight: ' +
+      (on ? '600' : '400') + '; color: ' + (on ? '#14171a' : '#4b5563') + '; background: ' + (on ? '#eef1f6' : 'transparent') + ';';
+
+    return {
+      query: this.state.query,
+      onQuery: (e) => this.setState({ query: e.target.value }),
+      onRefresh: () => this.setState({ filter: 'all', query: '' }),
+      filters: filters,
+      rows: rows,
+      empty: rows.length === 0,
+      hasUnread: rows.length > 0 && rows[0].unread,
+      headline: {
+        text: unreadTotal > 0
+          ? '답변이 온 케이스 ' + unreadTotal + '건이 확인을 기다리고 있습니다'
+          : '새로 확인할 답변이 없습니다',
+        style: unreadTotal > 0 ? 'color: #b42318; font-weight: 500;' : 'color: #6b7280;'
+      },
+      nav: [
+        { label: '진행중', count: 8, style: navBase(true), dotStyle: navDot('#1a56db'), countStyle: 'font-size: 12px; color: #6b7280;' },
+        { label: '종료', count: 290, style: navBase(false), dotStyle: navDot('#c7ccd4'), countStyle: 'font-size: 12px; color: #9aa1ac;' },
+        { label: '수집 로그', count: '', style: navBase(false), dotStyle: navDot('#c7ccd4'), countStyle: 'font-size: 12px; color: #9aa1ac;' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

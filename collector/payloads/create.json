@@ -1,0 +1,58 @@
+{
+  "\"null\"": null,
+  "requestMasterVO": {
+    "subCategoryId": 4322,
+    "priorityId": 3,
+    "requestDesc": "",
+    "categoryId": 3561,
+    "itemId": 69076,
+    "sourceId": 1,
+    "unitId": 25326,
+    "requestTypeId": 63
+  },
+  "assetId": null,
+  "otherInfoVO": {
+    "unitLocationId": 2565181,
+    "releaseId": 798,
+    "onBehalfOfSite": null,
+    "attribute1": null,
+    "attribute2": null,
+    "attribute3": null
+  },
+  "requestEntitlementsVO": {
+    "groupSiteId": null,
+    "entlId": 10486720
+  },
+  "componentMappingList": [
+    {
+      "compId": 9698,
+      "compReleaseId": null
+    }
+  ],
+  "descDetailsVO": {
+    "descLarge": ""
+  },
+  "emailCCVO": {},
+  "emailCCExternalVO": {},
+  "enableDefaultContext": false,
+  "itemFlexMapValueList": [],
+  "subcatFlexMapValueList": [],
+  "requestFlexMapValueList": [
+    {
+      "attributeId": 697,
+      "attributeTypeId": 2,
+      "attributeName": "Issue Type",
+      "requestFlexMapId": 572,
+      "lovName": "Technical",
+      "lovId": 4323,
+      "isDeleted": false
+    }
+  ],
+  "itemSectionMapValueList": [],
+  "requestSectionMapValueList": [],
+  "configType": "PRODUCT_DRIVEN",
+  "itemPrototypeMapValueList": [],
+  "requestPrototypeMapValueList": [],
+  "multiLevelFlexConfigurationValueList": [],
+  "unitFlexMapValueList": []
+}

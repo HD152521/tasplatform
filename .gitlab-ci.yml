@@ -1,0 +1,85 @@
+# GitLab CI/CD — broadcom-sr (web / worker / mcp 단일 레포)
+#
+# 지금은 검증(verify)만 확실히 돌린다. 배포(deploy)는 파운데이션 사양
+# (Scheduler 타일 · Postgres 서비스 · 빌드팩 Node 버전)이 정해진 뒤 붙인다.
+#
+# 요구: 러너가 Docker 실행자여서 image 를 쓸 수 있어야 한다.
+#       (shell 러너면 node:24 를 러너에 직접 설치하고 default.image 줄을 제거)
+#
+# Node 24 필수: 테스트가 .ts 를 직접 실행(type stripping)하고 node:sqlite 를 쓴다.
+
+stages:
+  - verify
+  - build
+
+default:
+  image: node:24
+  # 잦은 재설치를 줄이기 위해 npm 캐시를 lockfile 기준으로 보관
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+
+variables:
+  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+  # 테스트는 브라우저를 띄우지 않는다 → Chromium(~150MB) 다운로드 생략
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+  TZ: "Asia/Seoul"
+
+# ── 검증: 타입체크 + 전체 테스트 (모든 push / MR) ─────────────────
+verify:
+  stage: verify
+  script:
+    - node --version   # 24.x 확인
+    - npm ci
+    - npm run typecheck
+    - npm test
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+# ── 프론트 빌드 산출물 확인 (next build 이 깨지지 않는지) ──────────
+build-web:
+  stage: build
+  script:
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - .next/
+    expire_in: 1 day
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ── 배포 (TODO — 아래 선결 후 활성화) ────────────────────────────
+# 선결:
+#   1) SQLite → Postgres 이전 + 세션/기기신뢰 상태를 DB 로 (ephemeral FS 때문)
+#   2) TS → JS 컴파일(prod 는 .ts 직접 실행 금지), 빌드팩 Node 버전 확인
+#   3) Scheduler for Tanzu 타일(worker 스케줄), Postgres 서비스 바인딩
+#   4) 시크릿은 cf set-env / CredHub (SR_SECRET_KEY, SR_USERNAME/PASSWORD ...)
+#
+# deploy-web:
+#   stage: deploy
+#   image: <cf-cli 포함 이미지>
+#   script:
+#     - cf api "$CF_API" && cf auth "$CF_USER" "$CF_PASSWORD"
+#     - cf target -o "$CF_ORG" -s "$CF_SPACE"
+#     - cf push broadcom-sr-web  -f manifest/web.yml
+#   rules:
+#     - if: '$CI_COMMIT_BRANCH == "main"'
+#       when: manual
+#
+# deploy-mcp:
+#   stage: deploy
+#   script:
+#     - cf push broadcom-sr-mcp -f manifest/mcp.yml
+#   rules:
+#     - if: '$CI_COMMIT_BRANCH == "main"'
+#       when: manual
+#
+# worker 는 앱이 아니라 Scheduler 잡:
+#   cf create-job broadcom-sr-web sr-collect "node dist/collector/collect.js"
+#   cf schedule-job sr-collect --cron "*/15 8-20 * * *"

@@ -1,0 +1,31 @@
+# 런타임 데이터 (세션 토큰 / DB)
+data/
+session.json
+auth.json
+auth.json.disabled
+
+# Node / Next
+node_modules/
+.next/
+*.tsbuildinfo
+
+# 조사 단계 산출물
+.venv/
+__pycache__/
+captured/
+captured_run1_loginonly/
+
+.env
+.env.local
+
+# 조사 단계 산출물 (자격증명 캡처 스크립트)
+1_login_capture.py
+2_probe_headers.py
+search_payload.json
+
+# 사내 보고 자료 / 고객 SR 내용 — 공개 저장소에 올리지 않는다
+docs/
+
+# 트러블슈팅 기록 — 공개 저장소에 올리지 않는다.
+# MFA 기기 신뢰의 동작 방식과 무인 로그인 우회 절차가 상세히 적혀 있다.
+트러블슈팅/

@@ -1,0 +1,19 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html",       "x": 0,    "y": 0,    "w": 1440, "h": 900, "title": "케이스 목록", "is_interactive": true },
+    { "file": "CaseDetail.dc.html", "x": 1560, "y": 0,    "w": 1440, "h": 900, "title": "케이스 상세", "is_interactive": true },
+    { "file": "Closed.dc.html",     "x": 0,    "y": 1320, "w": 1440, "h": 900, "title": "종료 케이스 · 정리하기", "is_interactive": true },
+    { "file": "Logs.dc.html",       "x": 1560, "y": 1320, "w": 1440, "h": 900, "title": "수집 상태", "is_interactive": true }
+  ],
+  "annotations": [
+    { "id": "note-main", "x": 0, "y": -300, "w": 460,
+      "text": "매일 여는 화면.\n\n새 답변 온 케이스가 위로 올라오고 붉은 바로 분리됩니다. 헤드라인이 '몇 건이 기다리는지'를 문장으로 먼저 말합니다.\n\n필터칩·검색 동작합니다." },
+    { "id": "note-detail", "x": 1560, "y": -300, "w": 460,
+      "text": "대화가 길게 쌓이는 화면.\n\n최초 등록 내용을 맨 위 별도 카드로, 우리 글과 Broadcom 답변을 구분, 최신 답변에 테두리.\n\n우측 레일에 '우리 차례인가'와 첨부 전체." },
+    { "id": "note-closed", "x": 0, "y": 1010, "w": 460,
+      "text": "탭 순서: 원문 → 정기 보고서 → Confluence 문서.\n\n원문에서 실제 대화를 보고 정리본과 대조할 수 있습니다. 아직 안 만든 케이스는 문서 대신 '지금 만들기'가 뜹니다.\n\n좌측 목록에서 다른 행을 눌러보세요 — 내용이 따라 바뀝니다." },
+    { "id": "note-logs", "x": 1560, "y": 1010, "w": 460,
+      "text": "수집 실패를 '새 답변 0건'과 절대 같게 보이지 않게 하는 화면.\n\n상단 배너가 지금 데이터를 믿어도 되는지 한 줄로 말하고, 실패 회차는 건수를 0이 아니라 — 로 표시합니다.\n\n우측 위 tweak 의 session 을 expired 로 바꿔보세요." }
+  ],
+  "launch": { "view": "canvas" }
+}
