@@ -1,0 +1,22 @@
+# cf push 업로드 제외 목록.
+# .cfignore 가 있으면 cf 는 .gitignore 대신 이 파일을 쓴다.
+# 핵심: .env 는 여기에 없다 → 앱 루트로 함께 올라가 loadEnv() 가 읽는다.
+#       (시크릿이 드롭릿에 포함된다. 사내 도구 전제. 외부 공개 금지.)
+
+.git/
+node_modules/        # 리눅스 빌드팩이 npm install 로 다시 깐다 (윈도우 바이너리 혼입 방지)
+
+# 런타임/조사 산출물 · 고객 데이터 — 플랫폼에 올리지 않는다
+data/
+session.json
+auth.json
+auth.json.disabled
+docs/
+트러블슈팅/
+.venv/
+__pycache__/
+captured/
+captured_run1_loginonly/
+*.tsbuildinfo
+
+# 주의: .next 는 제외하지 않는다 (deploy.sh 가 빌드한 결과를 next start 가 써야 함)

@@ -20,11 +20,14 @@
 #   재시작마다 초기화되므로 push 는 되어도 데이터·세션이 유지되지 않는다.
 #   실제 운영은 Postgres 이전 + 세션 DB화 후. 지금은 스테이징/빌드 확인용.
 #
-# ⚠ 시크릿은 push 후 앱 환경변수로 넣어야 정상 작동:
-#     cf set-env broadcom-sr-web SR_SECRET_KEY <키>
-#     cf set-env broadcom-sr-web SR_USERNAME <계정>
-#     cf set-env broadcom-sr-web SR_PASSWORD <비번>
-#     cf restage broadcom-sr-web            # (mcp 앱에도 SR_SECRET_KEY 필요)
+# ⚠ 시크릿: 레포 루트에 .env 파일을 두면 push 때 함께 올라가 loadEnv() 가 읽는다
+#   (.cfignore 가 .env 를 올리도록 보장한다). web·mcp 가 같은 .env 하나를 본다.
+#   .env 예시:
+#     SR_SECRET_KEY=<32바이트키>
+#     SR_USERNAME=<브로드컴계정>
+#     SR_PASSWORD=<비번>
+#   .env 는 절대 커밋하지 않는다(.gitignore 유지). VM 루트에 직접 둔다.
+#   대안: 파일 대신 cf set-env broadcom-sr-web SR_SECRET_KEY <키> ... + cf restage
 
 set -euo pipefail
 cd "$(dirname "$0")/.."   # 레포 루트
