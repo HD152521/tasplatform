@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { EXCERPT_LIMIT, excerpt, stripBoilerplate, summarizeReplies } from "../lib/replySummary.ts";
 
 const NEWLINE = String.fromCharCode(10);
@@ -104,10 +107,21 @@ test("짧은 본문은 그대로 둔다", () => {
   assert.equal(excerpt(lines("Hi Team,", "", "Fix is available in 6.0.4.")), "Fix is available in 6.0.4.");
 });
 
-// 키가 없어도 알림은 나가야 한다. 요약만 발췌로 떨어진다.
-test("OPENAI_API_KEY 가 없으면 전부 발췌로 대신하고 사유를 알린다", async () => {
-  const saved = process.env.OPENAI_API_KEY;
+// AI(LLM/OpenAI)가 없어도 알림은 나가야 한다. 요약만 발췌로 떨어진다.
+// hasOpenAi() 는 OPENAI_API_KEY + 설정된 LLM(DB/환경변수)까지 본다. 그래서 이 테스트는
+// 주변 설정에 오염되지 않도록 관련 값을 전부 차단한다(빈 임시 DB + LLM_*/OPENAI 제거).
+test("AI 연결이 없으면 전부 발췌로 대신하고 사유를 알린다", async () => {
+  const saved = {
+    openai: process.env.OPENAI_API_KEY,
+    dbFile: process.env.SR_DB_FILE,
+    dbUrl: process.env.DATABASE_URL,
+    llmBase: process.env.LLM_BASE_URL,
+  };
   delete process.env.OPENAI_API_KEY;
+  delete process.env.DATABASE_URL;      // 기본 SQLite 로 강제
+  delete process.env.LLM_BASE_URL;      // 환경변수 LLM 폴백 차단(fromEnv 의 게이트)
+  process.env.SR_DB_FILE = join(mkdtempSync(join(tmpdir(), "reply-")), "sr.db"); // 빈 DB → llm_connections 행 없음
+
   const warnings: string[] = [];
   try {
     const out = await summarizeReplies(
@@ -118,9 +132,12 @@ test("OPENAI_API_KEY 가 없으면 전부 발췌로 대신하고 사유를 알�
     assert.equal(out[0]?.source, "excerpt");
     assert.equal(out[0]?.text, "Have you had a chance to check the response?");
     assert.equal(warnings.length, 1);
-    assert.match(warnings[0] ?? "", /OPENAI_API_KEY/);
+    assert.match(warnings[0] ?? "", /LLM 연결이 설정되지 않아/);
   } finally {
-    if (saved !== undefined) process.env.OPENAI_API_KEY = saved;
+    if (saved.openai !== undefined) process.env.OPENAI_API_KEY = saved.openai;
+    if (saved.dbFile !== undefined) process.env.SR_DB_FILE = saved.dbFile; else delete process.env.SR_DB_FILE;
+    if (saved.dbUrl !== undefined) process.env.DATABASE_URL = saved.dbUrl;
+    if (saved.llmBase !== undefined) process.env.LLM_BASE_URL = saved.llmBase;
   }
 });
 

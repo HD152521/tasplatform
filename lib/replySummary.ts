@@ -165,7 +165,7 @@ export async function summarizeReplies(
   const out: Summary[] = [];
   const usable = await hasOpenAi();
   if (!usable && inputs.length > 0) {
-    onWarn("OPENAI_API_KEY 가 없어 원문 발췌로 대신합니다.");
+    onWarn("LLM 연결이 설정되지 않아 원문 발췌로 대신합니다 (설정 > LLM 또는 OPENAI_API_KEY).");
   }
 
   let consecutiveFailures = 0;
