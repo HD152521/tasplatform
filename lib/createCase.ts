@@ -14,7 +14,7 @@
  *   (포털 작성 화면의 드롭다운을 한 번 캡처하면 풀린다)
  */
 import "server-only";
-import type { BrowserContext } from "playwright";
+import type { ApiClient } from "../collector/httpClient.ts";
 import { API_HEADERS, API_ORIGIN } from "./config.ts";
 import { textToHtml } from "./html.ts";
 
@@ -119,7 +119,7 @@ export function templateInfo(): TemplateInfo {
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
 
 export async function createCase(
-  context: BrowserContext,
+  client: ApiClient,
   input: {
     subject: string; content: string; priorityId: number;
     productId?: number; componentId?: number;
@@ -140,7 +140,7 @@ export async function createCase(
     payload["componentMappingList"] = [{ compId: input.componentId, compReleaseId: null }];
   }
 
-  const response = await context.request.post(`${API_ORIGIN}/request/create_request`, {
+  const response = await client.post(`${API_ORIGIN}/request/create_request`, {
     multipart: { data: JSON.stringify(payload) },
     headers: API_HEADERS,
   });

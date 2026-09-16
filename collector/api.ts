@@ -7,8 +7,8 @@
  * 엔드포인트와 페이로드는 captured/ 의 실제 트래픽에서 가져왔다. 추측한 것이 없다.
  */
 import { readFileSync } from "node:fs";
-import type { APIRequestContext, BrowserContext } from "playwright";
 import { API_HEADERS, API_ORIGIN, MAX_PAGES, PAGE_SIZE, REQUEST_DELAY_MS } from "../lib/config.ts";
+import type { ApiClient } from "./httpClient.ts";
 import { SessionExpiredError } from "./session.ts";
 import type { RequestThreadVo, SearchResultItem, UnifiedHistoryEntry } from "../lib/types.ts";
 
@@ -44,11 +44,11 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function postMultipart<T>(
-  request: APIRequestContext,
+  client: ApiClient,
   path: string,
   parts: Record<string, string>,
 ): Promise<ApiEnvelope<T>> {
-  const response = await request.post(`${API_ORIGIN}${path}`, {
+  const response = await client.post(`${API_ORIGIN}${path}`, {
     multipart: parts,
     headers: API_HEADERS,
   });
@@ -61,8 +61,8 @@ async function postMultipart<T>(
   return (await response.json()) as ApiEnvelope<T>;
 }
 
-async function getJson<T>(request: APIRequestContext, url: string): Promise<ApiEnvelope<T>> {
-  const response = await request.get(url, { headers: API_HEADERS });
+async function getJson<T>(client: ApiClient, url: string): Promise<ApiEnvelope<T>> {
+  const response = await client.get(url, { headers: API_HEADERS });
   if (response.status() === 401) {
     throw new SessionExpiredError(`세션 만료로 조회 실패: ${url}`);
   }
@@ -77,7 +77,7 @@ async function getJson<T>(request: APIRequestContext, url: string): Promise<ApiE
  * shouldStop 이 true를 반환하면 더 훑지 않는다(백필 경계 제어).
  */
 export async function fetchCaseList(
-  context: BrowserContext,
+  client: ApiClient,
   options: {
     scope: CaseScope;
     shouldStop?: (page: readonly SearchResultItem[]) => boolean;
@@ -95,7 +95,7 @@ export async function fetchCaseList(
     };
 
     const envelope = await postMultipart<{ SearchResultList?: SearchResultItem[] }>(
-      context.request,
+      client,
       "/dynamic_views/search/list/v3",
       { data: JSON.stringify(data), pagination: JSON.stringify(pagination) },
     );
@@ -113,7 +113,7 @@ export async function fetchCaseList(
 
 /** 케이스 하나의 답변 스레드 전체. */
 export async function fetchThreads(
-  context: BrowserContext,
+  client: ApiClient,
   requestId: number,
   limit = 100,
 ): Promise<RequestThreadVo[]> {
@@ -121,7 +121,7 @@ export async function fetchThreads(
     `${API_ORIGIN}/request/get_unified_history` +
     `?requestId=${requestId}&offset=0&limit=${limit}&orderBy=desc&sortBy=res_date`;
 
-  const envelope = await getJson<{ RequestDetails?: UnifiedHistoryEntry[] }>(context.request, url);
+  const envelope = await getJson<{ RequestDetails?: UnifiedHistoryEntry[] }>(client, url);
   const entries = envelope.data?.RequestDetails ?? [];
 
   return entries
@@ -136,7 +136,7 @@ export async function fetchThreads(
  * 실패해도 수집 전체를 세우지 않는다 — 빈 문자열을 돌려주면 기존 값이 유지된다.
  */
 export async function fetchCaseDescription(
-  context: BrowserContext,
+  client: ApiClient,
   requestId: number,
 ): Promise<CaseDetail> {
   // 실측 파라미터는 sections= 이고, 본문만 필요하니 DESC_DETAIL 만 요청한다.
@@ -155,7 +155,7 @@ export async function fetchCaseDescription(
         };
         componentMappingList?: Array<{ compId?: number; compName?: string }>;
       };
-    }>(context.request, url);
+    }>(client, url);
 
     const details = envelope.data?.RequestDetails;
     const master = details?.requestMasterVO;

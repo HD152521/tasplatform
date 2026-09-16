@@ -189,4 +189,64 @@ CREATE TABLE IF NOT EXISTS report_picks (
   ord   INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (month, kind, ref)
 );
+
+-- 팀 = 공용 브로드컴 계정 단위.
+-- 한 팀이 계정 하나를 공유한다. 다른 팀이 들어오면 자기 팀 계정을 쓴다.
+-- 세션·기기신뢰는 계정에 묶이므로 팀마다 각각(팀 안에서는 하나를 공유).
+-- broadcom_username 은 어느 공용 계정인지 식별용 라벨. 비밀번호는 여기 넣지 않는다.
+CREATE TABLE IF NOT EXISTS teams (
+  team_id           TEXT PRIMARY KEY,
+  team_name         TEXT NOT NULL DEFAULT '',
+  broadcom_username TEXT NOT NULL DEFAULT '',
+  created_at        TEXT NOT NULL
+);
+
+-- 감사 로그.
+-- 쓰기(작성/답변)는 공용 계정으로 나가지만, 우리 서비스 사용자 중 누가 시켰는지 남긴다.
+-- actor 는 챗봇이 넘긴 요청 사용자 식별자(사번/이메일 등, 합의 필요).
+-- result: 'ok' 또는 'failed:<code>'.
+CREATE TABLE IF NOT EXISTS audit_log (
+  log_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  at          TEXT    NOT NULL,
+  actor       TEXT    NOT NULL DEFAULT '',
+  team_id     TEXT    NOT NULL DEFAULT '',
+  action      TEXT    NOT NULL,
+  request_id  INTEGER,
+  result      TEXT    NOT NULL DEFAULT '',
+  detail      TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_team ON audit_log(team_id, at DESC);
+
+-- 팀별 MCP 접속 토큰.
+-- token_hash 는 평문 토큰의 SHA-256 해시(hex)다. 평문 토큰은 어디에도 저장하지 않는다
+-- (발급 시 호출자에게 딱 한 번 반환할 뿐이다).
+-- revoked = 1 이면 검증에서 거부한다. 삭제하지 않고 이력으로 남긴다.
+CREATE TABLE IF NOT EXISTS team_tokens (
+  token_hash   TEXT PRIMARY KEY,
+  team_id      TEXT NOT NULL,
+  label        TEXT NOT NULL DEFAULT '',
+  created_at   TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_tokens_team ON team_tokens(team_id);
+
+-- 팀별 외부 연동(Jira 등) 자격.
+-- kind 로 연동 종류를 구분한다("jira" 등) — 앞으로 다른 연동도 같은 틀을 쓴다.
+-- secret_enc 는 토큰 등 민감값을 AES-256-GCM 으로 암호화한 것(lib/secretBox.ts).
+-- 평문은 여기 절대 들어가지 않는다. 암호화 키(SR_SECRET_KEY)가 없으면 저장 자체를 거부한다.
+CREATE TABLE IF NOT EXISTS team_integrations (
+  team_id    TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  base_url   TEXT NOT NULL DEFAULT '',
+  project    TEXT NOT NULL DEFAULT '',
+  secret_enc TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (team_id, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_integrations_team ON team_integrations(team_id);
 `;

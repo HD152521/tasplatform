@@ -12,6 +12,9 @@
     "resolveJsonModule": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
+    // 부르는 곳 없는 함수를 잡는다. announceFailure 가 이렇게 한 번도 실행되지 않은 채
+    // 실패 알림이 통째로 죽어 있었고, 포매터 테스트만 있어서 드러나지 않았다.
+    "noUnusedLocals": true,
     "noEmit": true,
     "skipLibCheck": true,
     "esModuleInterop": true,

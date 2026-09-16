@@ -89,6 +89,8 @@ export interface CaseRow {
   product_name: string;
   component_id: number | null;
   component_name: string;
+  /** 팀(공용 계정) 소유. 생략하면 upsertCase 가 기본 팀으로 채운다. */
+  team_id?: string;
 }
 
 export interface ThreadRow {

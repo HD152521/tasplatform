@@ -10,10 +10,9 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { SESSION_FILE } from "./config.ts";
-
-const SSO_SESSION_COOKIE = "sspsession";
-const DEVICE_TRUST_COOKIES = ["_iat1", "__Secure-ob-"];
+import { DEFAULT_TEAM_ID, sessionFileForTeam } from "./config.ts";
+// 쿠키 이름은 browserIdentity 가 정본이다. 로그인 경로와 같은 판정을 써야 한다.
+import { SSO_SESSION_COOKIE, isDeviceTrustCookie } from "./browserIdentity.ts";
 
 export interface SessionStatus {
   exists: boolean;
@@ -30,8 +29,9 @@ interface StoredCookie {
   expires?: number;
 }
 
-export function getSessionStatus(sessionFile = SESSION_FILE): SessionStatus {
-  const path = resolve(sessionFile);
+/** teamId 를 생략하면 기본 팀의 세션 파일(기존 SESSION_FILE)을 본다. */
+export function getSessionStatus(teamId: string = DEFAULT_TEAM_ID): SessionStatus {
+  const path = resolve(sessionFileForTeam(teamId));
   if (!existsSync(path)) {
     return { exists: false, expiresAt: null, expired: true, deviceTrusted: false };
   }
@@ -53,7 +53,7 @@ export function getSessionStatus(sessionFile = SESSION_FILE): SessionStatus {
 
   const deviceTrusted = cookies.some(
     (c) =>
-      DEVICE_TRUST_COOKIES.some((prefix) => c.name.startsWith(prefix)) &&
+      isDeviceTrustCookie(c.name) &&
       (c.expires === undefined || c.expires <= 0 || c.expires * 1000 > now),
   );
 

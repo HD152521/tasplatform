@@ -15,10 +15,10 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright";
-import { NAV_TIMEOUT_MS, PORTAL_HOME, SESSION_FILE } from "./config.ts";
+import { DEFAULT_TEAM_ID, NAV_TIMEOUT_MS, PORTAL_HOME, deviceFileForTeam, sessionFileForTeam } from "./config.ts";
+import { loginContextOptions, saveDeviceState, type StorageState } from "./browserIdentity.ts";
 
 const FLOW_TTL_MS = 10 * 60 * 1000;
-const VIEWPORT = { width: 1500, height: 950 } as const;
 const STEP_TIMEOUT_MS = 60_000;
 
 const SEL = {
@@ -39,6 +39,8 @@ interface Flow {
   context: BrowserContext;
   page: Page;
   createdAt: number;
+  /** 어느 팀(공용 계정)의 로그인인지. 세션·기기신뢰 파일 경로를 결정한다. */
+  teamId: string;
 }
 
 /** 진행 중인 로그인 흐름. 개발 모드의 모듈 재적재에도 살아남도록 전역에 둔다. */
@@ -263,42 +265,55 @@ async function settle(page: Page): Promise<"done" | "otp"> {
   throw new LoginStuckError(await describe(page));
 }
 
-async function saveSession(context: BrowserContext): Promise<void> {
-  const path = resolve(SESSION_FILE);
+async function saveSession(context: BrowserContext, teamId: string): Promise<void> {
+  const path = resolve(sessionFileForTeam(teamId));
   mkdirSync(dirname(path), { recursive: true });
-  await context.storageState({ path });
+  const state = await context.storageState({ path });
+  // 기기 신뢰 쿠키를 따로 남겨 다음 로그인이 OTP 를 건너뛰게 한다.
+  saveDeviceState(state as StorageState, deviceFileForTeam(teamId));
 }
 
 async function finish(flowId: string, flow: Flow): Promise<void> {
-  await saveSession(flow.context);
+  await saveSession(flow.context, flow.teamId);
   flows.delete(flowId);
   await flow.browser.close().catch(() => undefined);
 }
 
-/** 1단계: 아이디/비번 제출. */
-export async function startLogin(username: string, password: string): Promise<LoginResult> {
+/**
+ * 1단계: 아이디/비번 제출.
+ * teamId 를 생략하면 기본 팀(공용 계정)으로 로그인한다.
+ */
+export async function startLogin(
+  username: string,
+  password: string,
+  teamId: string = DEFAULT_TEAM_ID,
+): Promise<LoginResult> {
   sweepExpired();
 
   let flow: Flow | null = null;
   try {
     const browser = await launch();
-    const context = await browser.newContext({ viewport: VIEWPORT });
+    const context = await browser.newContext(loginContextOptions(browser, teamId));
     const page = await context.newPage();
-    flow = { browser, context, page, createdAt: Date.now() };
+    flow = { browser, context, page, createdAt: Date.now(), teamId };
 
     await page.goto(PORTAL_HOME, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
     await page.waitForURL(/access\.broadcom\.com/, { timeout: NAV_TIMEOUT_MS });
-    await page.waitForSelector(SEL.username, { timeout: NAV_TIMEOUT_MS });
 
-    await page.fill(SEL.username, username);
-    // 기기 신뢰를 유지해야 다음 로그인에서 OTP를 다시 묻지 않는다.
-    const remember = page.locator(SEL.rememberMe);
-    if ((await remember.count()) > 0 && !(await remember.isChecked())) {
-      await remember.check().catch(() => undefined);
+    // 기기를 기억하고 있으면 아이디 단계를 건너뛰고 바로 비밀번호를 묻는다.
+    await page.waitForSelector(`${SEL.username}, ${SEL.password}`, { timeout: NAV_TIMEOUT_MS });
+
+    const usernameField = page.locator(SEL.username).first();
+    if ((await usernameField.count()) > 0 && (await usernameField.isVisible().catch(() => false))) {
+      await usernameField.fill(username);
+      // 기기 신뢰를 유지해야 다음 로그인에서 OTP를 다시 묻지 않는다.
+      const remember = page.locator(SEL.rememberMe);
+      if ((await remember.count()) > 0 && !(await remember.isChecked())) {
+        await remember.check().catch(() => undefined);
+      }
+      await page.click(SEL.submit);
+      await page.waitForSelector(SEL.password, { timeout: NAV_TIMEOUT_MS });
     }
-    await page.click(SEL.submit);
-
-    await page.waitForSelector(SEL.password, { timeout: NAV_TIMEOUT_MS });
     await page.fill(SEL.password, password);
     await page.click(SEL.submit);
 

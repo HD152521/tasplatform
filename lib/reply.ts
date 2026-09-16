@@ -18,7 +18,7 @@
  * 그 사이 상대가 답글을 달면 서버가 거절한다 — 못 본 답변 위에 덮어쓰는 것을 막아준다.
  */
 import "server-only";
-import type { BrowserContext } from "playwright";
+import type { ApiClient } from "../collector/httpClient.ts";
 import { API_HEADERS, API_ORIGIN } from "./config.ts";
 import { textToHtml } from "./html.ts";
 
@@ -28,13 +28,13 @@ export type ReplyResult =
 
 /** 케이스의 현재 version. 답글 전송에 반드시 필요하다. */
 async function readVersion(
-  context: BrowserContext,
+  client: ApiClient,
   requestId: number,
 ): Promise<number | null> {
   const url =
     `${API_ORIGIN}/request/specific_request_details` +
     `?requestId=${requestId}&sections=REQUEST_MASTER`;
-  const response = await context.request.get(url, { headers: API_HEADERS });
+  const response = await client.get(url, { headers: API_HEADERS });
   if (!response.ok()) return null;
 
   const body = (await response.json()) as {
@@ -45,11 +45,11 @@ async function readVersion(
 }
 
 export async function postReply(
-  context: BrowserContext,
+  client: ApiClient,
   requestId: number,
   text: string,
 ): Promise<ReplyResult> {
-  const version = await readVersion(context, requestId);
+  const version = await readVersion(client, requestId);
   if (version === null) {
     return {
       ok: false,
@@ -69,7 +69,7 @@ export async function postReply(
     fileAttach: [],
   };
 
-  const response = await context.request.post(
+  const response = await client.post(
     `${API_ORIGIN}/request/end_user_add_response`,
     { multipart: { data: JSON.stringify(payload) }, headers: API_HEADERS },
   );

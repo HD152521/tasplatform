@@ -29,6 +29,7 @@ export interface CaseListRow {
   description_text: string;
   description_html: string;
   case_version: number | null;
+  team_id: string;
 }
 
 export interface ThreadViewRow {
@@ -40,11 +41,16 @@ export interface ThreadViewRow {
   body_text: string;
 }
 
-const CASE_LIST_SQL = `
+/**
+ * teamId 로 좁힐 때 쓸 WHERE 절. 기존 뷰어(팀 무관 전체 조회)가 안 깨지도록
+ * teamId 를 안 주면 빈 문자열이라 전체를 그대로 조회한다.
+ */
+function caseListSql(whereClause: string): string {
+  return `
 SELECT
   c.request_id, c.request_id_formatted, c.subject, c.status, c.priority,
   c.category, c.party_name, c.created_on, c.created_on_ms, c.last_updated, c.last_updated_ms,
-  c.description_text, c.description_html, c.case_version,
+  c.description_text, c.description_html, c.case_version, c.team_id,
   (SELECT COUNT(*) FROM threads t WHERE t.request_id = c.request_id) AS thread_count,
   (SELECT COUNT(*) FROM threads t WHERE t.request_id = c.request_id AND t.is_ours = 0) AS reply_count,
   (SELECT t.is_ours     FROM threads t WHERE t.request_id = c.request_id ORDER BY t.res_date_ms DESC LIMIT 1) AS latest_is_ours,
@@ -56,8 +62,12 @@ SELECT
           COALESCE((SELECT r.last_read_thread_ms FROM case_reads r WHERE r.request_id = c.request_id), 0)
   ) AS unread_replies
 FROM cases c
+${whereClause}
 ORDER BY c.last_updated_ms DESC, c.request_id DESC
 `;
+}
+
+const CASE_LIST_SQL = caseListSql("");
 
 /**
  * node:sqlite 는 프로토타입이 없는 객체를 돌려준다.
@@ -68,14 +78,25 @@ function toPlain<T>(rows: unknown[]): T[] {
   return rows.map((row) => ({ ...(row as object) })) as T[];
 }
 
-/** DB를 열고 콜백을 실행한 뒤 반드시 닫는다. */
-function withDb<T>(run: (db: ReturnType<typeof openDb>) => T): T {
-  const db = openDb();
+/**
+ * DB를 열고 콜백을 실행한 뒤 반드시 닫는다.
+ * dbFile 은 테스트에서 임시 DB 를 쓰기 위한 것이다(lib/requestAudit.ts 의
+ * recordWriteAudit 과 같은 관례). 실제 화면·MCP 서버는 생략해서 기본 DB 를 쓴다.
+ */
+function withDb<T>(run: (db: ReturnType<typeof openDb>) => T, dbFile?: string): T {
+  const db = dbFile ? openDb(dbFile) : openDb();
   try {
     return run(db);
   } finally {
     db.close();
   }
+}
+
+/** MCP 등 팀 단위 조회가 공통으로 쓰는 옵션. teamId 를 생략하면 기존처럼 전체를 본다. */
+export interface TeamScopedQueryOptions {
+  teamId?: string;
+  /** 테스트에서 임시 DB 를 가리키기 위한 것. 실제 호출부는 생략한다. */
+  dbFile?: string;
 }
 
 /** 포털 상태 문자열로 종료 여부를 판정한다. */
@@ -84,39 +105,60 @@ export function isClosedStatus(status: string): boolean {
   return s.includes("closed") || s.includes("resolved") || s.includes("cancel");
 }
 
-export function listCases(): CaseListRow[] {
-  return withDb((db) => toPlain<CaseListRow>(db.prepare(CASE_LIST_SQL).all()));
+/**
+ * teamId 를 생략하면(기존 뷰어 호출) 팀 무관 전체 케이스를 그대로 돌려준다.
+ * MCP 읽기 도구처럼 teamId 를 주면 그 팀 소유 케이스로만 좁혀진다.
+ */
+export function listCases(options: TeamScopedQueryOptions = {}): CaseListRow[] {
+  const { teamId, dbFile } = options;
+  return withDb((db) => {
+    const sql = teamId ? caseListSql("WHERE c.team_id = ?") : CASE_LIST_SQL;
+    const rows = teamId ? db.prepare(sql).all(teamId) : db.prepare(sql).all();
+    return toPlain<CaseListRow>(rows);
+  }, dbFile);
 }
 
 /** 진행중 / 종료 케이스를 나눠서 돌려준다. */
-export function listCasesSplit(): { open: CaseListRow[]; closed: CaseListRow[] } {
-  const all = listCases();
+export function listCasesSplit(
+  options: TeamScopedQueryOptions = {},
+): { open: CaseListRow[]; closed: CaseListRow[] } {
+  const all = listCases(options);
   return {
     open: all.filter((c) => !isClosedStatus(c.status)),
     closed: all.filter((c) => isClosedStatus(c.status)),
   };
 }
 
-export function getCase(requestId: number): CaseListRow | null {
+/**
+ * teamId 를 주면 그 팀 소유가 아닌 케이스는 null(못 찾음과 동일)로 취급한다 —
+ * MCP 도구가 다른 팀 케이스를 들여다보지 못하게 막는 경계다.
+ */
+export function getCase(requestId: number, options: TeamScopedQueryOptions = {}): CaseListRow | null {
+  const { teamId, dbFile } = options;
   return withDb((db) => {
-    const rows = toPlain<CaseListRow>(
-      db.prepare(`SELECT * FROM (${CASE_LIST_SQL}) WHERE request_id = ?`).all(requestId),
-    );
-    return rows[0] ?? null;
-  });
+    const sql = teamId
+      ? `SELECT * FROM (${caseListSql("WHERE c.team_id = ?")}) WHERE request_id = ?`
+      : `SELECT * FROM (${CASE_LIST_SQL}) WHERE request_id = ?`;
+    const rows = teamId
+      ? db.prepare(sql).all(teamId, requestId)
+      : db.prepare(sql).all(requestId);
+    return toPlain<CaseListRow>(rows)[0] ?? null;
+  }, dbFile);
 }
 
-export function listThreads(requestId: number): ThreadViewRow[] {
-  return withDb((db) =>
-    toPlain<ThreadViewRow>(
-      db
-        .prepare(
-          `SELECT thread_id, author_unit, is_ours, res_date_ms, res_date_val, body_text
-           FROM threads WHERE request_id = ?
-           ORDER BY res_date_ms ASC, thread_id ASC`,
-        )
-        .all(requestId),
-    ),
+export function listThreads(requestId: number, dbFile?: string): ThreadViewRow[] {
+  return withDb(
+    (db) =>
+      toPlain<ThreadViewRow>(
+        db
+          .prepare(
+            `SELECT thread_id, author_unit, is_ours, res_date_ms, res_date_val, body_text
+             FROM threads WHERE request_id = ?
+             ORDER BY res_date_ms ASC, thread_id ASC`,
+          )
+          .all(requestId),
+      ),
+    dbFile,
   );
 }
 
@@ -164,7 +206,7 @@ export interface AttachmentViewRow {
   uploaded_ms: number | null;
 }
 
-export function listAttachments(requestId: number): AttachmentViewRow[] {
+export function listAttachments(requestId: number, dbFile?: string): AttachmentViewRow[] {
   return withDb((db) =>
     toPlain<AttachmentViewRow>(
       db
@@ -176,6 +218,7 @@ export function listAttachments(requestId: number): AttachmentViewRow[] {
         )
         .all(requestId),
     ),
+    dbFile,
   );
 }
 

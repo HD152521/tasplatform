@@ -8,7 +8,20 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium, type Browser, type BrowserContext } from "playwright";
-import { API_HEADERS, API_ORIGIN, NAV_TIMEOUT_MS, PORTAL_HOME, SESSION_FILE } from "../lib/config.ts";
+import {
+  API_HEADERS,
+  API_ORIGIN,
+  DEFAULT_TEAM_ID,
+  NAV_TIMEOUT_MS,
+  PORTAL_HOME,
+  deviceFileForTeam,
+  sessionFileForTeam,
+} from "../lib/config.ts";
+import {
+  saveDeviceState,
+  sessionContextOptions,
+  type StorageState,
+} from "../lib/browserIdentity.ts";
 
 export class SessionExpiredError extends Error {
   constructor(message: string) {
@@ -31,8 +44,6 @@ const LAUNCH_VARIANTS: Array<{ args?: string[] }> = [
   { args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] },
 ];
 
-const VIEWPORT = { width: 1600, height: 950 } as const;
-
 export interface OpenedSession {
   browser: Browser;
   context: BrowserContext;
@@ -51,9 +62,12 @@ export async function launchBrowser(headless: boolean): Promise<Browser> {
   throw new Error(`브라우저를 띄우지 못했습니다: ${String(lastError)}`);
 }
 
-/** 저장된 세션으로 컨텍스트를 연다. 세션 파일이 없으면 SessionMissingError. */
-export async function openSavedSession(sessionFile = SESSION_FILE): Promise<OpenedSession> {
-  const path = resolve(sessionFile);
+/**
+ * 저장된 세션으로 컨텍스트를 연다. 세션 파일이 없으면 SessionMissingError.
+ * teamId 를 생략하면 기본 팀의 세션 파일(기존 SESSION_FILE)을 그대로 쓴다.
+ */
+export async function openSavedSession(teamId: string = DEFAULT_TEAM_ID): Promise<OpenedSession> {
+  const path = resolve(sessionFileForTeam(teamId));
   if (!existsSync(path)) {
     throw new SessionMissingError(
       `세션 파일이 없습니다: ${path}\n  먼저 'npm run login' 으로 로그인하세요.`,
@@ -61,7 +75,7 @@ export async function openSavedSession(sessionFile = SESSION_FILE): Promise<Open
   }
 
   const browser = await launchBrowser(true);
-  const context = await browser.newContext({ storageState: path, viewport: VIEWPORT });
+  const context = await browser.newContext(sessionContextOptions(browser, path));
   return {
     browser,
     context,
@@ -113,10 +127,15 @@ async function sessionAlive(context: BrowserContext): Promise<boolean> {
   return response.status() === 200;
 }
 
-/** 갱신된 쿠키를 다시 저장해 다음 실행에서 재사용한다. */
+/**
+ * 갱신된 쿠키를 다시 저장해 다음 실행에서 재사용한다.
+ * 기기 신뢰 쿠키도 같이 갱신한다 — 서버가 회전시키면 옛 값이 남으면 안 된다.
+ * teamId 를 생략하면 기본 팀의 파일(기존 SESSION_FILE/DEVICE_FILE)에 저장한다.
+ */
 export async function persistSession(
   context: BrowserContext,
-  sessionFile = SESSION_FILE,
+  teamId: string = DEFAULT_TEAM_ID,
 ): Promise<void> {
-  await context.storageState({ path: resolve(sessionFile) });
+  const state = await context.storageState({ path: resolve(sessionFileForTeam(teamId)) });
+  saveDeviceState(state as StorageState, deviceFileForTeam(teamId));
 }

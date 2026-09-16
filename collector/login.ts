@@ -10,6 +10,7 @@ import { loadEnv } from "../lib/env.ts";
 loadEnv();
 
 import { CREDENTIALS, NAV_TIMEOUT_MS, PORTAL_HOME } from "../lib/config.ts";
+import { deviceTrustAvailable, loginContextOptions } from "../lib/browserIdentity.ts";
 import { launchBrowser } from "./session.ts";
 import {
   CredentialsMissingError, OtpRequiredError,
@@ -19,11 +20,11 @@ import {
 const AUTO = process.argv.includes("--auto");
 const POLL_MS = 3000;
 const MAX_WAIT_MS = 60 * 60 * 1000;
-const VIEWPORT = { width: 1600, height: 950 } as const;
-
 async function main(): Promise<void> {
   const browser = await launchBrowser(!AUTO ? false : true);
-  const context = await browser.newContext({ viewport: VIEWPORT });
+  // 기기 신뢰 쿠키를 넘겨야 IdP 가 같은 기기로 보고 OTP 를 생략한다.
+  const context = await browser.newContext(loginContextOptions(browser));
+  if (deviceTrustAvailable()) console.log("기기 신뢰 쿠키를 사용합니다 (OTP 생략 기대).");
   const page = await context.newPage();
 
   try {

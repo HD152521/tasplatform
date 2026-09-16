@@ -46,7 +46,17 @@ export interface ReplyLine {
   caseLabel: string;
   subject: string;
   requestId?: number;
+  /** 답변 요점 한두 문장. lib/replySummary.ts 가 만든다. 없으면 제목·링크만 나간다. */
+  summary?: string;
 }
+
+/**
+ * 한 번에 몇 건까지 본문에 적을지.
+ *
+ * 요약을 만드는 쪽도 이 수만큼만 호출하면 되므로 수집기가 이 값을 읽어 간다.
+ * (알림에 안 들어갈 건을 요약하는 것은 돈과 시간 낭비다)
+ */
+export const REPLY_LIMIT = 10;
 
 function appUrl(): string {
   return (process.env.SR_APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
@@ -55,16 +65,20 @@ function appUrl(): string {
 /**
  * 새 답변 알림 본문.
  *
- * 케이스 번호·제목과 링크만 적는다. 답변 내용은 넣지 않는다 —
- * 알림은 "왔다"를 알리는 것이고, 읽는 것은 화면에서 한다.
+ * 케이스 번호·제목 · 요점 한두 문장 · 링크. 이 세 줄이 한 건이다.
+ * 요점까지 담는 이유는, 제목만으로는 지금 대응해야 할 답변인지
+ * 화면을 열어 봐야만 알 수 있기 때문이다. 전문은 링크에서 읽는다.
  * 건수가 많으면 앞의 몇 건만 적고 나머지는 수만 밝힌다.
  */
-export function formatReplies(replies: readonly ReplyLine[], limit = 10): string {
+export function formatReplies(replies: readonly ReplyLine[], limit = REPLY_LIMIT): string {
   const lines: string[] = [`Broadcom 새 답변 ${replies.length}건`];
 
   for (const reply of replies.slice(0, limit)) {
     lines.push("");
     lines.push(`[${reply.caseLabel}] ${reply.subject}`);
+    if ((reply.summary ?? "").trim() !== "") {
+      lines.push(reply.summary!.trim());
+    }
     if (reply.requestId !== undefined) {
       lines.push(`${appUrl()}/cases/${reply.requestId}`);
     }

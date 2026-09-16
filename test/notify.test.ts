@@ -36,23 +36,44 @@ test("케이스 번호·제목과 링크만 넣는다", () => {
   assert.match(text, /\/cases\/37066647/);
 });
 
-// 알림은 "왔다"를 알리는 것이고, 읽는 것은 화면에서 한다.
-test("답변 내용·작성자·시각은 넣지 않는다", () => {
-  const text = formatReplies([
-    { ...REPLY, ...{ author: "Broadcom Internal", preview: "We reviewed the logs" } },
-  ]);
-  assert.ok(!text.includes("Broadcom Internal"), text);
-  assert.ok(!text.includes("reviewed the logs"), text);
+// 요점을 같이 보내는 이유: 제목만으로는 지금 대응할 답변인지 화면을 열어야 안다.
+test("요약을 주면 제목과 링크 사이에 한 줄로 들어간다", () => {
+  const text = formatReplies([{ ...REPLY, summary: "6개 VM 중 3개만 디스크 80% 도달, 설계상 정상인지 확인 요청" }]);
+  assert.match(text, /디스크 80% 도달/);
+  const order = text.indexOf("디스크") < text.indexOf("/cases/");
+  assert.ok(order, "요약은 링크보다 앞에 온다");
 });
 
-test("한 건은 제목 줄과 링크 줄로만 이뤄진다", () => {
-  const body = formatReplies([REPLY]).split("\n").filter((line) => line.trim() !== "");
-  // 머리말 + 제목 + 링크
+test("한 건은 제목·요약·링크 세 줄로 이뤄진다", () => {
+  const body = formatReplies([{ ...REPLY, summary: "로그 제출 요청" }])
+    .split("\n")
+    .filter((line) => line.trim() !== "");
+  // 머리말 + 제목 + 요약 + 링크
   assert.deepEqual(body, [
     "Broadcom 새 답변 1건",
     "[37066647] Spring Cloud Gateway Crash During TAS Upgrade",
+    "로그 제출 요청",
     "http://localhost:3000/cases/37066647",
   ]);
+});
+
+// 요약을 못 만든 건이 섞여도 알림은 나가야 한다.
+test("요약이 없거나 비었으면 제목·링크만 적는다", () => {
+  for (const reply of [REPLY, { ...REPLY, summary: "   " }]) {
+    const body = formatReplies([reply]).split("\n").filter((line) => line.trim() !== "");
+    assert.deepEqual(body, [
+      "Broadcom 새 답변 1건",
+      "[37066647] Spring Cloud Gateway Crash During TAS Upgrade",
+      "http://localhost:3000/cases/37066647",
+    ]);
+  }
+});
+
+// 작성자와 시각은 여전히 넣지 않는다. 알림에 필요한 것은 요점과 링크다.
+test("작성자·시각은 넣지 않는다", () => {
+  const text = formatReplies([{ ...REPLY, summary: "로그 제출 요청" }]);
+  assert.ok(!text.includes("Broadcom Internal"), text);
+  assert.ok(!text.includes("2026-09-10"), text);
 });
 
 test("건수가 많으면 앞의 몇 건만 적고 나머지는 수만 밝힌다", () => {
