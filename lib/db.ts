@@ -97,8 +97,19 @@ async function migrate(db: Db): Promise<void> {
       seen.set(table, cols);
     }
     if (cols.has(column)) continue;
-    await db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
-    cols.add(column);
+    try {
+      await db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+      cols.add(column);
+    } catch (error) {
+      // Postgres 다중 바인딩처럼 접속 계정이 이 테이블의 소유자가 아니면 ALTER 가 거부된다
+      // ("must be owner of table ..."). 이때 openDb 전체를 죽이지 않는다 — 최신 스키마는
+      // 이미 CREATE TABLE 에 다 들어 있어(team_id 등) 신규 DB 에서는 ALTER 가 필요 없다.
+      // 여기 닿는 건 소유자가 다른 기존 테이블뿐이고, 소유자 쪽 起動이 채우면 된다.
+      console.error(
+        `[db] ALTER ${table}.${column} 실패(무시하고 계속): ${error instanceof Error ? error.message : String(error)}`,
+      );
+      cols.add(column); // 재시도로 매번 같은 에러를 내지 않도록 처리한 것으로 표시
+    }
   }
 }
 

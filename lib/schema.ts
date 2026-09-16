@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS cases (
   product_id           INTEGER,
   product_name         TEXT NOT NULL DEFAULT '',
   component_id         INTEGER,
-  component_name       TEXT NOT NULL DEFAULT ''
+  component_name       TEXT NOT NULL DEFAULT '',
+  -- 팀(공용 계정) 소유. 신규 DB 는 여기서 바로 만든다(런타임 ALTER 불필요 → PG 소유권 문제 회피).
+  -- 기존 SQLite DB 는 아래 ADDED_COLUMNS 마이그레이션이 채운다.
+  team_id              TEXT NOT NULL DEFAULT 'default'
 );
 
 CREATE INDEX IF NOT EXISTS idx_cases_last_updated ON cases(last_updated_ms DESC);
