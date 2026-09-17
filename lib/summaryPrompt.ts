@@ -126,3 +126,104 @@ export function confluenceSystemPrompt(): string {
 }
 
 export const CONFLUENCE_USER_PREFIX = "아래는 정리 대상 SR 대화 내역입니다.\n\n";
+
+/* ------------------------------------------------------------------ *
+ * 섹션 분할.
+ *
+ * 사내 엔드포인트의 출력 상한이 512 토큰이다. 위 골격대로 쓴 문서는 그보다 길어서
+ * 한 번에 시키면 반드시 잘린다. 실제로 저장된 두 건이 1121자와 1125자로 4자 차이였다
+ * — 내용이 정한 길이가 아니라 상한이 정한 길이다.
+ *
+ * 그래서 섹션마다 따로 부르고 조립은 코드가 한다. 위 프롬프트 본문은 그대로 쓰고,
+ * "이번에는 이 섹션만" 이라는 지시와 사실 규칙 몇 줄만 덧붙인다.
+ * ------------------------------------------------------------------ */
+
+/**
+ * 사실 규칙 보강.
+ *
+ * 실제 결과물에서 나온 문제를 막으려는 것들이다.
+ *   1) TAC 이 참고로 안내했다가 배제한 알려진 이슈가 원인으로 격상됐다.
+ *   2) 고객 조치와 랩 검증이 뒤섞여 누가 무엇을 확인했는지 사라졌다.
+ *   3) 대상 환경 수와 이름, 버전, 관측 수치가 통째로 빠졌다.
+ */
+const FACT_RULES = `# 사실 규칙 보강
+- 검토 과정에서 참고로 언급되었다가 "해당 없음", "이미 적용되어 있음", "이 경우는 아님" 으로
+  정리된 가설은 원인으로 쓰지 않습니다. 배제되었다는 사실이 필요할 때만 그렇게 기재합니다.
+- 확인된 것과 추정을 뒤섞지 않습니다. 확정되지 않은 것은 "~로 추정됩니다" 로 명시합니다.
+- 원문에 있는 수치는 생략하지 않습니다. 특히 대상 환경의 수와 이름, 버전, 설정값,
+  관측된 지연 시간과 발생 횟수는 반드시 포함합니다.`;
+
+/** 호출당 출력 상한. 엔드포인트 상한(512)보다 낮게 잡아 잘림을 만들지 않는다. */
+export const SECTION_MAX_TOKENS = 480;
+/** 섹션이 다섯이라 라우트 예산(maxDuration 300초) 안에 들어오게 호출마다 끊는다. */
+export const SECTION_TIMEOUT_MS = 60_000;
+
+export interface ConfluenceSection {
+  id: string;
+  /** 출력 골격에서 이 섹션이 갖는 제목. 빈 문자열이면 제목 없이 시작한다. */
+  heading: string;
+  /** 이번 호출에서 무엇만 쓸 것인가. */
+  focus: string;
+}
+
+/** 출력 골격의 섹션. 배열 순서가 곧 문서 순서다. */
+export const CONFLUENCE_SECTIONS: readonly ConfluenceSection[] = [
+  {
+    id: "head",
+    heading: "",
+    focus: '"[SR번호] SR 제목(한글)" 한 줄과 그 바로 아래 환경 표만 출력합니다.',
+  },
+  { id: "problem", heading: "문제 정의", focus: '"문제 정의" 섹션의 본문 문단만 출력합니다.' },
+  {
+    id: "cause",
+    heading: "원인 및 기술 배경",
+    focus: '"원인 및 기술 배경" 섹션의 본문 문단만 출력합니다. 최소 2문단으로, 동작 원리 한 문단과 구조적 차이 한 문단을 나눠 씁니다.',
+  },
+  {
+    id: "solution",
+    heading: "해결 방법",
+    focus: '"해결 방법" 섹션의 본문 문단만 출력합니다. 원문에 설정 구문이나 명령 예시가 있으면 코드 블록으로 그대로 옮깁니다.',
+  },
+  { id: "result", heading: "최종 결과", focus: '"최종 결과" 한 문장만 출력합니다.' },
+];
+
+/** 섹션 하나를 쓰게 하는 시스템 프롬프트. 본문 프롬프트는 그대로 두고 뒤에 덧붙인다. */
+export function sectionSystemPrompt(section: ConfluenceSection): string {
+  return [
+    confluenceSystemPrompt(),
+    FACT_RULES,
+    `# 이번 호출\n${section.focus}\n섹션 제목 줄은 출력하지 않습니다. 다른 섹션의 제목이나 내용을 덧붙이지 않습니다.`,
+  ].join("\n\n");
+}
+
+/** 모델이 지시를 어기고 섹션 제목을 되쓴 경우를 걷어낸다. */
+const HEADING_ECHO = new RegExp(
+  `^\\s*#{0,3}\\s*(${CONFLUENCE_SECTIONS.map((s) => s.heading).filter((h) => h !== "").join("|")})\\s*$`,
+);
+
+export function cleanSectionText(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !HEADING_ECHO.test(line))
+    .join("\n")
+    .replace(/^\s*```[\w]*\s*$/, "")
+    .trim();
+}
+
+/**
+ * 섹션 결과를 문서 한 덩어리로 조립한다.
+ *
+ * 조립을 코드가 하므로 골격(제목 → 환경 표 → 네 섹션)이 어긋날 수 없다. 지금까지는
+ * 모델이 내용과 골격을 동시에 맞춰야 했다.
+ */
+export function assembleConfluenceDoc(
+  parts: ReadonlyArray<{ section: ConfluenceSection; text: string }>,
+): string {
+  const blocks: string[] = [];
+  for (const { section, text } of parts) {
+    const body = cleanSectionText(text);
+    if (body === "") continue;
+    blocks.push(section.heading === "" ? body : `${section.heading}\n\n${body}`);
+  }
+  return blocks.join("\n\n");
+}

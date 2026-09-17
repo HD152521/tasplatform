@@ -11,7 +11,15 @@ import "server-only";
 import { openDb } from "./db.ts";
 import { isoNow } from "./dates.ts";
 import { chat } from "./ai.ts";
-import { confluenceSystemPrompt, CONFLUENCE_USER_PREFIX } from "./summaryPrompt.ts";
+import {
+  CONFLUENCE_SECTIONS,
+  CONFLUENCE_USER_PREFIX,
+  SECTION_MAX_TOKENS,
+  SECTION_TIMEOUT_MS,
+  type ConfluenceSection,
+  assembleConfluenceDoc,
+  sectionSystemPrompt,
+} from "./summaryPrompt.ts";
 import { getCase, listThreads } from "./queries.ts";
 import { buildSourceText } from "./srReportFormat.ts";
 
@@ -70,6 +78,64 @@ async function writeCached(requestId: number, kind: SummaryKind, summary: Summar
   }
 }
 
+function sectionById(id: string): ConfluenceSection {
+  const found = CONFLUENCE_SECTIONS.find((s) => s.id === id);
+  if (found === undefined) throw new Error(`알 수 없는 섹션: ${id}`);
+  return found;
+}
+
+/**
+ * 섹션 하나를 쓴다.
+ *
+ * 이미 쓴 앞 섹션을 함께 넘겨 같은 말을 되풀이하거나 앞뒤가 어긋나지 않게 한다.
+ * temperature 0 — 설정값(기본 0.1)이 먹으면 원문에 없는 문장이 섞인다.
+ */
+function writeSection(
+  section: ConfluenceSection,
+  source: string,
+  written: ReadonlyArray<{ section: ConfluenceSection; text: string }>,
+): Promise<string> {
+  const context = written
+    .filter((w) => w.text.trim() !== "")
+    .map((w) => `[${w.section.heading || "제목과 환경 표"}]\n${w.text}`)
+    .join("\n\n");
+  const user = context === ""
+    ? CONFLUENCE_USER_PREFIX + source
+    : `${CONFLUENCE_USER_PREFIX}${source}\n\n=== 이미 작성된 앞 섹션 (되풀이하지 말 것) ===\n${context}`;
+
+  return chat(sectionSystemPrompt(section), user, {
+    maxTokens: SECTION_MAX_TOKENS,
+    temperature: 0,
+    timeoutMs: SECTION_TIMEOUT_MS,
+  });
+}
+
+/**
+ * 섹션마다 따로 부르고 코드가 조립한다. 한 번에 시키면 출력 상한에서 잘린다.
+ *
+ * 제목·환경 표와 문제 정의는 서로 독립이라 같이 보낸다. 원인은 문제 정의를, 해결 방법은
+ * 원인을, 최종 결과는 앞 둘을 받아야 말이 이어지므로 순서대로 부른다.
+ */
+async function composeSections(source: string): Promise<string> {
+  const head = sectionById("head");
+  const problem = sectionById("problem");
+
+  const [headText, problemText] = await Promise.all([
+    writeSection(head, source, []),
+    writeSection(problem, source, []),
+  ]);
+  const written = [
+    { section: head, text: headText },
+    { section: problem, text: problemText },
+  ];
+
+  for (const id of ["cause", "solution", "result"]) {
+    const section = sectionById(id);
+    written.push({ section, text: await writeSection(section, source, written) });
+  }
+  return assembleConfluenceDoc(written);
+}
+
 /**
  * 문서를 얻는다. 저장된 것이 있으면 그대로, 없으면 만들어 저장한다.
  * force 를 주면 다시 만든다.
@@ -103,11 +169,7 @@ export async function getSummary(
     })),
   });
 
-  const content = await chat(
-    confluenceSystemPrompt(),
-    CONFLUENCE_USER_PREFIX + source,
-    { maxTokens: 4000 },
-  );
+  const content = await composeSections(source);
   const summary: Summary = {
     content,
     source: "ai",
