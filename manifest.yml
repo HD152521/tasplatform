@@ -48,7 +48,8 @@ applications:
     buildpacks:
       - nodejs_buildpack
     command: node collector/worker.ts   # 주기 수집 루프(collect.ts 를 자식으로 spawn)
-    memory: 512M
+    memory: 1G                   # 헤드리스 Chromium(@sparticuz) 재로그인용 — 512M 은 OOM 위험
+    disk_quota: 2G               # sparticuz 가 /tmp 에 ~250MB 풀고, 드롭릿 여유 확보
     instances: 1
     no-route: true               # 인바운드 라우트 없음(백그라운드 워커)
     health-check-type: process   # 포트 리슨이 없으므로 프로세스 생존만 확인
