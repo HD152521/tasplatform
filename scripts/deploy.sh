@@ -33,13 +33,17 @@
 #
 # ⚠ DB 계정(공유 Postgres 대응): cf 바인딩은 앱마다 다른 롤을 발급해 web/mcp/worker 가
 #   서로 만든 객체를 공유하지 못한다(Postgres 소유권). 그래서 고정 전용 계정 하나를 만들어
-#   세 앱에 같은 DATABASE_URL 로 넣는다(코드가 VCAP 보다 DATABASE_URL 우선). 예:
-#     psql> CREATE ROLE srhub_app LOGIN PASSWORD '...';
-#           GRANT CONNECT, CREATE ON DATABASE postgres TO srhub_app;
-#     cf set-env <app> DATABASE_URL postgresql://srhub_app:...@<host>:5432/postgres
-#     cf set-env <app> SR_PG_SCHEMA srhub
+#   세 앱에 같은 접속 URL 로 넣는다. 예:
+#     psql> CREATE ROLE paasops LOGIN PASSWORD '...';
+#           GRANT CONNECT, CREATE ON DATABASE postgres TO paasops;
+#           CREATE SCHEMA paasops AUTHORIZATION paasops;
+#     cf set-env <app> SR_DATABASE_URL postgresql://paasops:...@<host>:5432/postgres
+#     cf set-env <app> SR_PG_SCHEMA paasops
+#   ★ 반드시 SR_DATABASE_URL 을 써라(DATABASE_URL 아님). TAS 의 Postgres 서비스 바인딩이
+#     기동 직전 .profile.d 스크립트로 DATABASE_URL 을 "그 앱 전용 VCAP 롤" URL 로 덮어써서
+#     cf set-env DATABASE_URL 은 무시된다. 코드는 SR_DATABASE_URL 을 최우선으로 본다.
 #   set-env 값은 push/restage 에도 유지된다(여기 deploy.sh 에 넣지 않는다 — 시크릿).
-#   manifest 의 서비스 바인딩은 네트워크 경로용으로 유지한다(자격은 DATABASE_URL 이 이김).
+#   manifest 의 서비스 바인딩은 네트워크 경로용으로 유지한다(자격은 SR_DATABASE_URL 이 이김).
 
 set -euo pipefail
 cd "$(dirname "$0")/.."   # 레포 루트

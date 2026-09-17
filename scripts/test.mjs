@@ -13,7 +13,7 @@ const env = { ...process.env };
 // loadEnv 가 .env 를 다시 읽어 DATABASE_URL 을 되살린다.
 env.SR_SKIP_DOTENV = "1";
 // 혹시 셸에서 export 된 값이 있어도 테스트로 새지 않게 제거(방어).
-for (const key of ["DATABASE_URL", "VCAP_SERVICES", "SR_PG_SCHEMA", "SR_DB_FILE"]) {
+for (const key of ["SR_DATABASE_URL", "DATABASE_URL", "VCAP_SERVICES", "SR_PG_SCHEMA", "SR_DB_FILE"]) {
   delete env[key];
 }
 

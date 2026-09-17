@@ -2,9 +2,10 @@
  * DB 백엔드 결정.
  *
  * 우선순위:
- *   1) DATABASE_URL 이 postgres:// 이면 Postgres
- *   2) VCAP_SERVICES(TAS 바인딩)에서 Postgres 자격을 찾으면 Postgres
- *   3) 아니면 SQLite(로컬/테스트 기본 — 무설정)
+ *   1) SR_DATABASE_URL 이 postgres:// 이면 Postgres (플랫폼이 덮어쓰는 DATABASE_URL 회피용)
+ *   2) DATABASE_URL 이 postgres:// 이면 Postgres
+ *   3) VCAP_SERVICES(TAS 바인딩)에서 Postgres 자격을 찾으면 Postgres
+ *   4) 아니면 SQLite(로컬/테스트 기본 — 무설정)
  *
  * 이렇게 두면 로컬은 그대로 SQLite, TAS 는 바인딩만 하면 Postgres 를 쓴다.
  */
@@ -94,6 +95,16 @@ export function parseVcapPostgres(raw: string | undefined): string | null {
 }
 
 export function resolveDbTarget(): DbTarget {
+  // SR_DATABASE_URL 을 최우선으로 본다.
+  // 왜: TAS 의 Postgres 서비스 바인딩이 스테이징 때 .profile.d/ 스크립트를 만들어 기동 직전
+  // DATABASE_URL 을 "그 앱 전용 VCAP 롤"의 URL 로 export 한다. 이건 우리가 cf set-env 로 넣은
+  // 값(공유 DB 의 고정 전용 계정)을 매번 덮어써서, 앱마다 다른 롤로 붙어 서로의 테이블을
+  // 소유권 때문에 못 읽는 문제를 일으킨다. 그래서 플랫폼이 절대 안 건드리는 전용 이름을 둔다.
+  const override = (process.env.SR_DATABASE_URL ?? "").trim();
+  if (override.startsWith("postgres")) {
+    return { dialect: "postgres", connectionString: override, schema: pgSchema() };
+  }
+
   const url = (process.env.DATABASE_URL ?? "").trim();
   if (url.startsWith("postgres")) return { dialect: "postgres", connectionString: url, schema: pgSchema() };
 
