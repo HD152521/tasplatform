@@ -18,8 +18,12 @@ import sys
 from pathlib import Path
 
 from pptx import Presentation
+from pptx.dml.color import RGBColor
 
 RELS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+
+# 보고월 기준 미종료 SR 의 "완료 여부" 강조색.
+RED = RGBColor(0xFF, 0x00, 0x00)
 
 # 템플릿에서 각 구획이 시작하는 위치 (0-based)
 IDX_CLOUD = 0        # 01 클라우드 운영 현황
@@ -112,6 +116,14 @@ def cell_text(table, row, col, value):
     if row >= len(table.rows) or col >= len(table.columns):
         raise IndexError(f"표 범위를 벗어남: ({row},{col}) / {len(table.rows)}x{len(table.columns)}")
     set_text(table.cell(row, col).text_frame, value)
+
+
+def color_cell(table, row, col, rgb):
+    """한 칸의 모든 run 글자색을 바꾼다. set_text 로 채운 뒤 호출한다."""
+    frame = table.cell(row, col).text_frame
+    for paragraph in frame.paragraphs:
+        for run in paragraph.runs:
+            run.font.color.rgb = rgb
 
 
 def first_table(slide):
@@ -249,6 +261,9 @@ def fill_sr_summary(slide, items):
         cell_text(table, r, base + 2, sr["title"])
         cell_text(table, r, base + 3, sr["progress"])
         cell_text(table, r, base + 4, sr["done"])
+        # 보고월 기준 미종료 SR 은 완료 여부를 빨간 글씨로 강조한다.
+        if sr.get("open") == "1":
+            color_cell(table, r, base + 4, RED)
 
 
 def fill_sr_detail(slide, sr):

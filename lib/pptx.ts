@@ -17,7 +17,7 @@ import { atlassianConfig } from "./atlassian.ts";
 import { calculateInstances } from "./instanceCount.ts";
 import { loadMonth, resolvePrevious } from "./instanceStore.ts";
 import { fetchMonthlyWork } from "./jira.ts";
-import { listCasesInMonth } from "./queries.ts";
+import { listCasesInMonth, isClosedStatus } from "./queries.ts";
 import { loadPicks } from "./reportPicks.ts";
 import { getSrReport } from "./srReport.ts";
 import { normalizeAnalysis, severityDigit, statusLabel } from "./srReportFormat.ts";
@@ -31,6 +31,12 @@ export class ReportBuildError extends Error {
 
 const TEMPLATE = "templates/monthly-report.pptx";
 const SCRIPT = "scripts/build_report.py";
+
+// 보고월 기준 아직 종료되지 않은(=진행 중) SR 의 표기.
+//   - 진행현황 요약의 "완료 여부" 칸: "진행 중"(파이썬이 빨간 글씨로 칠한다)
+//   - SR 상세의 "진행 현황"(최종 결과) 칸: "SR 답변 대기중"
+const OPEN_DONE_LABEL = "진행 중";
+const OPEN_DETAIL_STATUS = "SR 답변 대기중";
 
 /** 1,515 처럼 천 단위만 끊는다. 소수는 한 자리까지. */
 function num(value: number): string {
@@ -94,19 +100,24 @@ export async function buildMonthlyReport(
   for (const [index, c] of cases.entries()) {
     onProgress?.({ step: `SR 정리 ${c.request_id_formatted}`, done: index, total: cases.length });
     const report = await getSrReport(c.request_id);
+    // 보고월 기준 아직 종료되지 않은 케이스는 완료 여부를 "진행 중"(빨간 글씨)으로,
+    // 상세의 진행 현황을 "SR 답변 대기중"으로 표기한다.
+    const open = !isClosedStatus(c.status);
     srs.push({
       no: c.request_id_formatted,
       openedOn: isoDate(c.created_on),
-      closedOn: isoDate(c.last_updated),
+      closedOn: open ? "" : isoDate(c.last_updated),
       title: report.title !== "" ? report.title : c.subject,
       progress: report.result,
-      done: statusLabel(c.status),
+      done: open ? OPEN_DONE_LABEL : statusLabel(c.status),
       product: c.category !== "" ? c.category : "Tanzu Application Service",
       severity: severityDigit(c.priority),
       status: statusLabel(c.status),
       symptom: report.title !== "" ? report.title : c.subject,
       analysis: normalizeAnalysis(report.analysis),
-      result: report.result,
+      result: open ? OPEN_DETAIL_STATUS : report.result,
+      // 파이썬이 요약표의 "완료 여부" 칸을 빨간 글씨로 칠할지 판단하는 플래그.
+      open: open ? "1" : "0",
     });
   }
 
