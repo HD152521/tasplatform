@@ -30,6 +30,16 @@
 #     SR_USERNAME=<브로드컴계정>
 #     SR_PASSWORD=<비번>
 #   .env 는 절대 커밋하지 않는다(.gitignore 유지). 대안: cf set-env + cf restage.
+#
+# ⚠ DB 계정(공유 Postgres 대응): cf 바인딩은 앱마다 다른 롤을 발급해 web/mcp/worker 가
+#   서로 만든 객체를 공유하지 못한다(Postgres 소유권). 그래서 고정 전용 계정 하나를 만들어
+#   세 앱에 같은 DATABASE_URL 로 넣는다(코드가 VCAP 보다 DATABASE_URL 우선). 예:
+#     psql> CREATE ROLE srhub_app LOGIN PASSWORD '...';
+#           GRANT CONNECT, CREATE ON DATABASE postgres TO srhub_app;
+#     cf set-env <app> DATABASE_URL postgresql://srhub_app:...@<host>:5432/postgres
+#     cf set-env <app> SR_PG_SCHEMA srhub
+#   set-env 값은 push/restage 에도 유지된다(여기 deploy.sh 에 넣지 않는다 — 시크릿).
+#   manifest 의 서비스 바인딩은 네트워크 경로용으로 유지한다(자격은 DATABASE_URL 이 이김).
 
 set -euo pipefail
 cd "$(dirname "$0")/.."   # 레포 루트
