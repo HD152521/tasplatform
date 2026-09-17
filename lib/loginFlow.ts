@@ -287,9 +287,12 @@ export async function startLogin(
     flow = { browser, context, page, createdAt: Date.now(), teamId };
 
     await page.goto(PORTAL_HOME, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
-    await page.waitForURL(/access\.broadcom\.com/, { timeout: NAV_TIMEOUT_MS });
 
-    // 기기를 기억하고 있으면 아이디 단계를 건너뛰고 바로 비밀번호를 묻는다.
+    // 로그인 입력칸이 뜨길 기다린다(포털→access.broadcom.com 리다이렉트 후).
+    // ⚠ waitForURL(/access.broadcom.com/) 는 쓰지 않는다 — 그 로그인 위젯 페이지의 'load'
+    //   이벤트가 안 떠 URL 이 맞아도 타임아웃난다("waiting for navigation until load").
+    //   입력칸 가시성으로 기다리면 load 와 무관하게 진행된다.
+    // 기기를 기억하고 있으면 아이디 단계를 건너뛰고 바로 비밀번호를 묻는다(둘 중 먼저 뜨는 쪽).
     await page.waitForSelector(`${SEL.username}, ${SEL.password}`, { timeout: NAV_TIMEOUT_MS });
 
     const usernameField = page.locator(SEL.username).first();
