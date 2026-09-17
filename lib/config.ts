@@ -45,11 +45,12 @@ export const DEFAULT_TEAM_ID = process.env.SR_DEFAULT_TEAM ?? "default";
  * 하나의 Broadcom 계정이 여러 고객사(NONGHYUP BANK·KB Life Insurance 등)의 SR 을 함께
  * 볼 수 있다. 우리 담당 고객사 것만 수집하려고 SearchResultItem.partySiteNumber 로 거른다
  * (이름 문자열 partyName 보다 사이트 번호가 안정적이다).
- * 기본값은 NONGHYUP BANK (NH BANK) = 15588968.
+ * 기본값은 NONGHYUP BANK (NH BANK) 의 두 사이트 = 15588968, 15588948
+ * (농협이 사이트 번호를 두 개 쓴다 — 둘 다 우리 담당이라 함께 수집한다).
  * 빈 값("")으로 두면 필터를 끄고 전부 수집한다(기존 동작).
- * 여러 고객사를 허용하려면 쉼표로: SR_PARTY_SITES="15588968,other".
+ * 여러 고객사를 허용하려면 쉼표로: SR_PARTY_SITES="15588968,15588948,other".
  */
-export const ALLOWED_PARTY_SITES: readonly string[] = (process.env.SR_PARTY_SITES ?? "15588968")
+export const ALLOWED_PARTY_SITES: readonly string[] = (process.env.SR_PARTY_SITES ?? "15588968,15588948")
   .split(",")
   .map((s) => s.trim())
   .filter((s) => s !== "");
