@@ -52,6 +52,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   globalThis.fetch = realFetch;
+  delete process.env.LLM_INSECURE_TLS;
 });
 
 test("keycloak: 토큰을 발급받아 Bearer 로 chat 을 부른다", async () => {
@@ -181,4 +182,22 @@ test("testConnection 은 실패해도 던지지 않고 {ok:false, detail} 을 �
   const r = await testConnection(cfg());
   assert.equal(r.ok, false);
   assert.ok(r.detail.length > 0);
+});
+
+test("LLM_INSECURE_TLS=1 이면 토큰·chat fetch 에 TLS 우회 dispatcher 를 싣는다", async () => {
+  process.env.LLM_INSECURE_TLS = "1";
+  installFetch((url) => (url === TOKEN_URL ? tokenResponse() : chatResponse()));
+  await chatWithConfig(cfg(), "s", "u");
+  assert.ok(calls.length >= 2);
+  for (const c of calls) {
+    assert.ok((c.init as { dispatcher?: unknown }).dispatcher, "dispatcher 가 실려야 한다");
+  }
+});
+
+test("플래그가 없으면 dispatcher 를 싣지 않는다(정상 TLS 검증)", async () => {
+  installFetch((url) => (url === TOKEN_URL ? tokenResponse() : chatResponse()));
+  await chatWithConfig(cfg(), "s", "u");
+  for (const c of calls) {
+    assert.equal((c.init as { dispatcher?: unknown }).dispatcher, undefined);
+  }
 });

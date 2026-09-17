@@ -13,7 +13,26 @@
  *
  * server-only 를 붙이지 않는다. 수집기(Node)에서도 부른다.
  */
+import { Agent } from "undici";
 import type { LlmConfig } from "./llmConfig.ts";
+
+/** Node 전역 fetch 에 undici dispatcher 를 실어 보내기 위한 확장 타입. */
+type FetchInit = RequestInit & { dispatcher?: Agent };
+
+/**
+ * 사내 자체서명 CA 를 쓰는 LLM/Keycloak 엔드포인트용 TLS 검증 우회.
+ *
+ * LLM_INSECURE_TLS=1 일 때만 켜지고, "이 파일의 fetch(LLM·Keycloak 호출)"에만 적용된다
+ * — 브로드컴 수집 등 다른 fetch 의 TLS 검증에는 영향이 없다(전역
+ * NODE_TLS_REJECT_UNAUTHORIZED=0 은 모든 outbound 를 무방비로 만드는 것과 다르다).
+ * 정석은 NODE_EXTRA_CA_CERTS 로 사내 CA 를 신뢰시키는 것이고, 이건 내부망 한정 실용 우회다.
+ */
+let insecureAgent: Agent | null = null;
+function insecureDispatcher(): Agent | undefined {
+  if (!/^(1|true|yes|on)$/i.test((process.env.LLM_INSECURE_TLS ?? "").trim())) return undefined;
+  if (!insecureAgent) insecureAgent = new Agent({ connect: { rejectUnauthorized: false } });
+  return insecureAgent;
+}
 
 export class LlmError extends Error {
   readonly status: number;
@@ -67,12 +86,15 @@ async function fetchKeycloakToken(config: LlmConfig): Promise<string> {
 
   let response: Response;
   try {
-    response = await fetch(config.tokenUrl, {
+    const init: FetchInit = {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
       signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
-    });
+    };
+    const dispatcher = insecureDispatcher();
+    if (dispatcher) init.dispatcher = dispatcher;
+    response = await fetch(config.tokenUrl, init);
   } catch (error) {
     throw new LlmError(0, `토큰 발급 요청 실패: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -152,7 +174,7 @@ export async function chatWithConfig(
 
   let response: Response;
   try {
-    response = await fetch(chatUrl(config), {
+    const init: FetchInit = {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -165,7 +187,10 @@ export async function chatWithConfig(
         ],
       }),
       signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-    });
+    };
+    const dispatcher = insecureDispatcher();
+    if (dispatcher) init.dispatcher = dispatcher;
+    response = await fetch(chatUrl(config), init);
   } catch (error) {
     throw new LlmError(0, `요청 실패: ${error instanceof Error ? error.message : String(error)}`);
   }
