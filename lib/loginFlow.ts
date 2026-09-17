@@ -14,9 +14,10 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { Browser, BrowserContext, Page } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright-core";
 import { DEFAULT_TEAM_ID, NAV_TIMEOUT_MS, PORTAL_HOME, deviceFileForTeam, sessionFileForTeam } from "./config.ts";
 import { loginContextOptions, saveDeviceState, type StorageState } from "./browserIdentity.ts";
+import { launchBrowser } from "../collector/session.ts";
 
 const FLOW_TTL_MS = 10 * 60 * 1000;
 const STEP_TIMEOUT_MS = 60_000;
@@ -55,24 +56,6 @@ function sweepExpired(): void {
       void flow.browser.close().catch(() => undefined);
     }
   }
-}
-
-async function launch(): Promise<Browser> {
-  const { chromium } = await import("playwright");
-  const variants: Array<{ args?: string[] }> = [
-    { args: ["--disable-gpu"] },
-    {},
-    { args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] },
-  ];
-  let lastError: unknown;
-  for (const variant of variants) {
-    try {
-      return await chromium.launch({ headless: true, ...variant });
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw new Error(`브라우저를 띄우지 못했습니다: ${String(lastError)}`);
 }
 
 function signedIn(page: Page): boolean {
@@ -291,8 +274,14 @@ export async function startLogin(
   sweepExpired();
 
   let flow: Flow | null = null;
+  // 브라우저를 지역변수에 먼저 담는다. launchBrowser 성공 후 newContext/newPage 가 throw 하면
+  // flow 는 아직 null 이라 예전 코드는 브라우저를 못 닫아 프로세스가 샜다. catch 에서 browser 로
+  // 직접 닫는다(flow 유무와 무관하게).
+  let browser: Browser | null = null;
   try {
-    const browser = await launch();
+    // 실행 창구는 collector/session.ts 로 단일화한다. 컨테이너면 @sparticuz/chromium
+    // (headless)로, 로컬이면 설치된 브라우저로 뜬다. 서버 주도 로그인은 항상 headless.
+    browser = await launchBrowser(true);
     const context = await browser.newContext(loginContextOptions(browser, teamId));
     const page = await context.newPage();
     flow = { browser, context, page, createdAt: Date.now(), teamId };
@@ -328,7 +317,7 @@ export async function startLogin(
     flows.set(flowId, flow);
     return { status: "otp_required", flowId, hint: await otpHint(page) };
   } catch (error) {
-    if (flow !== null) await flow.browser.close().catch(() => undefined);
+    if (browser !== null) await browser.close().catch(() => undefined);
     return { status: "error", message: error instanceof Error ? error.message : String(error) };
   }
 }
