@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   CONFLUENCE_SECTIONS,
-  SECTION_MAX_TOKENS,
+  SECTION_TIMEOUT_MS,
   assembleConfluenceDoc,
   cleanSectionText,
   sectionSystemPrompt,
@@ -23,9 +23,14 @@ const byId = (id: string) => {
   return found;
 };
 
-// 이 불변식이 깨지면 다시 잘린 문서가 나온다.
-test("호출당 출력 상한은 엔드포인트 상한보다 낮다", () => {
-  assert.ok(SECTION_MAX_TOKENS < 512, String(SECTION_MAX_TOKENS));
+/**
+ * 섹션 호출은 max_tokens 를 넘기지 않아 운영 설정(config.maxTokens)을 따른다.
+ * 대신 왕복 횟수가 라우트 예산 안에 들어와야 한다 — head 와 문제 정의를 함께 보내므로
+ * 왕복은 네 번이고, 라우트의 maxDuration 은 300 초다.
+ */
+test("최악의 경우에도 라우트 예산 안에서 끝난다", () => {
+  const roundTrips = 4;
+  assert.ok(SECTION_TIMEOUT_MS * roundTrips <= 300_000, String(SECTION_TIMEOUT_MS));
 });
 
 test("출력 골격의 섹션이 순서대로 정의되어 있다", () => {

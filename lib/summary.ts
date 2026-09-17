@@ -14,7 +14,6 @@ import { chat } from "./ai.ts";
 import {
   CONFLUENCE_SECTIONS,
   CONFLUENCE_USER_PREFIX,
-  SECTION_MAX_TOKENS,
   SECTION_TIMEOUT_MS,
   type ConfluenceSection,
   assembleConfluenceDoc,
@@ -103,8 +102,8 @@ function writeSection(
     ? CONFLUENCE_USER_PREFIX + source
     : `${CONFLUENCE_USER_PREFIX}${source}\n\n=== 이미 작성된 앞 섹션 (되풀이하지 말 것) ===\n${context}`;
 
+  // maxTokens 를 넘기지 않는 것은 의도다 — summaryPrompt.ts 의 설명 참고.
   return chat(sectionSystemPrompt(section), user, {
-    maxTokens: SECTION_MAX_TOKENS,
     temperature: 0,
     timeoutMs: SECTION_TIMEOUT_MS,
   });
