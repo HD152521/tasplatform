@@ -1,0 +1,4 @@
+# 보고서 PPTX 생성(scripts/build_report.py)용. TAS 멀티빌드팩에서 python_buildpack(supply)이
+# 이 목록을 pip 설치한다(manifest 의 buildpacks: [python_buildpack, nodejs_buildpack]).
+# 로컬 .venv 와 버전 일치. lxml·Pillow·XlsxWriter 등 의존성은 pip 가 함께 받는다.
+python-pptx==1.0.2

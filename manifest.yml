@@ -19,7 +19,11 @@
 # 이미 만들어둔 인스턴스가 있으면 그 이름을 PG_SERVICE_INSTANCE 로 주면 그걸 바인딩한다.
 applications:
   - name: broadcom-sr-web
+    # 멀티빌드팩: python(supply)이 먼저 python3 + requirements.txt(python-pptx)를 깔고,
+    # nodejs(final)가 앱을 띄운다. 보고서 PPTX 생성(scripts/build_report.py)이 python 을
+    # 쓰는데 컨테이너 기본엔 python 이 없어서(ENOENT) 이렇게 공급한다.
     buildpacks:
+      - python_buildpack
       - nodejs_buildpack
     command: npm start          # next start (.next 빌드 필요)
     memory: 512M
@@ -28,6 +32,7 @@ applications:
       NODE_ENV: production
       TZ: Asia/Seoul
       SR_APP_URL: https://broadcom-sr-web.apps.nh.ds.lab   # 알림 링크·UI 절대주소
+      SR_PYTHON: python3         # 보고서 PPTX 생성기가 쓸 파이썬(공급된 python_buildpack)
     services:
       - ((pg_instance))
 
