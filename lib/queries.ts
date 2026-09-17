@@ -202,6 +202,32 @@ export interface AttachmentViewRow {
   uploaded_ms: number | null;
 }
 
+/** 다운로드 프록시가 쓰는, 첨부 하나의 원본 정보. */
+export interface AttachmentSourceRow {
+  document_id: number;
+  request_id: number;
+  doc_name: string;
+  doc_path: string;
+  content_type: string;
+}
+
+/** document_id 로 첨부 하나를 찾는다. 없으면 null. */
+export function getAttachment(
+  documentId: number,
+  dbFile?: string,
+): Promise<AttachmentSourceRow | null> {
+  return withDb(async (db) => {
+    const rows = toPlain<AttachmentSourceRow>(
+      await db.all(
+        `SELECT document_id, request_id, doc_name, doc_path, content_type
+           FROM attachments WHERE document_id = ? LIMIT 1`,
+        [documentId],
+      ),
+    );
+    return rows[0] ?? null;
+  }, dbFile);
+}
+
 export function listAttachments(requestId: number, dbFile?: string): Promise<AttachmentViewRow[]> {
   return withDb(
     async (db) =>

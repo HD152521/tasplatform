@@ -282,6 +282,17 @@ function FileRow({ doc, compact = false }: { doc: AttachmentViewRow; compact?: b
     </>
   );
 
-  if (doc.doc_path === "") return <div style={style}>{inner}</div>;
-  return <a href={doc.doc_path} target="_blank" rel="noreferrer" style={style}>{inner}</a>;
+  // 첨부는 서버 프록시(/api/attachments/[id])가 팀 세션으로 대신 받아 내려준다.
+  // doc_path 로 바로 걸면 세션 없는 브라우저가 Broadcom 사이트로 튕겨 파일이 안 받아진다.
+  if (doc.doc_path === "" || doc.document_id <= 0) return <div style={style}>{inner}</div>;
+  return (
+    <a
+      href={`/api/attachments/${doc.document_id}`}
+      download={doc.doc_name === "" ? undefined : doc.doc_name}
+      rel="noreferrer"
+      style={style}
+    >
+      {inner}
+    </a>
+  );
 }
