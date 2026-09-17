@@ -32,9 +32,15 @@ export class SrReportError extends Error {
   }
 }
 
-/** 케이스 본문을 보낼 수 있는 키가 있는가. */
-export function hasSrReporter(): boolean {
-  return (process.env.OPENAI_API_KEY ?? "").trim() !== "";
+/**
+ * 케이스 본문을 보낼 곳이 있는가.
+ *
+ * OPENAI_API_KEY 만 보면 안 된다. 설정된 LLM 연결(사내 엔드포인트)이 있으면 그쪽으로
+ * 나가므로, 키가 비어 있어도 생성은 된다. 예전 구현은 키만 보고 503 으로 막아서
+ * 사내 LLM 만 쓰는 배포에서는 되는 기능을 못 쓰게 했다. getSrReport 와 같은 판정을 쓴다.
+ */
+export function hasSrReporter(): Promise<boolean> {
+  return hasOpenAi();
 }
 
 async function readCached(requestId: number): Promise<SrReport | null> {
