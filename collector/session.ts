@@ -7,7 +7,9 @@
  */
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { chromium, type Browser, type BrowserContext } from "playwright";
+// playwright-core 로 통일한다. 컨테이너에서는 @sparticuz/chromium 번들 바이너리를 구동하고,
+// 로컬에서는 (같은 버전의) playwright 패키지가 설치해 둔 실제 브라우저를 그대로 찾아 띄운다.
+import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import {
   API_HEADERS,
   API_ORIGIN,
@@ -22,6 +24,7 @@ import {
   sessionContextOptions,
   type StorageState,
 } from "../lib/browserIdentity.ts";
+import { planBrowserLaunch } from "./launchPlan.ts";
 
 export class SessionExpiredError extends Error {
   constructor(message: string) {
@@ -50,11 +53,45 @@ export interface OpenedSession {
   close: () => Promise<void>;
 }
 
+/**
+ * 브라우저 실행 단일 창구.
+ *
+ * 컨테이너/로컬 어느 쪽인지는 planBrowserLaunch 가 env 로 판단한다(collector/launchPlan.ts).
+ * 컨테이너면 @sparticuz/chromium 번들 바이너리로, 로컬이면 Playwright 가 설치한 실제
+ * 브라우저로 띄운다. headless 인자는 로컬 headed 로그인(사람+OTP)을 위해 그대로 존중한다.
+ */
 export async function launchBrowser(headless: boolean): Promise<Browser> {
+  const plan = planBrowserLaunch(headless, process.env);
+
+  if (plan.bundled) {
+    // 컨테이너 경로: @sparticuz/chromium 번들 바이너리 + playwright-core.
+    //
+    // 버전 짝맞춤(중요): @sparticuz/chromium 의 major = 번들 Chromium major 이고, 이는
+    // playwright-core 가 구동하는 Chromium major 와 반드시 같아야 CDP 프로토콜이 맞물린다.
+    //   playwright-core 1.55.1     → Chromium 140.0.7339.186
+    //   @sparticuz/chromium 140.0.0 → Chromium 140
+    // 둘 다 major 140 이라 짝이 맞다. sparticuz 는 자체 .so 를 /tmp 로 풀고 LD_LIBRARY_PATH 를
+    // 앞세워 cflinuxfs4 에서 apt·root 없이 돈다(브라우저가 패키지 안에 들어 있음).
+    // 주의: /tmp 추출물 ~250MB 는 1GB 디스크엔 들어가나 512MB RAM 은 빠듯하다 —
+    //       워커 메모리를 1G 로 올릴 것을 권장(manifest 는 여기서 건드리지 않는다).
+    // sparticuz 는 무거우므로 컨테이너 경로에서만 지연 로드한다.
+    const sparticuz = (await import("@sparticuz/chromium")).default;
+    // 그래픽 스택(swiftshader/WebGL)을 끈다. 로그인·수집엔 WebGL 이 필요 없고,
+    // 끄면 swiftshader.tar.br 를 /tmp 로 풀지 않아 추출 용량과 메모리를 아낀다(512MB 압박 완화).
+    // 반드시 executablePath() 전에 설정해야 추출 단계에 반영된다.
+    sparticuz.setGraphicsMode = false;
+    return chromium.launch({
+      args: sparticuz.args,
+      executablePath: await sparticuz.executablePath(),
+      headless: true,
+    });
+  }
+
+  // 로컬 경로: Playwright 가 설치한 실제 브라우저. Windows headed 크래시 대비로 옵션을 순차 시도.
   let lastError: unknown;
   for (const variant of LAUNCH_VARIANTS) {
     try {
-      return await chromium.launch({ headless, ...variant });
+      return await chromium.launch({ headless: plan.headless, ...variant });
     } catch (error) {
       lastError = error;
     }
@@ -74,15 +111,22 @@ export async function openSavedSession(teamId: string = DEFAULT_TEAM_ID): Promis
     );
   }
 
+  // launchBrowser 가 이미 살아있는 브라우저를 돌려준 뒤 newContext 가 throw 하면 그 브라우저가
+  // 닫히지 않아 프로세스가 샌다(Node 가 종료 못 함). 컨텍스트 생성 실패 시 반드시 닫는다.
   const browser = await launchBrowser(true);
-  const context = await browser.newContext(sessionContextOptions(browser, path));
-  return {
-    browser,
-    context,
-    close: async () => {
-      await browser.close().catch(() => undefined);
-    },
-  };
+  try {
+    const context = await browser.newContext(sessionContextOptions(browser, path));
+    return {
+      browser,
+      context,
+      close: async () => {
+        await browser.close().catch(() => undefined);
+      },
+    };
+  } catch (error) {
+    await browser.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 /**

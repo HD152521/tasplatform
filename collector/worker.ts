@@ -17,6 +17,7 @@ import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isWithinHours, parseHours, resolveDurationMs } from "./schedule.ts";
+import { isCloudFoundry } from "./launchPlan.ts";
 
 const DEFAULT_INTERVAL_MS = 900_000; // 15분
 const MIN_INTERVAL_MS = 1_000; // CPU 를 태우지 않기 위한 안전 하한
@@ -189,7 +190,24 @@ function requestStop(signal: string): void {
   if (wakeSleeper !== null) wakeSleeper();
 }
 
+/**
+ * 컨테이너에서 무인 재로그인이 확실히 헤드리스(@sparticuz/chromium) 경로를 타도록 보장한다.
+ *
+ * collect.ts 는 세션이 만료되면 스스로 브라우저로 재로그인한다(acquireBrowserSession →
+ * launchBrowser). 컨테이너엔 브라우저 바이너리가 없어 그 경로는 번들 Chromium 으로만 뜬다.
+ * session.ts 가 CF(VCAP_APPLICATION)를 자동 감지하지만, 무인 재로그인이 걸린 지점이라
+ * 의도를 명시해 둔다 — CF 이면서 설정이 없을 때만 SR_HEADLESS 를 켜 자식(collect.ts)이
+ * 이를 상속하게 한다. 로컬에서 `npm run worker` 로 돌릴 땐 건드리지 않는다(headed 유지).
+ */
+export function ensureContainerHeadless(): void {
+  if (isCloudFoundry(process.env) && (process.env.SR_HEADLESS ?? "").trim() === "") {
+    process.env.SR_HEADLESS = "1";
+    console.log("[worker] CF 컨테이너 감지 — 무인 재로그인을 위해 SR_HEADLESS=1 설정.");
+  }
+}
+
 function main(): void {
+  ensureContainerHeadless();
   const config = readConfig();
   process.on("SIGTERM", () => requestStop("SIGTERM"));
   process.on("SIGINT", () => requestStop("SIGINT"));
