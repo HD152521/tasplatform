@@ -32,10 +32,10 @@ export async function openDb(file?: string): Promise<Db> {
 /**
  * Postgres 전용 스키마 준비 + 진단 로그.
  * - 어느 계정/search_path 로 붙는지 起動 로그에 남긴다(다중 바인딩 진단용).
- * - 전용 스키마를 현재 계정 소유로 만든다(AUTHORIZATION CURRENT_USER).
- *   이미 다른 계정이 만든 같은 이름 스키마가 있으면 IF NOT EXISTS 로 건너뛰는데,
- *   그 경우 현재 계정이 그 스키마를 못 써 CREATE TABLE 이 "no schema ..." 로 실패한다
- *   → 그때는 SR_PG_SCHEMA 를 아무도 안 쓴 새 이름으로 바꾸면 깔끔히 해결된다.
+ * - 스키마가 이미 있으면(관리자가 미리 만들어 앱 계정에 소유권을 준 경우 등) CREATE 를
+ *   아예 시도하지 않는다 — 그래야 DB 에 CREATE 권한이 없는 최소권한 계정도 동작한다.
+ * - 없을 때만 현재 계정 소유로 만든다(그러려면 그 계정에 CREATE 권한이 있어야 한다).
+ *   실패해도 起動을 막지 않는다(로그만).
  */
 async function preparePostgresSchema(db: Db, schema: string): Promise<void> {
   try {
@@ -49,12 +49,24 @@ async function preparePostgresSchema(db: Db, schema: string): Promise<void> {
     // 진단 실패는 무시한다.
   }
   if (schema === "public") return;
+
+  // 이미 존재하면 생성하지 않는다(CREATE 권한 불필요). information_schema 는 누구나 읽는다.
+  try {
+    const exists = await db.get(
+      "SELECT 1 AS x FROM information_schema.schemata WHERE schema_name = ?",
+      [schema],
+    );
+    if (exists) return;
+  } catch {
+    // 존재 확인 실패는 무시하고 아래 생성 시도로 넘어간다.
+  }
+
   try {
     await db.exec(`CREATE SCHEMA IF NOT EXISTS "${schema}" AUTHORIZATION CURRENT_USER`);
   } catch (error) {
     console.error(
       `[db] CREATE SCHEMA ${schema} 실패: ${error instanceof Error ? error.message : String(error)}` +
-        ` — SR_PG_SCHEMA 를 아무도 안 쓴 새 이름으로 바꿔보세요.`,
+        ` — 관리자가 미리 만들어 소유권을 주세요: CREATE SCHEMA "${schema}" AUTHORIZATION <앱계정>;`,
     );
   }
 }
