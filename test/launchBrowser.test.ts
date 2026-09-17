@@ -10,6 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  enableSparticuzSystemLibs,
   isCloudFoundry,
   planBrowserLaunch,
   shouldUseBundledChromium,
@@ -82,4 +83,25 @@ test("isCloudFoundry 는 VCAP_APPLICATION 유무로만 판단한다", () => {
   assert.equal(isCloudFoundry(env({ VCAP_APPLICATION: "{\"a\":1}" })), true);
   assert.equal(isCloudFoundry(env({ VCAP_APPLICATION: "   " })), false); // 공백뿐이면 없음
   assert.equal(isCloudFoundry(env()), false);
+});
+
+test("enableSparticuzSystemLibs: 미설정 env 에 AL2023 표식을 심는다", () => {
+  // Arrange
+  const e = env();
+
+  // Act
+  enableSparticuzSystemLibs(e);
+
+  // Assert: "20.x" 가 들어가야 isRunningInAmazonLinux2023 이 참이 되어 라이브러리를 푼다.
+  assert.match(String(e.AWS_LAMBDA_JS_RUNTIME), /20\.x/);
+});
+
+test("enableSparticuzSystemLibs: 이미 AL2023(20.x/22.x)면 덮어쓰지 않는다", () => {
+  const a = env({ AWS_LAMBDA_JS_RUNTIME: "nodejs22.x" });
+  enableSparticuzSystemLibs(a);
+  assert.equal(a.AWS_LAMBDA_JS_RUNTIME, "nodejs22.x"); // 그대로
+
+  const b = env({ AWS_EXECUTION_ENV: "AWS_Lambda_nodejs20.x" });
+  enableSparticuzSystemLibs(b);
+  assert.equal(b.AWS_LAMBDA_JS_RUNTIME, undefined); // 실행환경으로 이미 참이라 손대지 않음
 });

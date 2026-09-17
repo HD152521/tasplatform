@@ -56,3 +56,27 @@ export function planBrowserLaunch(
   const bundled = shouldUseBundledChromium(env);
   return { bundled, headless: bundled ? true : requestedHeadless };
 }
+
+/**
+ * @sparticuz/chromium 이 컨테이너에서 시스템 공유 라이브러리(libnspr4.so 등)를 풀고
+ * LD_LIBRARY_PATH 를 잡도록 강제한다.
+ *
+ * 근본 원인: @sparticuz/chromium 140 은 자신이 AL2023(AWS Lambda) 위에서 돈다고 판단할
+ * 때에만 al2023.tar.br(시스템 .so 묶음)를 /tmp 로 풀고 LD_LIBRARY_PATH 를 설정한다.
+ * cflinuxfs4 는 Ubuntu 라 그 판정이 false → 라이브러리가 안 풀려 chromium 이
+ * "libnspr4.so: cannot open shared object file" 로 죽는다. apt-buildpack 이 없어 시스템에
+ * .so 를 깔 수도 없다.
+ *
+ * 그 판정(isRunningInAmazonLinux2023)은 AWS_LAMBDA_JS_RUNTIME/AWS_EXECUTION_ENV 에
+ * "20.x"·"22.x" 가 들어 있으면 참이 된다. 그래서 여기서 그 값을 심어 라이브러리 추출을
+ * 켠다. AL2023(glibc 2.34) 바이너리·라이브러리는 cflinuxfs4(glibc 2.35, 상위호환)에서 돈다.
+ *
+ * ⚠ 반드시 `import("@sparticuz/chromium")` 앞에서 불러야 한다 — 모듈 로드 시점에 환경
+ *   셋업 코드가 이 값을 읽기 때문이다. 이미 설정돼 있으면(진짜 Lambda 등) 덮지 않는다.
+ */
+export function enableSparticuzSystemLibs(env: NodeJS.ProcessEnv): void {
+  const alreadyAl2023 =
+    /2[02]\.x/.test(env.AWS_LAMBDA_JS_RUNTIME ?? "") ||
+    /2[02]\.x/.test(env.AWS_EXECUTION_ENV ?? "");
+  if (!alreadyAl2023) env.AWS_LAMBDA_JS_RUNTIME = "nodejs20.x";
+}

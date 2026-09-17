@@ -24,7 +24,7 @@ import {
   sessionContextOptions,
   type StorageState,
 } from "../lib/browserIdentity.ts";
-import { planBrowserLaunch } from "./launchPlan.ts";
+import { enableSparticuzSystemLibs, planBrowserLaunch } from "./launchPlan.ts";
 
 export class SessionExpiredError extends Error {
   constructor(message: string) {
@@ -74,6 +74,10 @@ export async function launchBrowser(headless: boolean): Promise<Browser> {
     // 앞세워 cflinuxfs4 에서 apt·root 없이 돈다(브라우저가 패키지 안에 들어 있음).
     // 주의: /tmp 추출물 ~250MB 는 1GB 디스크엔 들어가나 512MB RAM 은 빠듯하다 —
     //       워커 메모리를 1G 로 올릴 것을 권장(manifest 는 여기서 건드리지 않는다).
+    // ⚠ import 전에 호출한다. sparticuz 가 시스템 라이브러리(libnspr4.so 등)를 풀고
+    //   LD_LIBRARY_PATH 를 잡게 만드는 스위치다 — 안 켜면 cflinuxfs4 에서 chromium 이
+    //   "libnspr4.so: cannot open shared object file" 로 죽는다(자세한 이유는 함수 주석).
+    enableSparticuzSystemLibs(process.env);
     // sparticuz 는 무거우므로 컨테이너 경로에서만 지연 로드한다.
     const sparticuz = (await import("@sparticuz/chromium")).default;
     // 그래픽 스택(swiftshader/WebGL)을 끈다. 로그인·수집엔 WebGL 이 필요 없고,
