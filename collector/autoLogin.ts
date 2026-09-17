@@ -21,6 +21,7 @@ import {
   sessionFileForTeam,
 } from "../lib/config.ts";
 import { saveDeviceState, type StorageState } from "../lib/browserIdentity.ts";
+import { LOGIN_SEL, describeLoginPage, findLoginRoot } from "./loginFields.ts";
 
 export class OtpRequiredError extends Error {
   constructor() {
@@ -42,12 +43,6 @@ export class CredentialsMissingError extends Error {
   }
 }
 
-const SEL = {
-  username: "#usernameInput, input[name='userName']",
-  rememberMe: "#rememberMe",
-  password: "input[type='password']",
-  submit: "button[type='submit']",
-} as const;
 
 /**
  * OTP 화면인지 판정. 화면 문구와 입력 필드를 함께 본다.
@@ -102,28 +97,33 @@ export async function performCredentialLogin(page: Page): Promise<void> {
   await page.waitForTimeout(4000);
   if (await sessionEstablished(page)) return;
 
-  // 로그인 입력칸이 뜨길 기다린다(포털→access.broadcom.com 리다이렉트 후).
+  // 로그인 입력칸이 있는 프레임을 찾는다(메인/iframe 모두 훑는다).
   //
   // ⚠ 예전엔 waitForURL(/access.broadcom.com/) 로 기다렸는데, 그 로그인 위젯 페이지는
-  //   'load' 이벤트가 늦게(혹은 끝내) 안 떠서 URL 이 맞아도 waitForURL 이 90초 만에
-  //   타임아웃났다("page.waitForURL: Timeout ... waiting for navigation until load").
-  //   입력칸 가시성으로 직접 기다리면 load 이벤트와 무관하게 진행된다.
-  // 기기를 기억하고 있으면 아이디 단계를 건너뛰고 바로 비밀번호를 묻으므로 둘 중 먼저 뜨는 쪽.
-  await page.waitForSelector(`${SEL.username}, ${SEL.password}`, { timeout: NAV_TIMEOUT_MS });
+  //   'load' 이벤트가 안 떠 URL 이 맞아도 90초 타임아웃났다. 또 위젯이 iframe 안에 있으면
+  //   page 레벨 셀렉터가 못 뚫어 "입력칸 안 보임"으로 타임아웃난다. 그래서 프레임 전체를
+  //   폴링해 입력칸이 보이는 프레임을 찾는다(load 이벤트와 무관).
+  const root = await findLoginRoot(page, NAV_TIMEOUT_MS);
+  if (root === null) {
+    // 기기신뢰 무음 로그인으로 그새 세션이 살아났을 수 있다. 마지막으로 한 번 확인.
+    if (await sessionEstablished(page)) return;
+    throw new Error(`로그인 입력칸을 찾지 못했습니다.\n${await describeLoginPage(page)}`);
+  }
 
-  const username = page.locator(SEL.username).first();
+  const username = root.locator(LOGIN_SEL.username).first();
   if ((await username.count()) > 0 && (await username.isVisible().catch(() => false))) {
     await username.fill(CREDENTIALS.username);
     // 기기 신뢰를 유지해야 다음 로그인에서 OTP를 다시 묻지 않는다.
-    const remember = page.locator(SEL.rememberMe);
-    if ((await remember.count()) > 0 && !(await remember.isChecked())) {
+    const remember = root.locator(LOGIN_SEL.rememberMe).first();
+    if ((await remember.count()) > 0 && !(await remember.isChecked().catch(() => false))) {
       await remember.check().catch(() => undefined);
     }
-    await page.click(SEL.submit);
-    await page.waitForSelector(SEL.password, { timeout: NAV_TIMEOUT_MS });
+    await root.locator(LOGIN_SEL.submit).first().click();
+    await root.locator(LOGIN_SEL.password).first()
+      .waitFor({ state: "visible", timeout: NAV_TIMEOUT_MS });
   }
-  await page.fill(SEL.password, CREDENTIALS.password);
-  await page.click(SEL.submit);
+  await root.locator(LOGIN_SEL.password).first().fill(CREDENTIALS.password);
+  await root.locator(LOGIN_SEL.submit).first().click();
 
   // 포털 복귀 또는 OTP 화면 중 먼저 오는 쪽을 기다린다.
   // 세션 발급까지 기다린다. OTP 화면이 먼저 뜨면 우회하지 않고 사람에게 넘긴다.

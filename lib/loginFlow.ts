@@ -18,6 +18,7 @@ import type { Browser, BrowserContext, Page } from "playwright-core";
 import { DEFAULT_TEAM_ID, NAV_TIMEOUT_MS, PORTAL_HOME, deviceFileForTeam, sessionFileForTeam } from "./config.ts";
 import { loginContextOptions, saveDeviceState, type StorageState } from "./browserIdentity.ts";
 import { launchBrowser } from "../collector/session.ts";
+import { LOGIN_SEL, describeLoginPage, findLoginRoot } from "../collector/loginFields.ts";
 
 const FLOW_TTL_MS = 10 * 60 * 1000;
 const STEP_TIMEOUT_MS = 60_000;
@@ -288,26 +289,30 @@ export async function startLogin(
 
     await page.goto(PORTAL_HOME, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
 
-    // 로그인 입력칸이 뜨길 기다린다(포털→access.broadcom.com 리다이렉트 후).
+    // 로그인 입력칸이 있는 프레임을 찾는다(메인/iframe 모두 훑는다).
     // ⚠ waitForURL(/access.broadcom.com/) 는 쓰지 않는다 — 그 로그인 위젯 페이지의 'load'
-    //   이벤트가 안 떠 URL 이 맞아도 타임아웃난다("waiting for navigation until load").
-    //   입력칸 가시성으로 기다리면 load 와 무관하게 진행된다.
-    // 기기를 기억하고 있으면 아이디 단계를 건너뛰고 바로 비밀번호를 묻는다(둘 중 먼저 뜨는 쪽).
-    await page.waitForSelector(`${SEL.username}, ${SEL.password}`, { timeout: NAV_TIMEOUT_MS });
+    //   이벤트가 안 떠 URL 이 맞아도 타임아웃난다. 위젯이 iframe 안일 수도 있어 page 레벨
+    //   셀렉터로는 못 뚫는다. 프레임 전체 폴링이 두 경우를 모두 잡는다.
+    const root = await findLoginRoot(page, NAV_TIMEOUT_MS);
+    if (root === null) {
+      throw new Error(`로그인 입력칸을 찾지 못했습니다.\n${await describeLoginPage(page)}`);
+    }
 
-    const usernameField = page.locator(SEL.username).first();
+    // 기기를 기억하고 있으면 아이디 단계를 건너뛰고 바로 비밀번호를 묻는다(둘 중 먼저 뜨는 쪽).
+    const usernameField = root.locator(LOGIN_SEL.username).first();
     if ((await usernameField.count()) > 0 && (await usernameField.isVisible().catch(() => false))) {
       await usernameField.fill(username);
       // 기기 신뢰를 유지해야 다음 로그인에서 OTP를 다시 묻지 않는다.
-      const remember = page.locator(SEL.rememberMe);
-      if ((await remember.count()) > 0 && !(await remember.isChecked())) {
+      const remember = root.locator(LOGIN_SEL.rememberMe).first();
+      if ((await remember.count()) > 0 && !(await remember.isChecked().catch(() => false))) {
         await remember.check().catch(() => undefined);
       }
-      await page.click(SEL.submit);
-      await page.waitForSelector(SEL.password, { timeout: NAV_TIMEOUT_MS });
+      await root.locator(LOGIN_SEL.submit).first().click();
+      await root.locator(LOGIN_SEL.password).first()
+        .waitFor({ state: "visible", timeout: NAV_TIMEOUT_MS });
     }
-    await page.fill(SEL.password, password);
-    await page.click(SEL.submit);
+    await root.locator(LOGIN_SEL.password).first().fill(password);
+    await root.locator(LOGIN_SEL.submit).first().click();
 
     const outcome = await settle(page);
     if (outcome === "done") {
