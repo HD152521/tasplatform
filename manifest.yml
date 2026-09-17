@@ -27,6 +27,7 @@ applications:
     env:
       NODE_ENV: production
       TZ: Asia/Seoul
+      SR_APP_URL: https://broadcom-sr-web.apps.nh.ds.lab   # 알림 링크·UI 절대주소
     services:
       - ((pg_instance))
 
@@ -39,6 +40,7 @@ applications:
     env:
       HOST: 0.0.0.0             # 라우트는 GoRouter 가 TLS 종단
       TZ: Asia/Seoul
+      SR_APP_URL: https://broadcom-sr-web.apps.nh.ds.lab
     services:
       - ((pg_instance))
 
@@ -52,5 +54,6 @@ applications:
     health-check-type: process   # 포트 리슨이 없으므로 프로세스 생존만 확인
     env:
       TZ: Asia/Seoul             # SR_COLLECT_HOURS 판정의 기준 로컬시
+      SR_APP_URL: https://broadcom-sr-web.apps.nh.ds.lab   # 수집 알림 링크의 절대주소
     services:
       - ((pg_instance))

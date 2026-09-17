@@ -11,6 +11,7 @@ loadEnv();
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
+  ALLOWED_PARTY_SITES,
   API_HEADERS,
   API_ORIGIN,
   CREDENTIALS,
@@ -18,6 +19,7 @@ import {
   REQUEST_DELAY_MS,
   sessionFileForTeam,
 } from "../lib/config.ts";
+import { filterAllowedParties } from "../lib/partyFilter.ts";
 import { browserClient, fetchClient, type ApiClient } from "./httpClient.ts";
 import { loginContextOptions } from "../lib/browserIdentity.ts";
 import { OtpRequiredError, performCredentialLogin, saveSession } from "./autoLogin.ts";
@@ -73,7 +75,9 @@ async function gatherCases(client: ApiClient): Promise<SearchResultItem[]> {
   const merged = new Map<number, SearchResultItem>();
   for (const item of open) merged.set(item.requestId, item);
   for (const item of closed) merged.set(item.requestId, item);
-  return [...merged.values()];
+  // 우리 담당 고객사(사이트) 케이스만 남긴다 — 계정이 다른 고객사(KB Life 등) SR 도
+  // 함께 보여줘서, partySiteNumber 화이트리스트로 거른다. 미설정이면 전부 통과(기존 동작).
+  return filterAllowedParties([...merged.values()], ALLOWED_PARTY_SITES);
 }
 
 /**
