@@ -21,7 +21,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { openDb } from "../lib/db.ts";
+import { openDb, type Db } from "../lib/db.ts";
 import { authenticateToken, type AuthResult } from "./auth.ts";
 import { AuthRateLimiter } from "./rateLimit.ts";
 import {
@@ -43,8 +43,20 @@ const PORT = Number(process.env.PORT ?? process.env.MCP_PORT ?? 3900);
  */
 const HOST = process.env.HOST ?? "127.0.0.1";
 
-// 토큰 검증용 DB 커넥션 하나를 계속 물고 있는다(요청마다 열고 닫지 않는다).
-const authDb = await openDb();
+// 토큰 검증용 DB. 지연(lazy) 오픈 — 起動 시점에 DB 가 잠깐 안 붙어도 서버는 뜬다.
+// 예전엔 최상위 `await openDb()` 라 DB 가 실패하면 프로세스가 통째로 죽어(all instances
+// crashed) TAS 가 크래시루프에 빠졌다. 이제 첫 요청에서 열고, 실패하면 그 요청만 실패하며
+// 다음 요청에서 다시 시도한다(서버는 계속 살아 있다 — web 라우트의 동작과 같은 원칙).
+let authDbPromise: Promise<Db> | null = null;
+function getAuthDb(): Promise<Db> {
+  if (!authDbPromise) {
+    authDbPromise = openDb().catch((error: unknown) => {
+      authDbPromise = null; // 실패는 캐시하지 않는다 — 다음 요청에서 재시도
+      throw error;
+    });
+  }
+  return authDbPromise;
+}
 const limiter = new AuthRateLimiter();
 
 function firstHeaderValue(value: string | string[] | undefined): string | undefined {
@@ -52,11 +64,18 @@ function firstHeaderValue(value: string | string[] | undefined): string | undefi
 }
 
 /** extra.requestInfo?.headers 에서 도구 호출 시점의 팀을 다시 확정한다. */
-function authenticateFromToolHeaders(
+async function authenticateFromToolHeaders(
   headers: Record<string, string | string[] | undefined> | undefined,
 ): Promise<AuthResult> {
   const raw = headers ? firstHeaderValue(headers["authorization"] ?? headers["Authorization"]) : undefined;
-  return authenticateToken(authDb, raw);
+  let db: Db;
+  try {
+    db = await getAuthDb();
+  } catch {
+    // DB 가 일시적으로 안 붙으면 인증을 통과시키지 않는다(fail closed).
+    return { ok: false, status: 401, message: "인증 서비스를 일시적으로 사용할 수 없습니다." };
+  }
+  return authenticateToken(db, raw);
 }
 
 function toolJson(payload: unknown): CallToolResult {
@@ -192,6 +211,15 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   // 접속(요청) 시점의 1차 인증 — 실패는 여기서 401 로 끝내고 rate limit 카운터를 올린다.
   // 도구 호출 시점에는 각 도구 콜백이 헤더를 다시 검증해 teamId 를 확정한다.
+  let authDb: Db;
+  try {
+    authDb = await getAuthDb();
+  } catch (error) {
+    // DB 가 안 붙어도 서버는 살아 있고, 이 요청만 503 으로 끝낸다(크래시 없음).
+    console.error("[mcp] 인증 DB 열기 실패", error instanceof Error ? error.message : String(error));
+    sendJson(res, 503, { error: "db_unavailable" });
+    return;
+  }
   const auth = await authenticateToken(authDb, req.headers.authorization);
   if (!auth.ok) {
     limiter.recordFailure(key);
