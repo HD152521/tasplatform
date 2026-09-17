@@ -45,6 +45,19 @@ import { hydrateTeamSessionFromDb, persistTeamSessionToDb } from "../lib/session
 
 const DRY_RUN = process.argv.includes("--dry-run");
 
+/**
+ * 브라우저 로그인을 끌지 여부(SR_DISABLE_BROWSER_LOGIN).
+ *
+ * TAS 컨테이너는 브라우저를 돌릴 환경이 못 된다 — 디스크(2G)가 chromium /tmp 추출·프로필로
+ * 금세 차서(ENOSPC) 포털 SPA 가 "Loading..." 에서 멈춰 로그인 페이지로 넘어가지도 못한다.
+ * 게다가 15분마다 재로그인을 시도하며 디스크를 채우는 악순환이 된다. 그래서 컨테이너에서는
+ * 이 값을 켜서 브라우저를 아예 띄우지 않고, 세션이 만료되면 즉시 '재시딩 필요'로 알린다.
+ * 로그인/시딩은 브라우저가 되는 로컬·VM 에서 하고 DB 로 심는다(fast path 로 수집).
+ */
+function browserLoginDisabled(): boolean {
+  return /^(1|true|yes|on)$/i.test((process.env.SR_DISABLE_BROWSER_LOGIN ?? "").trim());
+}
+
 interface NewReply {
   /** 알림에서 케이스로 바로 갈 링크를 만들 때 쓴다. */
   requestId: number;
@@ -130,6 +143,14 @@ async function acquireFastSession(teamId: string = DEFAULT_TEAM_ID): Promise<Col
 async function acquireBrowserSession(
   teamId: string = DEFAULT_TEAM_ID,
 ): Promise<Awaited<ReturnType<typeof openSavedSession>>> {
+  // 컨테이너 등 브라우저를 못 돌리는 환경에서는 아예 띄우지 않는다(디스크 ENOSPC·무한 재시도 방지).
+  // fast path(browserless)로 세션이 살아 있는 동안만 수집하고, 만료되면 재시딩을 요청한다.
+  if (browserLoginDisabled()) {
+    throw new SessionExpiredError(
+      "세션이 만료되었고 이 환경에서는 브라우저 로그인이 꺼져 있습니다(SR_DISABLE_BROWSER_LOGIN).\n" +
+        "  브라우저가 되는 로컬/VM 에서 'npm run login' → 'npm run seed:session' 으로 세션을 다시 심으세요.",
+    );
+  }
   try {
     const existing = await openSavedSession(teamId);
     try {

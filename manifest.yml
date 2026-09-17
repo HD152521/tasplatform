@@ -33,6 +33,7 @@ applications:
       TZ: Asia/Seoul
       SR_APP_URL: https://broadcom-sr-web.apps.nh.ds.lab   # 알림 링크·UI 절대주소
       SR_PYTHON: python3         # 보고서 PPTX 생성기가 쓸 파이썬(공급된 python_buildpack)
+      SR_DISABLE_BROWSER_LOGIN: "1"   # 컨테이너는 브라우저 못 돌린다(ENOSPC·SPA Loading 멈춤). /login 은 즉시 안내
     services:
       - ((pg_instance))
 
@@ -61,5 +62,9 @@ applications:
     env:
       TZ: Asia/Seoul             # SR_COLLECT_HOURS 판정의 기준 로컬시
       SR_APP_URL: https://broadcom-sr-web.apps.nh.ds.lab   # 수집 알림 링크의 절대주소
+      # 컨테이너는 브라우저를 못 돌린다(디스크 2G 가 chromium /tmp 로 차서 ENOSPC → 포털 SPA 가
+      # "Loading..." 에 멈춰 로그인 페이지로 못 넘어감). 그래서 재로그인 시 브라우저를 띄우지
+      # 않고 fast path(browserless)로만 수집한다. 세션 만료 시 로컬/VM 에서 재시딩한다.
+      SR_DISABLE_BROWSER_LOGIN: "1"
     services:
       - ((pg_instance))

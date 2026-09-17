@@ -274,6 +274,18 @@ export async function startLogin(
 ): Promise<LoginResult> {
   sweepExpired();
 
+  // 컨테이너 등 브라우저를 못 돌리는 환경에서는 여기서 브라우저를 띄우면 디스크가 차서(ENOSPC)
+  // SPA 가 "Loading..." 에 멈춘다. 그런 환경은 SR_DISABLE_BROWSER_LOGIN 을 켜고, 로그인은
+  // 브라우저가 되는 로컬/VM 에서 하고 세션을 DB 로 심는다.
+  if (/^(1|true|yes|on)$/i.test((process.env.SR_DISABLE_BROWSER_LOGIN ?? "").trim())) {
+    return {
+      status: "error",
+      message:
+        "이 서버에서는 브라우저 로그인이 꺼져 있습니다. 브라우저가 되는 로컬/VM 에서 " +
+        "'npm run login' → 'npm run seed:session' 으로 세션을 심으세요.",
+    };
+  }
+
   let flow: Flow | null = null;
   // 브라우저를 지역변수에 먼저 담는다. launchBrowser 성공 후 newContext/newPage 가 throw 하면
   // flow 는 아직 null 이라 예전 코드는 브라우저를 못 닫아 프로세스가 샜다. catch 에서 browser 로
