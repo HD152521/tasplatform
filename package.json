@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "login": "node collector/login.ts",
+    "login:cli": "node scripts/login-cli.ts",
     "seed:session": "node scripts/seed-session.ts",
     "refresh": "node collector/login.ts --auto && node scripts/seed-session.ts",
     "collect": "node collector/collect.ts",
