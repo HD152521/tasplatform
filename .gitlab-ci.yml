@@ -45,6 +45,11 @@ deploy_tas:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
+    # web 은 next start 라 .next 프로덕션 빌드가 있어야 한다. .cfignore 가 .next 를 안 빼므로
+    # 여기서 빌드해 함께 업로드한다(빌드팩은 npm install 만 하지 next build 는 안 한다).
+    # 모든 페이지가 force-dynamic 이라 빌드 시 DB 접근이 없어 env 없이도 빌드된다.
+    - npm ci
+    - npm run build
     - cf api "$CF_API" --skip-ssl-validation
     - cf auth "$CF_USER" "$CF_PASSWORD"
     - cf target -o "$CF_ORG" -s "$CF_SPACE"
