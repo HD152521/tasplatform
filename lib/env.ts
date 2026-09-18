@@ -23,11 +23,20 @@ export function loadEnv(file = ".env"): void {
 
     const key = line.slice(0, eq).trim();
     let value = line.slice(eq + 1).trim();
-    if (
+    const quoted =
       (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
+      (value.startsWith("'") && value.endsWith("'"));
+    if (quoted) {
       value = value.slice(1, -1);
+    } else {
+      // 줄 끝 주석을 걷어낸다. CONFLUENCE_PARENT_ID 가 `172097555  # "04. SR" 페이지`
+      // 로 적혀 있어 주석까지 값에 들어갔고, Confluence API 가 404 를 냈다.
+      //
+      // 공백 뒤의 # 만 주석으로 본다. 비밀번호에 # 이 들어가는 일이 있어서
+      // (예: `PW=ab#cd`) 붙어 있는 # 은 값의 일부로 남긴다. 값이 # 으로 시작하는
+      // 경우처럼 애매하면 따옴표로 감싸면 된다 — 위 quoted 분기가 통째로 살린다.
+      const comment = value.search(/\s#/);
+      if (comment !== -1) value = value.slice(0, comment).trim();
     }
     if (process.env[key] === undefined) process.env[key] = value;
   }

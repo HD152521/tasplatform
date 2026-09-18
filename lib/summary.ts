@@ -147,6 +147,7 @@ async function composeSections(
     table: buildMetaTable({
       openedRaw: detail.created_on,
       closedRaw: detail.last_updated,
+      status: detail.status,
       priority: detail.priority,
       meta: parseMeta(metaText),
     }),

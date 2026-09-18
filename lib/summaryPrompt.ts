@@ -210,15 +210,15 @@ export const CONFLUENCE_SECTIONS: readonly ConfluenceSection[] = [
     id: "meta",
     // 일시와 심각도는 DB 에서 채운다. 모델에게는 원문을 봐야 아는 둘만 맡긴다.
     heading: "",
+    // 대상 환경은 맡기지 않는다 — 본문으로는 은행인지 중앙회인지 못 가린다
+    // (TARGET_PLACEHOLDER 의 실측 근거 참고). 여기서는 유형 하나만 받는다.
     focus: [
-      "아래 두 줄만, 이 형식 그대로 출력합니다. 표도 다른 말도 덧붙이지 않습니다.",
+      "아래 한 줄만, 이 형식 그대로 출력합니다. 표도 다른 말도 덧붙이지 않습니다.",
       "",
       "유형: 문의",
-      "대상 환경: [은] 운영",
       "",
-      '유형은 "문의" 와 "장애 대응" 중 하나입니다. 서비스가 실제로 실패하거나 중단된 건이면 "장애 대응", 동작·설계·영향 범위를 묻는 건이면 "문의" 입니다.',
-      "대상 환경은 영향을 받은 파운데이션을 [은](NH농협은행) · [중](NH농협중앙회) · [은/중](양쪽) 중에서 고르고, 뒤에 개발 / 운영 / DR / AWS 중 해당하는 것을 붙입니다. 둘 이상이면 쉼표로 잇습니다.",
-      "원문에서 확인되는 것만 적습니다. 근거가 없는데 넓게 잡지 않습니다.",
+      '"문의" 와 "장애 대응" 중 하나만 씁니다.',
+      '서비스가 실제로 실패하거나 중단된 건이면 "장애 대응", 동작·설계·영향 범위를 묻는 건이면 "문의" 입니다.',
     ].join("\n"),
   },
   {
@@ -279,9 +279,19 @@ export const CONFLUENCE_SECTIONS: readonly ConfluenceSection[] = [
 export interface MetaValues {
   /** 문의 또는 장애 대응. */
   type: string;
-  /** 예: [은] 운영, [은/중]개발,운영 */
-  target: string;
 }
+
+/**
+ * 대상 환경은 사람이 채운다.
+ *
+ * 본문만으로는 은행인지 중앙회인지 알 수 없다. 실측으로 확인했다 — 실제 문서 3건 중
+ * NACF·NHBank 같은 단서가 표기와 맞아떨어진 것은 1건뿐이고(NHBank 만 나오는데 [은/중]
+ * 인 건이 있었다), 개발·운영을 가리키는 낱말은 3건 모두 본문에 아예 없었다.
+ * 계정으로도 못 정한다(같은 사이트의 문서가 [은/중]개발 · [은] 운영 으로 갈렸다).
+ *
+ * 그래서 모델에게 맡기지 않고 빈칸임을 드러낸다. 틀린 값이 조용히 실리는 것보다 낫다.
+ */
+export const TARGET_PLACEHOLDER = "(입력 필요)";
 
 /**
  * meta 섹션 출력에서 두 값을 뽑는다.
@@ -306,12 +316,7 @@ export function parseMeta(text: string): MetaValues {
   const typeSource = labeled("유형") || flat;
   const type = /장애\s*대응/.test(typeSource) ? "장애 대응" : /문의/.test(typeSource) ? "문의" : "";
 
-  // 대상 환경은 "[은]" · "[중]" · "[은/중]" 으로 시작하는 토막이다.
-  const rawTarget = labeled("대상 환경");
-  const pattern = /\[(?:은\/중|은|중)\]\s*[가-힣A-Za-z]*(?:\s*,\s*[가-힣A-Za-z]+)*/;
-  const target = (rawTarget.match(pattern) ?? flat.match(pattern) ?? [""])[0].trim();
-
-  return { type, target };
+  return { type };
 }
 
 /** "02-August-2026 20:06:11" -> "2026-08-02". 못 읽으면 빈 문자열. */
@@ -323,6 +328,16 @@ export function formatSrDate(value: string | null | undefined): string {
 }
 
 /**
+ * 포털 상태가 종료인가.
+ *
+ * 제목의 `(완료)` 와 표의 종료일이 이 판정을 공유한다. 둘이 어긋나면
+ * "(완료)" 인데 종료일이 "(진행 중)" 인 문서가 나온다.
+ */
+function isClosed(status: string): boolean {
+  return /^(closed|resolved)$/i.test(status.trim());
+}
+
+/**
  * 문서 제목. `[SR 37027473] 인증서 만료 경고 관련 문의 (완료)` 꼴이다.
  *
  * 대괄호 표기를 코드가 만든다 — 모델에게 맡겼더니 "[37027473]" 처럼 SR 을 빼먹었다.
@@ -330,17 +345,20 @@ export function formatSrDate(value: string | null | undefined): string {
  */
 export function buildDocTitle(requestId: string, koreanTitle: string, status: string): string {
   const text = koreanTitle.replace(/^\[[^\]]*\]\s*/, "").replace(/\s*\(완료\)\s*$/, "").trim();
-  const closed = /^(closed|resolved)$/i.test(status.trim());
-  return `[SR ${requestId.trim()}] ${text}${closed ? " (완료)" : ""}`.trim();
+  return `[SR ${requestId.trim()}] ${text}${isClosed(status) ? " (완료)" : ""}`.trim();
 }
 
 export interface TableInput {
   /** 포털 표기 그대로 넘긴다. 이 함수가 날짜로 편다. */
   openedRaw: string;
   closedRaw: string;
+  /** 포털 상태. 종료된 케이스에만 종료일을 넣는다. */
+  status: string;
   /** "Medium - P3" 같은 포털 표기. */
   priority: string;
   meta: MetaValues;
+  /** 화면에서 고른 대상 환경. 없으면 사람이 채우도록 자리를 남긴다. */
+  target?: string;
 }
 
 /** "Medium - P3" -> "P3". 숫자를 못 찾으면 원문을 그대로 둔다. */
@@ -357,14 +375,21 @@ function severityLabel(priority: string): string {
  */
 export function buildMetaTable(input: TableInput): string {
   const opened = formatSrDate(input.openedRaw);
-  const closed = formatSrDate(input.closedRaw);
-  const period = opened === "" ? "" : closed === "" || closed === opened ? `${opened} ~ ${opened}` : `${opened} ~ ${closed}`;
+  const closed = isClosed(input.status) ? formatSrDate(input.closedRaw) : "";
+  const period =
+    opened === ""
+      ? ""
+      : closed === ""
+        // 아직 안 닫힌 케이스에 종료일을 적으면 거짓이 된다. 마지막 갱신일은 종료일이 아니다.
+        ? `${opened} ~ (진행 중)`
+        : `${opened} ~ ${closed}`;
+  const target = (input.target ?? "").trim() || TARGET_PLACEHOLDER;
   return [
     "| 항목 | 내용 |",
     "|---|---|",
     `| SR 오픈/종료 일시 | ${period} |`,
     `| 유형 | ${input.meta.type} |`,
-    `| 대상 환경 | ${input.meta.target} |`,
+    `| 대상 환경 | ${target} |`,
     `| 심각도 | ${severityLabel(input.priority)} |`,
   ].join("\n");
 }

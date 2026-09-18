@@ -11,6 +11,7 @@ import {
   CONFLUENCE_SECTIONS,
   SECTION_TIMEOUT_MS,
   assembleConfluenceDoc,
+  buildDocTitle,
   buildMetaTable,
   cleanSectionText,
   firstLine,
@@ -68,20 +69,29 @@ test("날짜는 포털 표기를 YYYY-MM-DD 로 편다", () => {
   assert.equal(formatSrDate(null), "");
 });
 
-test("meta 섹션에서 유형과 대상 환경을 뽑는다", () => {
-  const got = parseMeta(lines("유형: 장애 대응", "대상 환경: [은/중]개발,운영"));
-  assert.deepEqual(got, { type: "장애 대응", target: "[은/중]개발,운영" });
+test("meta 섹션에서 유형을 뽑는다", () => {
+  assert.equal(parseMeta(lines("유형: 장애 대응", "대상 환경: [은/중]개발,운영")).type, "장애 대응");
+});
+
+// 실측에서 "한 줄만" 이라고 했는데도 문서를 통째로 써 보냈다. 형식 준수에 기대지 않는다.
+test("모델이 형식을 어기고 길게 써도 유형을 찾아낸다", () => {
+  const essay = lines(
+    "[37027473] 통신 지연 분석",
+    "| 항목 | 내용 |",
+    "| 유형 | 장애 대응 |",
+    "이 건은 서비스 중단을 동반했습니다.",
+  );
+  assert.equal(parseMeta(essay).type, "장애 대응");
 });
 
 test("모델이 글머리 기호나 강조를 붙여도 값만 뽑는다", () => {
   const got = parseMeta(lines("- **유형**: 문의", "* 대상 환경 : `[은] 운영`"));
   assert.equal(got.type, "문의");
-  assert.equal(got.target, "[은] 운영");
 });
 
 // 못 찾으면 빈 값이다. 지어내면 표에 틀린 값이 박힌다.
 test("meta 를 못 읽으면 빈 값을 돌려준다", () => {
-  assert.deepEqual(parseMeta("모르겠습니다"), { type: "", target: "" });
+  assert.deepEqual(parseMeta("모르겠습니다"), { type: "" });
 });
 
 test("표는 양식대로 정확히 4행이다", () => {
@@ -89,7 +99,7 @@ test("표는 양식대로 정확히 4행이다", () => {
     openedRaw: "08-September-2026 01:32:06",
     closedRaw: "16-September-2026 20:29:59",
     priority: "Medium - P3",
-    meta: { type: "문의", target: "[은] 운영" },
+    status: "Closed", meta: { type: "문의" }, target: "[은] 운영",
   });
   assert.equal(table.split(NEWLINE).length, 6, table); // 머리 2줄 + 4행
   assert.ok(table.includes("| SR 오픈/종료 일시 | 2026-09-08 ~ 2026-09-16 |"), table);
@@ -100,7 +110,7 @@ test("표는 양식대로 정확히 4행이다", () => {
 
 test("심각도는 포털 표기에서 P 번호만 뽑는다", () => {
   const of = (priority: string): string =>
-    buildMetaTable({ openedRaw: "", closedRaw: "", priority, meta: { type: "", target: "" } });
+    buildMetaTable({ openedRaw: "", closedRaw: "", priority, status: "Closed", meta: { type: "" } });
   assert.ok(of("High - P2").includes("| 심각도 | P2 |"));
   assert.ok(of("Medium - P3").includes("| 심각도 | P3 |"));
 });
@@ -110,9 +120,50 @@ test("하루 만에 끝난 건도 범위로 적는다", () => {
     openedRaw: "11-August-2026 09:00:00",
     closedRaw: "11-August-2026 18:46:05",
     priority: "Medium - P3",
-    meta: { type: "문의", target: "[은/중]개발,운영" },
+    status: "Closed", meta: { type: "문의" }, target: "[은/중]개발,운영",
   });
   assert.ok(table.includes("| SR 오픈/종료 일시 | 2026-08-11 ~ 2026-08-11 |"), table);
+});
+
+// 마지막 갱신일은 종료일이 아니다. 안 닫힌 케이스에 종료일을 적으면 거짓이 된다.
+test("종료되지 않은 케이스는 종료일을 적지 않는다", () => {
+  const table = buildMetaTable({
+    openedRaw: "08-September-2026 01:32:06",
+    closedRaw: "16-September-2026 20:29:59",
+    status: "Pending Support",
+    priority: "Medium - P3",
+    meta: { type: "문의" },
+  });
+  assert.ok(table.includes("| SR 오픈/종료 일시 | 2026-09-08 ~ (진행 중) |"), table);
+});
+
+// 본문으로는 은행인지 중앙회인지 못 가린다. 틀린 값을 조용히 싣느니 빈칸을 드러낸다.
+test("대상 환경을 안 주면 사람이 채울 자리를 남긴다", () => {
+  const table = buildMetaTable({
+    openedRaw: "11-August-2026 09:00:00",
+    closedRaw: "11-August-2026 18:46:05",
+    status: "Closed",
+    priority: "Medium - P3",
+    meta: { type: "문의" },
+  });
+  assert.ok(table.includes("| 대상 환경 | (입력 필요) |"), table);
+});
+
+test("제목은 SR 번호와 종료 표시를 코드가 붙인다", () => {
+  assert.equal(
+    buildDocTitle("37027473", "C2C 통신 지연 현상 분석", "Closed"),
+    "[SR 37027473] C2C 통신 지연 현상 분석 (완료)",
+  );
+  // 진행 중이면 (완료) 를 붙이지 않는다.
+  assert.equal(
+    buildDocTitle("37081078", "디스크 사용률 문의", "Pending Support"),
+    "[SR 37081078] 디스크 사용률 문의",
+  );
+  // 모델이 대괄호나 (완료) 를 붙여 와도 중복되지 않는다.
+  assert.equal(
+    buildDocTitle("1", "[SR 1] 제목 (완료)", "Closed"),
+    "[SR 1] 제목 (완료)",
+  );
 });
 
 /* ------------------------------------------------------------------ *
@@ -154,7 +205,7 @@ test("조립하면 제목 → 표 → 네 섹션 순서로 붙는다", () => {
     openedRaw: "11-August-2026 09:00:00",
     closedRaw: "11-August-2026 18:46:05",
     priority: "Medium - P3",
-    meta: { type: "문의", target: "[은/중]개발,운영" },
+    status: "Closed", meta: { type: "문의" }, target: "[은/중]개발,운영",
   });
   const doc = assembleConfluenceDoc({
     title: "[SR 99990001] 인증서 만료 경고 관련 문의",

@@ -30,6 +30,37 @@ test("주석과 빈 줄은 무시한다", () => {
   });
 });
 
+// CONFLUENCE_PARENT_ID 가 `172097555  # "04. SR" 페이지` 로 적혀 있어 주석까지 값에
+// 들어갔고, Confluence API 가 404 를 냈다.
+test("줄 끝 주석을 걷어낸다", () => {
+  withEnvFile(`SR_TEST_E=172097555     # "04. SR" 페이지\n`, (f) => {
+    delete process.env.SR_TEST_E;
+    loadEnv(f);
+    assert.equal(process.env.SR_TEST_E, "172097555");
+    delete process.env.SR_TEST_E;
+  });
+});
+
+// 비밀번호에 # 이 들어가는 일이 있다. 공백 없이 붙은 # 은 값의 일부다.
+test("공백 없이 붙은 # 은 값으로 남긴다", () => {
+  withEnvFile("SR_TEST_F=ab#cd\n", (f) => {
+    delete process.env.SR_TEST_F;
+    loadEnv(f);
+    assert.equal(process.env.SR_TEST_F, "ab#cd");
+    delete process.env.SR_TEST_F;
+  });
+});
+
+// 값 자체에 " #" 이 필요하면 따옴표로 감싼다. 그때는 통째로 살린다.
+test("따옴표로 감싼 값은 # 이 있어도 자르지 않는다", () => {
+  withEnvFile(`SR_TEST_G="a #b"\n`, (f) => {
+    delete process.env.SR_TEST_G;
+    loadEnv(f);
+    assert.equal(process.env.SR_TEST_G, "a #b");
+    delete process.env.SR_TEST_G;
+  });
+});
+
 test("따옴표를 벗긴다", () => {
   withEnvFile(`SR_TEST_C="a b"\nSR_TEST_D='c d'\n`, (f) => {
     delete process.env.SR_TEST_C; delete process.env.SR_TEST_D;
