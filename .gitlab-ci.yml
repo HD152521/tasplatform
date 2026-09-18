@@ -28,7 +28,8 @@ deploy_worker:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
-    - sudo /usr/local/bin/sr-deploy.sh
+    # 러너가 체크아웃한 소스($CI_PROJECT_DIR)를 앱 디렉터리로 동기화·재시작(git fetch 없음).
+    - sudo /usr/local/bin/sr-deploy.sh "$CI_PROJECT_DIR"
 
 # --- TAS(web/mcp) 배포: cf CLI + CI 변수 준비되면 주석 해제 ---
 # 필요한 CI/CD 변수(Settings > CI/CD > Variables, Masked):
