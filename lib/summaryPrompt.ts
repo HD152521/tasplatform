@@ -15,6 +15,7 @@
  * 기본값은 상수로 두되, 실제 사용은 confluenceSystemPrompt() getter 로 감싼다.
  * env SR_PROMPT_CONFLUENCE 가 있으면 그 값으로 덮어써 코드 수정 없이 튜닝한다.
  */
+import { parseWolkenDate } from "./dates.ts";
 import { promptOverride } from "./prompts.ts";
 
 const CONFLUENCE_SYSTEM_PROMPT_DEFAULT = `당신은 Broadcom TAC의 SR(Service Request) 대화 내역을 사내 기술 문서용 한국어 보고서로 정리하는 역할을 맡습니다.
@@ -31,23 +32,26 @@ const CONFLUENCE_SYSTEM_PROMPT_DEFAULT = `당신은 Broadcom TAC의 SR(Service R
 
 | 항목 | 내용 |
 |---|---|
-| ... | ... |
+| SR 오픈/종료 일시 | 2026-08-11 ~ 2026-08-11 |
+| 유형 | 문의 |
+| 대상 환경 | [은/중]개발,운영 |
+| 심각도 | P3 |
 
-문제 정의
+### 문제
 
-(문단)
+(발생 현상과 상세 내용)
 
-원인 및 기술 배경
+### 환경 및 진단 내역
 
-(문단)
+(버전·대상 환경과 수집·진단한 내역)
 
-해결 방법
+### 원인 분석
 
-(문단)
+(확인된 원인)
 
-최종 결과
+### 해결 제안 및 조치 방안
 
-(한 문장)
+(조치 방안과 효과)
 
 # 출력하지 말아야 할 것
 - "## 제목", "## 환경 표", "## 본문 섹션" 같은 형식 설명용 제목은 절대 출력하지 않습니다. 위 골격에 있는 것만 씁니다.
@@ -61,43 +65,52 @@ const CONFLUENCE_SYSTEM_PROMPT_DEFAULT = `당신은 Broadcom TAC의 SR(Service R
 
 # 환경 표
 - 제목 바로 아래에 배치합니다.
-- **행 이름은 고정되어 있지 않습니다.** 원문에서 실제로 확인되는 것만 골라 씁니다.
-- 자주 쓰이는 행: 제품 / 버전 / 설정 지점 / 대상 구성 / 관련 구성 요소 / 전송 방식 / 로그 수신 측 / 적용 범위
-- 내용에 맞는 행이 따로 있으면 새로 만들어 씁니다. 확인되지 않는 항목은 빈칸으로 두지 말고 행 자체를 뺍니다.
-- 보통 3~6행입니다.
+- **행은 팀 양식대로 아래 넷으로 고정입니다.** 행을 더하거나 빼지 않습니다.
+  SR 오픈/종료 일시 / 유형 / 대상 환경 / 심각도
+- 일시와 심각도는 시스템이 채웁니다. 모델이 지어내지 않습니다.
+- 유형은 "문의" 또는 "장애 대응" 중 하나입니다.
+- 대상 환경은 영향을 받은 파운데이션을 \`[은]\`(NH농협은행) · \`[중]\`(NH농협중앙회) ·
+  \`[은/중]\`(양쪽) 중에서 고르고, 뒤에 개발 / 운영 / DR / AWS 를 붙입니다.
+  예: \`[은] 운영\`, \`[은/중]개발\`, \`[은/중]개발,운영\`
+- 제품 버전이나 설정값은 이 표가 아니라 "환경 및 진단 내역" 본문에 씁니다.
 
 # 서술 방식 (가장 중요)
-- **번호 목록과 글머리 기호를 쓰지 않습니다.** 모든 내용을 문단으로 서술합니다.
-- "1. ~했습니다 2. ~했으나 3. ~했습니다" 같은 **시간순 나열을 하지 않습니다.** 대화를 따라가지 말고, 확인된 사실을 재구성해 설명합니다.
-- 각 섹션은 보통 2~5개 문단이며, 한 문단은 2~5문장입니다.
-- **한 문단으로 뭉뚱그리지 않습니다.** 특히 "원인 및 기술 배경" 은 최소 2문단으로,
-  동작 원리 한 문단과 구조적 차이(설정 위치·적용 시점·영향 범위) 한 문단을 나눠 씁니다.
-- 원문에 근거가 있는 구체적 사실(전송 단위, 재배포 발생 여부, 적용 시점 등)을 생략하지 않습니다.
+- 실제 문서는 **"라벨: 내용" 형태의 글머리 항목**을 씁니다. 예: \`발생 현상: ...\`,
+  \`운영 환경: ...\`, \`조치 방안: ...\`. 라벨은 그 항목이 무엇인지 한눈에 알려 줍니다.
+- 번호 목록(1. 2. 3.)은 쓰지 않습니다. 절차를 시간순으로 나열하지 않습니다.
+  대화를 따라가지 말고 확인된 사실을 재구성해 설명합니다.
+- 항목 하나는 한두 문장입니다. 배경 설명이 필요하면 항목 앞에 문단을 둘 수 있습니다.
+- 한 섹션은 보통 2~5개 항목입니다. 한 덩어리로 뭉뚱그리지 않습니다.
+- 원문에 근거가 있는 구체적 사실(버전, 수치, 설정값, 적용 시점)을 생략하지 않습니다.
 - 본문은 존댓말(~합니다체)로 씁니다.
 
-# 문제 정의
-- 고객이 겪은 증상 또는 요구 사항을 기술합니다.
-- 기능 동작상 무엇이 제약이었는지, 어떤 점이 불명확했는지를 명시합니다.
-- 쟁점이 여러 개면 문단을 나눕니다.
+# 문제
+- \`발생 현상:\` 항목에 고객이 겪은 증상을 한두 문장으로 씁니다.
+- \`상세 내용:\` 아래에 무엇이 제약이었는지, 어떤 점이 불명확했는지를 항목으로 나눠 씁니다.
+- 고객이 무엇을 확인·요청했는지도 여기에 포함합니다.
 
-# 원인 및 기술 배경
-- 왜 그런 현상이 발생했는지를 제품 구조나 동작 원리 수준에서 설명합니다.
-- 배경지식이 없는 독자도 이해할 수 있도록 관련 동작 원리를 2~4문장 덧붙입니다.
-- 설정 위치·적용 시점·영향 범위의 차이처럼 판단에 필요한 구조적 차이가 있으면 반드시 포함합니다.
-- 공식 문서나 가이드가 없어 직접 구성해야 했던 부분이 있으면 그 사실도 원인의 일부로 기재합니다.
+# 환경 및 진단 내역
+- \`운영 환경:\` 항목에 대상 환경과 제품 버전을 적습니다. 원문에서 확인되는 버전은 빠뜨리지 않습니다.
+- 수집·조회·재현 등 진단으로 한 일을 항목으로 적습니다.
+- 진단에 쓴 명령이나 조회 구문이 원문에 있으면 코드 블록으로 그대로 옮깁니다.
 
-# 해결 방법
-- 실제로 적용했거나 랩에서 검증한 조치를 문단으로 서술합니다. 절차를 번호로 나열하지 않습니다.
+# 원인 분석
+- 확인된 원인을 \`라벨: 내용\` 항목으로 나눠 씁니다.
+- 각 항목은 이 환경에서 관측된 근거(로그, 패킷 캡처, 설정 점검 결과)에 붙어 있어야 합니다.
+- 제품 구조나 동작 원리 설명이 필요하면 덧붙이되, 배경지식이 없는 독자도 이해할 수 있게 씁니다.
+- 확정되지 않은 것은 "~로 추정됩니다" 로 명시합니다.
+
+# 해결 제안 및 조치 방안
+- 실제로 적용했거나 랩에서 검증한 조치를 \`조치 방안:\` · \`조치 효과:\` 같은 항목으로 씁니다.
 - **원문에 설정 구문, 규칙, 설정 파일 내용, 명령 예시가 있으면 코드 블록으로 그대로 옮깁니다.**
   "예제를 제공했습니다", "스크립트를 안내했습니다" 처럼 언급만 하고 실물을 생략하면 안 됩니다.
   이 문서를 나중에 다시 보는 사람에게 가장 값어치 있는 부분이 그 구문입니다.
 - 원문의 구문을 옮길 때 줄바꿈과 들여쓰기를 그대로 유지합니다. 요약하거나 줄이지 않습니다.
 - 고객사 IP·호스트명·계정 등 식별 정보는 \`<수집 서버 IP>\` 형태의 플레이스홀더로 치환합니다.
 - 검증 결과(정상 동작 확인 여부)와 확장 가능 범위를 함께 기재합니다.
-- 선택지가 여러 개였던 경우, 최종적으로 어떤 방향을 택했고 그 판단 근거가 무엇이었는지 마지막 문단에 정리합니다.
-
-# 최종 결과
-- 전달 확인을 포함한 한 문장으로 마무리합니다.
+- 우회 조치와 영구 수정을 구분합니다. 영구 수정이 예정된 버전이 있으면 그 버전을 적습니다.
+- 참고한 공식 문서나 KB 가 있으면 \`참고 공식 문서:\` 항목으로 남깁니다.
+- 선택지가 여러 개였던 경우, 최종적으로 어떤 방향을 택했고 그 판단 근거가 무엇이었는지 마지막에 정리합니다.
 
 # 사실 관계 규칙
 - 원본에 없는 사실, 수치, 원인 추정을 임의로 추가하지 않습니다. 원문에서 확인되지 않는 내용은 쓰지 않습니다.
@@ -182,52 +195,179 @@ export interface ConfluenceSection {
 /** 출력 골격의 섹션. 배열 순서가 곧 문서 순서다. */
 export const CONFLUENCE_SECTIONS: readonly ConfluenceSection[] = [
   {
-    id: "head",
+    id: "title",
     heading: "",
-    // 실측에서 표에 "NSX-T 기반 환경" 이 들어갔다. TAC 이 참고로 언급했을 뿐
-    // 이 고객 환경은 Silk Overlay 였다. 원인 규칙만으로는 환경 표를 막지 못한다.
+    // 실측에서 모델이 "[37027473]" 처럼 SR 을 빼먹었다. 대괄호 표기는 코드가 붙인다
+    // (buildDocTitle). 모델에게는 한국어 제목 문구만 맡긴다.
     focus: [
-      '"[SR번호] SR 제목(한글)" 한 줄과 그 바로 아래 환경 표만 출력합니다. 본문은 쓰지 않습니다.',
+      "제목 문구만 한국어로 한 줄 출력합니다. 표도 본문도 쓰지 않습니다.",
+      "대괄호 표기나 SR 번호는 붙이지 않습니다. 시스템이 붙입니다.",
+      "원문 Subject 가 영문이면 내용을 반영한 자연스러운 한국어로 옮깁니다.",
+      "무엇을 문의했는지 또는 어떤 현상이었는지가 드러나는 명사형으로 씁니다.",
+    ].join("\n"),
+  },
+  {
+    id: "meta",
+    // 일시와 심각도는 DB 에서 채운다. 모델에게는 원문을 봐야 아는 둘만 맡긴다.
+    heading: "",
+    focus: [
+      "아래 두 줄만, 이 형식 그대로 출력합니다. 표도 다른 말도 덧붙이지 않습니다.",
       "",
-      "환경 표에는 이 고객 환경의 것으로 원문에서 확인된 항목만 씁니다. 비교나 참고로 언급되었을 뿐 이 환경에 해당하지 않는 구성은 넣지 않습니다.",
-      "원문에서 확인되는 제품 버전은 하나도 빠뜨리지 않고 적습니다. 주 제품뿐 아니라 함께 언급된 구성 요소의 버전도 포함합니다.",
-      "원문에 나오는 설정 항목과 그 값(활성/비활성 포함)은 각각 행으로 넣습니다.",
-      "대상 환경이 둘 이상이면 이름을 모두 적습니다.",
+      "유형: 문의",
+      "대상 환경: [은] 운영",
+      "",
+      '유형은 "문의" 와 "장애 대응" 중 하나입니다. 서비스가 실제로 실패하거나 중단된 건이면 "장애 대응", 동작·설계·영향 범위를 묻는 건이면 "문의" 입니다.',
+      "대상 환경은 영향을 받은 파운데이션을 [은](NH농협은행) · [중](NH농협중앙회) · [은/중](양쪽) 중에서 고르고, 뒤에 개발 / 운영 / DR / AWS 중 해당하는 것을 붙입니다. 둘 이상이면 쉼표로 잇습니다.",
+      "원문에서 확인되는 것만 적습니다. 근거가 없는데 넓게 잡지 않습니다.",
     ].join("\n"),
   },
   {
     id: "problem",
-    heading: "문제 정의",
-    // head 와 병렬로 부르므로 앞 섹션을 못 본다. 그대로 두면 제목과 환경 표를 다시 만든다.
-    focus: '"문제 정의" 섹션의 본문 문단만 출력합니다. 제목 줄과 환경 표는 앞에서 이미 작성했으므로 절대 다시 출력하지 않습니다.',
+    heading: "문제",
+    // title·meta 와 병렬로 부르므로 앞 섹션을 못 본다. 표를 다시 만들지 않게 못박는다.
+    focus: [
+      '"문제" 섹션의 본문만 출력합니다. 제목 줄과 표는 절대 출력하지 않습니다.',
+      "`발생 현상:` 항목으로 시작해 고객이 겪은 증상을 한두 문장으로 씁니다.",
+      "이어서 `상세 내용:` 아래에 무엇이 제약이었는지, 무엇을 확인·요청했는지를 항목으로 나눠 씁니다.",
+    ].join("\n"),
+  },
+  {
+    id: "diagnosis",
+    heading: "환경 및 진단 내역",
+    focus: [
+      '"환경 및 진단 내역" 섹션의 본문만 출력합니다.',
+      "`운영 환경:` 항목에 대상 환경과 제품 버전을 적습니다. 원문에서 확인되는 버전은 하나도 빠뜨리지 않습니다.",
+      "수집·조회·재현 등 진단으로 한 일을 항목으로 적습니다.",
+      "진단에 쓴 명령이나 조회 구문이 원문에 있으면 코드 블록으로 그대로 옮깁니다.",
+    ].join("\n"),
   },
   {
     id: "cause",
-    heading: "원인 및 기술 배경",
-    // 실측에서 Gemma 가 첫 문장부터 "NSX-T 기반 환경의 알려진 이슈에서 기인합니다" 로
-    // 시작했다. 원문에서 TAC 이 참고로 인용했을 뿐인 KB 다. 출발점을 못박는다.
+    heading: "원인 분석",
+    // 실측에서 Gemma 가 "NSX-T 기반 환경의 알려진 이슈에서 기인합니다" 로 시작했다.
+    // 원문에서 TAC 이 참고로 인용했을 뿐인 KB 다. 서술형 규칙은 안 먹혀 표현을 금지한다.
     focus: [
-      '"원인 및 기술 배경" 섹션의 본문 문단만 출력합니다.',
+      '"원인 분석" 섹션의 본문만 출력합니다.',
       "",
-      "첫 문장은 반드시 이 환경에서 관측된 사실(패킷 캡처 결과, 로그, 설정 점검 결과)로 시작합니다.",
+      "첫 항목은 반드시 이 환경에서 관측된 사실(패킷 캡처 결과, 로그, 설정 점검 결과)로 시작합니다.",
       '대화에 인용된 KB 나 다른 환경 유형의 알려진 이슈를 원인으로 단정하지 않습니다. "~ 기반 환경의 알려진 이슈에서 기인합니다", "~ 알려진 이슈로 인해 발생합니다" 같은 표현은 쓰지 않습니다.',
       "KB 는 조치의 근거로만 언급할 수 있고, 그때도 이 환경에 해당함이 원문에서 확인된 경우에만 씁니다.",
       "",
-      "최소 2문단으로, 동작 원리 한 문단과 구조적 차이 한 문단을 나눠 씁니다.",
+      "`라벨: 내용` 항목 2~4개로 씁니다. 동작 원리 설명이 필요하면 항목 앞에 문단으로 덧붙입니다.",
     ].join("\n"),
   },
   {
     id: "solution",
-    heading: "해결 방법",
-    focus: '"해결 방법" 섹션의 본문 문단만 출력합니다. 원문에 설정 구문이나 명령 예시가 있으면 코드 블록으로 그대로 옮깁니다.',
-  },
-  {
-    id: "result",
-    heading: "최종 결과",
-    // 실측에서 "조치 결과 확인 후 케이스를 종료하였습니다"(24자) 로 끝냈다. 내용이 없다.
-    focus: '"최종 결과" 를 딱 한 문장으로 출력합니다. 두 문장 이상 쓰지 않습니다.\n무엇을 조치했고 고객사에 전달했는지를 그 한 문장에 담습니다. "케이스를 종료하였습니다" 처럼 조치 내용이 빠진 문장은 쓰지 않습니다.',
+    heading: "해결 제안 및 조치 방안",
+    focus: [
+      '"해결 제안 및 조치 방안" 섹션의 본문만 출력합니다.',
+      "`조치 방안:` · `조치 효과:` 같은 항목으로 씁니다.",
+      "원문에 설정 구문이나 명령 예시가 있으면 코드 블록으로 그대로 옮깁니다. 언급만 하고 생략하지 않습니다.",
+      "우회 조치와 영구 수정을 구분하고, 영구 수정이 예정된 버전이 있으면 그 버전을 적습니다.",
+      "참고한 공식 문서나 KB 가 있으면 `참고 공식 문서:` 항목으로 남깁니다.",
+    ].join("\n"),
   },
 ];
+
+/* ------------------------------------------------------------------ *
+ * 표 4행. 팀 양식(Confluence "SR 현행화 양식")이 정한 고정 형식이다.
+ *
+ * 일시와 심각도는 DB 에 있다. 모델에게 시킬 일이 아니다 — 지어낼 자리를 없앤다.
+ * 유형과 대상 환경만 원문을 읽어야 알 수 있어 meta 섹션이 맡는다.
+ * ------------------------------------------------------------------ */
+
+export interface MetaValues {
+  /** 문의 또는 장애 대응. */
+  type: string;
+  /** 예: [은] 운영, [은/중]개발,운영 */
+  target: string;
+}
+
+/**
+ * meta 섹션 출력에서 두 값을 뽑는다.
+ *
+ * 형식 준수에 기대지 않는다 — 실측에서 "두 줄만" 이라고 했는데도 1,013자짜리 설명을
+ * 써 보냈다. 라벨이 있으면 라벨로, 없으면 값 자체의 생김새로 찾는다.
+ * 그래도 못 찾으면 빈 문자열이다. 지어내면 표에 틀린 값이 박힌다.
+ */
+export function parseMeta(text: string): MetaValues {
+  const flat = text.replace(/[`*]/g, "");
+
+  const labeled = (label: string): string => {
+    for (const raw of flat.split("\n")) {
+      const line = raw.replace(/^(\s*[-•]\s*)+/, "").trim();
+      const m = line.match(new RegExp(`^${label}\\s*[:：]\\s*(.+)$`));
+      if (m) return (m[1] ?? "").trim();
+    }
+    return "";
+  };
+
+  // 유형은 둘 중 하나로 정규화한다. 표에 다른 말이 들어가면 양식이 아니다.
+  const typeSource = labeled("유형") || flat;
+  const type = /장애\s*대응/.test(typeSource) ? "장애 대응" : /문의/.test(typeSource) ? "문의" : "";
+
+  // 대상 환경은 "[은]" · "[중]" · "[은/중]" 으로 시작하는 토막이다.
+  const rawTarget = labeled("대상 환경");
+  const pattern = /\[(?:은\/중|은|중)\]\s*[가-힣A-Za-z]*(?:\s*,\s*[가-힣A-Za-z]+)*/;
+  const target = (rawTarget.match(pattern) ?? flat.match(pattern) ?? [""])[0].trim();
+
+  return { type, target };
+}
+
+/** "02-August-2026 20:06:11" -> "2026-08-02". 못 읽으면 빈 문자열. */
+export function formatSrDate(value: string | null | undefined): string {
+  const date = parseWolkenDate(value);
+  if (date === null) return "";
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
+ * 문서 제목. `[SR 37027473] 인증서 만료 경고 관련 문의 (완료)` 꼴이다.
+ *
+ * 대괄호 표기를 코드가 만든다 — 모델에게 맡겼더니 "[37027473]" 처럼 SR 을 빼먹었다.
+ * 종료된 케이스에는 실제 문서들처럼 `(완료)` 를 붙인다.
+ */
+export function buildDocTitle(requestId: string, koreanTitle: string, status: string): string {
+  const text = koreanTitle.replace(/^\[[^\]]*\]\s*/, "").replace(/\s*\(완료\)\s*$/, "").trim();
+  const closed = /^(closed|resolved)$/i.test(status.trim());
+  return `[SR ${requestId.trim()}] ${text}${closed ? " (완료)" : ""}`.trim();
+}
+
+export interface TableInput {
+  /** 포털 표기 그대로 넘긴다. 이 함수가 날짜로 편다. */
+  openedRaw: string;
+  closedRaw: string;
+  /** "Medium - P3" 같은 포털 표기. */
+  priority: string;
+  meta: MetaValues;
+}
+
+/** "Medium - P3" -> "P3". 숫자를 못 찾으면 원문을 그대로 둔다. */
+function severityLabel(priority: string): string {
+  const m = priority.match(/P?(\d)\s*$/);
+  return m ? `P${m[1]}` : priority.trim();
+}
+
+/**
+ * 양식 그대로의 4행 표. 행을 더하거나 빼지 않는다.
+ *
+ * 종료일은 포털의 마지막 갱신 시각이라 사람이 적는 "실제 해결일"과 어긋날 수 있다
+ * (실측 3건 중 1건만 일치). 기본값으로 채우고 사람이 고치는 것을 전제로 한다.
+ */
+export function buildMetaTable(input: TableInput): string {
+  const opened = formatSrDate(input.openedRaw);
+  const closed = formatSrDate(input.closedRaw);
+  const period = opened === "" ? "" : closed === "" || closed === opened ? `${opened} ~ ${opened}` : `${opened} ~ ${closed}`;
+  return [
+    "| 항목 | 내용 |",
+    "|---|---|",
+    `| SR 오픈/종료 일시 | ${period} |`,
+    `| 유형 | ${input.meta.type} |`,
+    `| 대상 환경 | ${input.meta.target} |`,
+    `| 심각도 | ${severityLabel(input.priority)} |`,
+  ].join("\n");
+}
 
 /** 섹션 하나를 쓰게 하는 시스템 프롬프트. 본문 프롬프트는 그대로 두고 뒤에 덧붙인다. */
 export function sectionSystemPrompt(section: ConfluenceSection): string {
@@ -247,16 +387,15 @@ const HEADING_ECHO = new RegExp(
 const TITLE_ECHO = /^\s*\[[^\]]+\]\s*\S/;
 
 /**
- * 절 본문을 정리한다.
+ * 본문 섹션을 정리한다.
  *
- * allowHead 가 거짓이면 제목 줄과 마크다운 표도 걷어낸다. 본문 섹션은 문단으로만
- * 서술하게 되어 있고(프롬프트 "서술 방식"), 제목과 환경 표는 문서 머리에만 온다.
- * 실측에서 문제 정의 섹션이 환경 표를 통째로 다시 만들었다 — 프롬프트로 막되
- * 조립에서도 한 번 더 막는다.
+ * 표는 코드가 만든다(buildMetaTable). 그러므로 본문 섹션에 표가 오면 모델이 지시를
+ * 어긴 것이고, 그대로 두면 양식의 4행 표 밑에 또 다른 표가 붙는다. 걷어낸다.
+ * 실측에서 문제 섹션이 표를 통째로 다시 만든 적이 있다.
  *
- * 코드 블록 안은 건드리지 않는다. 해결 방법 섹션이 설정 구문을 그대로 옮기기 때문이다.
+ * 코드 블록 안은 건드리지 않는다. 진단 명령과 설정 구문을 그대로 옮기게 되어 있다.
  */
-export function cleanSectionText(text: string, allowHead = false): string {
+export function cleanSectionText(text: string): string {
   const out: string[] = [];
   let inFence = false;
   for (const line of text.split("\n")) {
@@ -270,65 +409,49 @@ export function cleanSectionText(text: string, allowHead = false): string {
       continue;
     }
     if (HEADING_ECHO.test(line)) continue;
-    if (allowHead) {
-      out.push(line);
-      continue;
-    }
     if (/^\s*\|/.test(line)) continue;
     if (TITLE_ECHO.test(line) && out.every((l) => l.trim() === "")) continue;
     out.push(line);
   }
-  return (allowHead ? trimToTable(out) : out).join("\n").trim();
+  return out.join("\n").trim();
 }
 
 /**
- * 첫 문장만 남긴다.
+ * 첫 줄만 남긴다. 제목처럼 한 줄이어야 하는 출력에 쓴다.
  *
- * 최종 결과는 골격상 한 문장이다. 실측에서 모델이 577자에 걸쳐 여러 문단을 썼다.
- * 한국어 존댓말은 "~다." 로 끝나므로 그것을 먼저 찾고, 없으면 마침표를 본다.
+ * 실측에서 모델이 제목 뒤에 설명을 덧붙이거나 표까지 이어 썼다.
  */
-export function firstSentence(text: string): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  const korean = flat.indexOf("다.");
-  if (korean !== -1) return flat.slice(0, korean + 2);
-  const dot = flat.indexOf(". ");
-  return dot === -1 ? flat : flat.slice(0, dot + 1);
+export function firstLine(text: string): string {
+  const line = text
+    .split("\n")
+    // 글머리 기호가 겹쳐 오기도 한다("- • 제목"). 남지 않을 때까지 걷어낸다.
+    .map((l) => l.replace(/^\s*#{1,6}\s*/, "").replace(/^(\s*[-•*]\s*)+/, "").trim())
+    .find((l) => l !== "" && !/^```/.test(l));
+  return (line ?? "").replace(/^["'“”‘’]+|["'“”‘’]+$/g, "").trim();
 }
 
 /**
- * head 섹션은 제목 한 줄과 환경 표까지다.
+ * 문서를 조립한다. 골격(제목 → 표 → 네 섹션)은 코드가 정하므로 어긋날 수 없다.
  *
- * 실측에서 모델이 표 뒤에 문제 정의 본문까지 이어 썼다. 그대로 두면 제목 없는 문단이
- * 표 밑에 붙고, 뒤따르는 "문제 정의" 절과 내용이 겹친다. 표가 끝나는 줄에서 끊는다.
- * 표가 아예 없으면 제목 한 줄만 남긴다.
+ * 지금까지는 모델이 내용과 골격을 동시에 맞춰야 했고, 어긋나면 문서가 깨졌다.
  */
-function trimToTable(lines: readonly string[]): string[] {
-  let lastTable = -1;
-  for (const [index, line] of lines.entries()) {
-    if (/^\s*\|/.test(line)) lastTable = index;
-  }
-  if (lastTable !== -1) return lines.slice(0, lastTable + 1);
-  const title = lines.find((line) => line.trim() !== "");
-  return title === undefined ? [] : [title];
-}
-
-/**
- * 섹션 결과를 문서 한 덩어리로 조립한다.
- *
- * 조립을 코드가 하므로 골격(제목 → 환경 표 → 네 섹션)이 어긋날 수 없다. 지금까지는
- * 모델이 내용과 골격을 동시에 맞춰야 했다.
- */
-export function assembleConfluenceDoc(
-  parts: ReadonlyArray<{ section: ConfluenceSection; text: string }>,
-): string {
+export function assembleConfluenceDoc(input: {
+  /** "[SR 37027473] ..." 한 줄. */
+  title: string;
+  /** buildMetaTable 결과. */
+  table: string;
+  sections: ReadonlyArray<{ section: ConfluenceSection; text: string }>;
+}): string {
   const blocks: string[] = [];
-  for (const { section, text } of parts) {
-    // 제목과 환경 표는 head 섹션에서만 살린다.
-    const cleaned = cleanSectionText(text, section.id === "head");
-    // 최종 결과는 골격상 한 문장이다. 모델이 길게 쓰면 첫 문장에서 끊는다.
-    const body = section.id === "result" ? firstSentence(cleaned) : cleaned;
+  if (input.title.trim() !== "") blocks.push(input.title.trim());
+  if (input.table.trim() !== "") blocks.push(input.table.trim());
+
+  for (const { section, text } of input.sections) {
+    if (section.heading === "") continue; // 제목·meta 는 위에서 따로 다뤘다.
+    const body = cleanSectionText(text);
     if (body === "") continue;
-    blocks.push(section.heading === "" ? body : `${section.heading}\n\n${body}`);
+    blocks.push(`### ${section.heading}\n\n${body}`);
   }
   return blocks.join("\n\n");
 }
+

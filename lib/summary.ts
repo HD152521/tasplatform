@@ -17,6 +17,10 @@ import {
   SECTION_TIMEOUT_MS,
   type ConfluenceSection,
   assembleConfluenceDoc,
+  buildDocTitle,
+  buildMetaTable,
+  firstLine,
+  parseMeta,
   sectionSystemPrompt,
 } from "./summaryPrompt.ts";
 import { getCase, listThreads } from "./queries.ts";
@@ -115,24 +119,39 @@ function writeSection(
  * 제목·환경 표와 문제 정의는 서로 독립이라 같이 보낸다. 원인은 문제 정의를, 해결 방법은
  * 원인을, 최종 결과는 앞 둘을 받아야 말이 이어지므로 순서대로 부른다.
  */
-async function composeSections(source: string): Promise<string> {
-  const head = sectionById("head");
+async function composeSections(
+  source: string,
+  detail: { request_id_formatted: string; status: string; created_on: string; last_updated: string; priority: string },
+): Promise<string> {
+  const title = sectionById("title");
+  const meta = sectionById("meta");
   const problem = sectionById("problem");
 
-  const [headText, problemText] = await Promise.all([
-    writeSection(head, source, []),
+  // 제목·표값·문제는 서로 독립이라 같이 보낸다.
+  const [titleText, metaText, problemText] = await Promise.all([
+    writeSection(title, source, []),
+    writeSection(meta, source, []),
     writeSection(problem, source, []),
   ]);
-  const written = [
-    { section: head, text: headText },
-    { section: problem, text: problemText },
-  ];
 
-  for (const id of ["cause", "solution", "result"]) {
+  const written = [{ section: problem, text: problemText }];
+  // 진단 → 원인 → 조치는 앞 내용을 받아야 말이 이어진다.
+  for (const id of ["diagnosis", "cause", "solution"]) {
     const section = sectionById(id);
     written.push({ section, text: await writeSection(section, source, written) });
   }
-  return assembleConfluenceDoc(written);
+
+  return assembleConfluenceDoc({
+    title: buildDocTitle(detail.request_id_formatted, firstLine(titleText), detail.status),
+    // 일시와 심각도는 DB 값이다. 모델이 지어낼 자리를 두지 않는다.
+    table: buildMetaTable({
+      openedRaw: detail.created_on,
+      closedRaw: detail.last_updated,
+      priority: detail.priority,
+      meta: parseMeta(metaText),
+    }),
+    sections: written,
+  });
 }
 
 /**
@@ -164,11 +183,13 @@ export async function getSummary(
     threads: (await listThreads(requestId)).map((t) => ({
       isOurs: t.is_ours === 1,
       at: t.res_date_val,
+      // 중복 판정의 시간창에 쓴다. 없으면 같은 답변이 두 번 들어간다.
+      atMs: t.res_date_ms ?? undefined,
       body: t.body_text,
     })),
   });
 
-  const content = await composeSections(source);
+  const content = await composeSections(source, detail);
   const summary: Summary = {
     content,
     source: "ai",

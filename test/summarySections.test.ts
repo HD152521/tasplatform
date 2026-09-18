@@ -1,8 +1,9 @@
 /**
- * Confluence 문서 섹션 분할.
+ * Confluence 문서 섹션 분할과 양식 조립.
  *
- * 사내 엔드포인트의 출력 상한이 512 토큰이라 문서를 한 번에 받을 수 없다.
- * 섹션마다 따로 받고 조립은 코드가 한다 — 여기서 검증하는 것은 그 조립과 예산이다.
+ * 골격은 팀 양식(Confluence "SR 현행화 양식", id 172261444)이 정한다 —
+ * 제목 한 줄 → 4행 고정 표 → 문제 / 환경 및 진단 내역 / 원인 분석 / 해결 제안 및 조치 방안.
+ * 사내 엔드포인트의 출력 상한 때문에 섹션마다 따로 받고 조립은 코드가 한다.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -10,8 +11,11 @@ import {
   CONFLUENCE_SECTIONS,
   SECTION_TIMEOUT_MS,
   assembleConfluenceDoc,
-  firstSentence,
+  buildMetaTable,
   cleanSectionText,
+  firstLine,
+  formatSrDate,
+  parseMeta,
   sectionSystemPrompt,
 } from "../lib/summaryPrompt.ts";
 
@@ -24,24 +28,25 @@ const byId = (id: string) => {
   return found;
 };
 
-/**
- * 섹션 호출은 max_tokens 를 넘기지 않아 운영 설정(config.maxTokens)을 따른다.
- * 대신 왕복 횟수가 라우트 예산 안에 들어와야 한다 — head 와 문제 정의를 함께 보내므로
- * 왕복은 네 번이고, 라우트의 maxDuration 은 300 초다.
- */
-test("최악의 경우에도 라우트 예산 안에서 끝난다", () => {
-  const roundTrips = 4;
-  assert.ok(SECTION_TIMEOUT_MS * roundTrips <= 300_000, String(SECTION_TIMEOUT_MS));
-});
+/* ------------------------------------------------------------------ *
+ * 골격
+ * ------------------------------------------------------------------ */
 
-test("출력 골격의 섹션이 순서대로 정의되어 있다", () => {
+test("출력 골격의 섹션이 양식 순서대로 정의되어 있다", () => {
   assert.deepEqual(
     CONFLUENCE_SECTIONS.map((s) => s.id),
-    ["head", "problem", "cause", "solution", "result"],
+    ["title", "meta", "problem", "diagnosis", "cause", "solution"],
   );
-  // 제목과 환경 표는 골격에서 제목 줄을 갖지 않는다.
-  assert.equal(byId("head").heading, "");
-  assert.equal(byId("cause").heading, "원인 및 기술 배경");
+  // 제목과 표값은 문서에 제목 줄을 갖지 않는다(코드가 따로 조립한다).
+  assert.equal(byId("title").heading, "");
+  assert.equal(byId("meta").heading, "");
+  assert.equal(byId("diagnosis").heading, "환경 및 진단 내역");
+  assert.equal(byId("solution").heading, "해결 제안 및 조치 방안");
+});
+
+/** 왕복은 네 번(제목·표값·문제 병렬 + 진단 + 원인 + 조치)이고 라우트 예산은 300초다. */
+test("최악의 경우에도 라우트 예산 안에서 끝난다", () => {
+  assert.ok(SECTION_TIMEOUT_MS * 4 <= 300_000, String(SECTION_TIMEOUT_MS));
 });
 
 test("섹션 프롬프트는 기존 본문 프롬프트와 사실 규칙, 이번 지시를 함께 준다", () => {
@@ -49,101 +54,152 @@ test("섹션 프롬프트는 기존 본문 프롬프트와 사실 규칙, 이번
   assert.ok(prompt.includes("# 출력 골격"), "기존 프롬프트 본문이 그대로 있어야 한다");
   assert.ok(prompt.includes("관측·확인된 사실"), "원인은 이 환경에서 확인된 것만");
   assert.ok(prompt.includes("참고로만 언급했다면 원인이 아닙니다"), "배제된 가설 규칙");
-  assert.ok(prompt.includes("~로 추정됩니다"), "추정 표기 규칙");
   assert.ok(prompt.includes("# 이번 호출"), "이번 섹션 지시");
-  assert.ok(prompt.includes("섹션 제목 줄은 출력하지 않습니다"));
 });
 
-// 모델이 지시를 어기고 섹션 제목을 되쓰는 일이 있다. 조립할 때 제목이 겹치면 안 된다.
+/* ------------------------------------------------------------------ *
+ * 표 4행 — 양식이 정한 고정 형식
+ * ------------------------------------------------------------------ */
+
+test("날짜는 포털 표기를 YYYY-MM-DD 로 편다", () => {
+  assert.equal(formatSrDate("02-August-2026 20:06:11"), "2026-08-02");
+  assert.equal(formatSrDate("08-September-2026 01:32:06"), "2026-09-08");
+  assert.equal(formatSrDate("말이 안 되는 값"), "");
+  assert.equal(formatSrDate(null), "");
+});
+
+test("meta 섹션에서 유형과 대상 환경을 뽑는다", () => {
+  const got = parseMeta(lines("유형: 장애 대응", "대상 환경: [은/중]개발,운영"));
+  assert.deepEqual(got, { type: "장애 대응", target: "[은/중]개발,운영" });
+});
+
+test("모델이 글머리 기호나 강조를 붙여도 값만 뽑는다", () => {
+  const got = parseMeta(lines("- **유형**: 문의", "* 대상 환경 : `[은] 운영`"));
+  assert.equal(got.type, "문의");
+  assert.equal(got.target, "[은] 운영");
+});
+
+// 못 찾으면 빈 값이다. 지어내면 표에 틀린 값이 박힌다.
+test("meta 를 못 읽으면 빈 값을 돌려준다", () => {
+  assert.deepEqual(parseMeta("모르겠습니다"), { type: "", target: "" });
+});
+
+test("표는 양식대로 정확히 4행이다", () => {
+  const table = buildMetaTable({
+    openedRaw: "08-September-2026 01:32:06",
+    closedRaw: "16-September-2026 20:29:59",
+    priority: "Medium - P3",
+    meta: { type: "문의", target: "[은] 운영" },
+  });
+  assert.equal(table.split(NEWLINE).length, 6, table); // 머리 2줄 + 4행
+  assert.ok(table.includes("| SR 오픈/종료 일시 | 2026-09-08 ~ 2026-09-16 |"), table);
+  assert.ok(table.includes("| 유형 | 문의 |"), table);
+  assert.ok(table.includes("| 대상 환경 | [은] 운영 |"), table);
+  assert.ok(table.includes("| 심각도 | P3 |"), table);
+});
+
+test("심각도는 포털 표기에서 P 번호만 뽑는다", () => {
+  const of = (priority: string): string =>
+    buildMetaTable({ openedRaw: "", closedRaw: "", priority, meta: { type: "", target: "" } });
+  assert.ok(of("High - P2").includes("| 심각도 | P2 |"));
+  assert.ok(of("Medium - P3").includes("| 심각도 | P3 |"));
+});
+
+test("하루 만에 끝난 건도 범위로 적는다", () => {
+  const table = buildMetaTable({
+    openedRaw: "11-August-2026 09:00:00",
+    closedRaw: "11-August-2026 18:46:05",
+    priority: "Medium - P3",
+    meta: { type: "문의", target: "[은/중]개발,운영" },
+  });
+  assert.ok(table.includes("| SR 오픈/종료 일시 | 2026-08-11 ~ 2026-08-11 |"), table);
+});
+
+/* ------------------------------------------------------------------ *
+ * 본문 정리
+ * ------------------------------------------------------------------ */
+
 test("모델이 섹션 제목을 되써도 걷어낸다", () => {
-  const got = cleanSectionText(lines("원인 및 기술 배경", "", "체크섬 오프로딩이 켜져 있었습니다."));
-  assert.equal(got, "체크섬 오프로딩이 켜져 있었습니다.");
+  assert.equal(cleanSectionText(lines("원인 분석", "", "체크섬 오프로딩이 켜져 있었습니다.")), "체크섬 오프로딩이 켜져 있었습니다.");
+  assert.equal(cleanSectionText(lines("### 해결 제안 및 조치 방안", "본문입니다.")), "본문입니다.");
 });
 
-test("마크다운 제목 표기로 되써도 걷어낸다", () => {
-  assert.equal(cleanSectionText(lines("## 해결 방법", "본문입니다.")), "본문입니다.");
-});
-
-// 실측에서 문제 정의 섹션이 환경 표를 통째로 다시 만들었다(head 와 병렬로 불러 앞을 못 봄).
-test("본문 섹션이 되만든 환경 표와 제목은 걷어낸다", () => {
+// 표는 코드가 만든다. 본문 섹션의 표는 양식의 4행 표 밑에 또 붙어 버린다.
+test("본문 섹션이 만든 표와 머리 제목은 걷어낸다", () => {
   const got = cleanSectionText(
     lines("[99990001] 지연 현상 분석 요청", "| 항목 | 내용 |", "|---|---|", "| 제품 | Sample |", "", "실제 본문입니다."),
   );
   assert.equal(got, "실제 본문입니다.");
 });
 
-test("제목과 환경 표는 head 섹션에서는 살린다", () => {
-  const text = lines("[99990001] 지연 현상 분석 요청", "", "| 항목 | 내용 |", "|---|---|", "| 제품 | Sample |");
-  assert.equal(cleanSectionText(text, true), text);
-});
-
-// 실측에서 head 가 표 뒤에 문제 정의 본문까지 이어 썼다. 뒤따르는 절과 내용이 겹친다.
-test("head 가 표 뒤에 본문까지 쓰면 표에서 끊는다", () => {
-  const got = cleanSectionText(
-    lines("[99990001] 제목", "", "| 항목 | 내용 |", "|---|---|", "| 제품 | Sample |", "", "업그레이드 이후 지연이 발생했습니다."),
-    true,
-  );
-  assert.ok(got.endsWith("| 제품 | Sample |"), got);
-  assert.ok(!got.includes("업그레이드 이후"), got);
-});
-
-test("head 에 표가 없으면 제목 한 줄만 남긴다", () => {
-  const got = cleanSectionText(lines("[99990001] 제목", "", "덧붙인 설명은 버린다."), true);
-  assert.equal(got, "[99990001] 제목");
-});
-
-// 코드 블록 안의 파이프는 표가 아니다. 해결 방법 섹션의 명령 예시가 지워지면 안 된다.
-test("코드 블록 안의 파이프 줄은 표로 보지 않는다", () => {
-  const text = lines("아래와 같이 확인합니다.", "", "```", "| grep -v stderr", "```");
-  assert.ok(cleanSectionText(text).includes("| grep -v stderr"));
-});
-
-// 해결 방법 섹션은 설정 구문을 코드 블록으로 그대로 옮기게 되어 있다. 그건 남아야 한다.
-test("본문 안의 코드 블록은 지우지 않는다", () => {
-  const text = lines("규칙을 아래와 같이 구성했습니다.", "", "```", "if $programname == 'x' then stop", "```");
+// 진단·조치 섹션은 명령과 설정 구문을 그대로 옮기게 되어 있다.
+test("코드 블록은 파이프가 들어 있어도 지우지 않는다", () => {
+  const text = lines("아래와 같이 확인합니다.", "", "```", "cat x | grep -v stderr", "```");
   const got = cleanSectionText(text);
-  assert.ok(got.includes("if $programname == 'x' then stop"), got);
+  assert.ok(got.includes("cat x | grep -v stderr"), got);
   assert.ok(got.includes("```"), got);
 });
 
-test("조립하면 골격 순서대로 제목과 본문이 붙는다", () => {
-  const doc = assembleConfluenceDoc([
-    { section: byId("head"), text: lines("[99990001] 로그 선별 전송 구성", "", "| 항목 | 내용 |", "|---|---|", "| 제품 | Sample Platform |") },
-    { section: byId("problem"), text: "전체 로그가 전달되는 제약이 있었습니다." },
-    { section: byId("cause"), text: "전송 단위가 디렉터리 전체로 정의되어 있습니다." },
-    { section: byId("solution"), text: "수신 서버 측에 규칙을 구성했습니다." },
-    { section: byId("result"), text: "구성을 확인하여 전달 완료했습니다." },
-  ]);
+test("firstLine 은 기호·따옴표·코드펜스를 걷어내고 한 줄만 준다", () => {
+  assert.equal(firstLine('- • "[SR 1] 통신 지연 분석"'), "[SR 1] 통신 지연 분석");
+  assert.equal(firstLine(lines("```", "# [SR 1] 제목", "덧붙인 설명")), "[SR 1] 제목");
+});
 
-  assert.ok(doc.startsWith("[99990001] 로그 선별 전송 구성"), doc);
-  assert.ok(doc.includes("| 항목 | 내용 |"));
-  for (const heading of ["문제 정의", "원인 및 기술 배경", "해결 방법", "최종 결과"]) {
-    assert.ok(doc.includes(`${heading}\n\n`), `${heading} 제목이 없다`);
+/* ------------------------------------------------------------------ *
+ * 조립
+ * ------------------------------------------------------------------ */
+
+test("조립하면 제목 → 표 → 네 섹션 순서로 붙는다", () => {
+  const table = buildMetaTable({
+    openedRaw: "11-August-2026 09:00:00",
+    closedRaw: "11-August-2026 18:46:05",
+    priority: "Medium - P3",
+    meta: { type: "문의", target: "[은/중]개발,운영" },
+  });
+  const doc = assembleConfluenceDoc({
+    title: "[SR 99990001] 인증서 만료 경고 관련 문의",
+    table,
+    sections: [
+      { section: byId("problem"), text: "발생 현상: 경고가 표시됩니다." },
+      { section: byId("diagnosis"), text: "운영 환경: Sample Platform v3.1.2" },
+      { section: byId("cause"), text: "비활성 인증서: 남아 있었습니다." },
+      { section: byId("solution"), text: "조치 방안: 삭제 절차를 실행했습니다." },
+    ],
+  });
+
+  assert.ok(doc.startsWith("[SR 99990001] 인증서 만료 경고 관련 문의"), doc);
+  assert.ok(doc.indexOf("| 심각도 | P3 |") < doc.indexOf("### 문제"), "표가 본문보다 앞");
+  for (const heading of ["문제", "환경 및 진단 내역", "원인 분석", "해결 제안 및 조치 방안"]) {
+    assert.ok(doc.includes(`### ${heading}\n\n`), `${heading} 제목이 없다`);
   }
-  // 골격 순서가 지켜져야 한다.
-  assert.ok(doc.indexOf("문제 정의") < doc.indexOf("원인 및 기술 배경"));
-  assert.ok(doc.indexOf("해결 방법") < doc.indexOf("최종 결과"));
+  assert.ok(doc.indexOf("### 문제") < doc.indexOf("### 환경 및 진단 내역"));
+  assert.ok(doc.indexOf("### 원인 분석") < doc.indexOf("### 해결 제안 및 조치 방안"));
 });
 
-// 실측에서 최종 결과가 577자에 걸쳐 여러 문단으로 나왔다. 골격상 한 문장이다.
-test("최종 결과는 첫 문장에서 끊는다", () => {
-  const doc = assembleConfluenceDoc([
-    { section: byId("result"), text: lines("조치를 적용하여 해결하였습니다.", "", "추가로 후속 계획도 안내하였습니다.") },
-  ]);
-  assert.ok(doc.includes("조치를 적용하여 해결하였습니다."), doc);
-  assert.ok(!doc.includes("후속 계획"), doc);
+// 제목과 표값 섹션은 코드가 따로 다룬다. 본문에 두 번 나오면 안 된다.
+test("제목·표값 섹션은 본문으로 붙지 않는다", () => {
+  const doc = assembleConfluenceDoc({
+    title: "[SR 1] 제목",
+    table: "| 항목 | 내용 |",
+    sections: [
+      { section: byId("title"), text: "[SR 1] 제목" },
+      { section: byId("meta"), text: "유형: 문의" },
+      { section: byId("problem"), text: "발생 현상: 있음" },
+    ],
+  });
+  assert.equal(doc.split("[SR 1] 제목").length - 1, 1, doc);
+  assert.ok(!doc.includes("유형: 문의"), doc);
 });
 
-test("firstSentence 는 마침표뿐인 영문 문장도 끊는다", () => {
-  assert.equal(firstSentence("Applied the fix. Then verified."), "Applied the fix.");
-});
-
-// 한 섹션이 빈 채로 와도 제목만 덩그러니 남기지 않는다.
 test("빈 섹션은 제목째로 뺀다", () => {
-  const doc = assembleConfluenceDoc([
-    { section: byId("problem"), text: "내용 있음" },
-    { section: byId("cause"), text: "   " },
-  ]);
-  assert.ok(doc.includes("문제 정의"));
-  assert.ok(!doc.includes("원인 및 기술 배경"), doc);
+  const doc = assembleConfluenceDoc({
+    title: "",
+    table: "",
+    sections: [
+      { section: byId("problem"), text: "내용 있음" },
+      { section: byId("cause"), text: "   " },
+    ],
+  });
+  assert.ok(doc.includes("### 문제"));
+  assert.ok(!doc.includes("### 원인 분석"), doc);
 });
