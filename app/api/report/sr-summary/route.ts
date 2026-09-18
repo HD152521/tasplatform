@@ -22,9 +22,9 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  if (!hasSrReporter()) {
+  if (!(await hasSrReporter())) {
     return NextResponse.json(
-      { ok: false, message: ".env 에 OPENAI_API_KEY 가 필요합니다." },
+      { ok: false, message: "LLM 연결이 설정되지 않았습니다 (설정 > LLM 또는 OPENAI_API_KEY)." },
       { status: 503 },
     );
   }

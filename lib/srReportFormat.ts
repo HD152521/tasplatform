@@ -20,6 +20,7 @@
  * lib/srReport.ts 에서 분리한 이유는 lib/html.ts 와 같다 — server-only 모듈은
  * Node 에서 직접 import 할 수 없어 테스트가 안 된다.
  */
+import { condenseBody, dedupeThreads } from "./srSource.ts";
 
 export interface SrReport {
   /** SR 제목 (슬라이드의 "SR 제목" 칸) */
@@ -99,7 +100,7 @@ export function buildSourceText(input: {
   createdOn: string;
   closedOn: string;
   description: string;
-  threads: ReadonlyArray<{ isOurs: boolean; at: string; body: string }>;
+  threads: ReadonlyArray<{ isOurs: boolean; at: string; atMs?: number; body: string }>;
 }): string {
   const parts: string[] = [
     `SR No.: ${input.requestId}`,
@@ -116,10 +117,12 @@ export function buildSourceText(input: {
     "=== 대응 경과 ===",
   ];
 
-  for (const thread of input.threads) {
+  // 포털에 두 건으로 들어 있는 같은 답변과 답변마다 반복되는 서명은 모델이 볼 이유가
+  // 없다. 출력이 512 토큰으로 묶인 엔드포인트에서는 입력 한 줄이 아깝다.
+  for (const thread of dedupeThreads(input.threads)) {
     parts.push("");
     parts.push(`--- ${thread.isOurs ? "고객사/당사" : "Broadcom TAC"} (${thread.at}) ---`);
-    parts.push(thread.body.trim());
+    parts.push(condenseBody(thread.body));
   }
 
   return parts.join("\n");

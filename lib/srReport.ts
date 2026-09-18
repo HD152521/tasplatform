@@ -127,9 +127,15 @@ function systemPrompt(): string {
 
 const USER_INSTRUCTION = "위 SR 내역을 지침에 따라 보고서로 정리해라.";
 
-/** 케이스 본문을 보낼 수 있는 키가 있는가. */
-export function hasSrReporter(): boolean {
-  return (process.env.OPENAI_API_KEY ?? "").trim() !== "";
+/**
+ * 케이스 본문을 보낼 곳이 있는가.
+ *
+ * OPENAI_API_KEY 만 보면 안 된다. 설정된 LLM 연결(사내 엔드포인트)이 있으면 그쪽으로
+ * 나가므로 키가 비어 있어도 생성은 된다. 키만 보고 503 으로 막으면 사내 LLM 만 쓰는
+ * 배포에서 되는 기능을 못 쓴다. getSrReport 와 같은 판정을 쓴다.
+ */
+export function hasSrReporter(): Promise<boolean> {
+  return hasOpenAi();
 }
 
 async function readCached(requestId: number): Promise<SrReport | null> {
@@ -194,13 +200,17 @@ export async function getSrReport(
     threads: (await listThreads(requestId)).map((t) => ({
       isOurs: t.is_ours === 1,
       at: t.res_date_val,
+      // 중복 판정의 시간창에 쓴다. null 이면 판정을 걸지 않는다.
+      atMs: t.res_date_ms ?? undefined,
       body: t.body_text,
     })),
   });
 
+  // temperature 를 넘기지 않으면 설정값(기본 0.1)이 먹는다. 보고서는 원문에 없는
+  // 문장이 섞이면 안 되는 문서라 0 으로 고정한다. OpenAI 경로의 기본값도 0 이었다.
   const raw = await chat(systemPrompt(), `${source}
 
-${USER_INSTRUCTION}`, { maxTokens: 2000 });
+${USER_INSTRUCTION}`, { maxTokens: 2000, temperature: 0 });
   await writeCached(requestId, raw);
   return { ...parseSrReport(raw), cached: false };
 }
