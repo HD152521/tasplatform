@@ -24,6 +24,8 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [published, setPublished] = useState<{ url: string; created: boolean } | null>(null);
 
   async function load(next: Kind, force = false): Promise<void> {
     setKind(next);
@@ -59,6 +61,31 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
       setTimeout(() => setCopied(false), 1800);
     } catch {
       setCopied(false);
+    }
+  }
+
+  async function publish(): Promise<void> {
+    setPublishing(true);
+    setError("");
+    setPublished(null);
+    try {
+      const response = await fetch("/api/summary/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId }),
+      });
+      const data = (await response.json()) as {
+        ok?: boolean; url?: string; created?: boolean; error?: string;
+      };
+      if (data.ok !== true || data.url === undefined) {
+        setError(data.error ?? "Confluence 업로드에 실패했습니다.");
+        return;
+      }
+      setPublished({ url: data.url, created: data.created === true });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPublishing(false);
     }
   }
 
@@ -117,8 +144,26 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
               <button type="button" onClick={copy} disabled={busy || text === ""} style={chipStyle}>
                 {copied ? "복사됨" : "복사"}
               </button>
+              <button
+                type="button" onClick={() => void publish()}
+                disabled={busy || publishing || text === ""} style={chipStyle}
+              >
+                {publishing ? "올리는 중…" : "Confluence에 올리기"}
+              </button>
             </span>
           </div>
+
+          {published !== null && (
+            <div style={{
+              background: COLOR.ground, border: `1px solid ${COLOR.line}`, borderRadius: 8,
+              padding: "9px 13px", marginTop: 10, fontSize: 12.5,
+            }}>
+              {published.created ? "새 문서로 올렸습니다" : "기존 문서를 갱신했습니다"} ·{" "}
+              <a href={published.url} target="_blank" rel="noreferrer" style={{ color: COLOR.accent }}>
+                Confluence에서 열기 ↗
+              </a>
+            </div>
+          )}
 
           <textarea
             readOnly value={busy ? "만드는 중…" : text} rows={16}
