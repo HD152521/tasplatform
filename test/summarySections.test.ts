@@ -62,6 +62,40 @@ test("마크다운 제목 표기로 되써도 걷어낸다", () => {
   assert.equal(cleanSectionText(lines("## 해결 방법", "본문입니다.")), "본문입니다.");
 });
 
+// 실측에서 문제 정의 섹션이 환경 표를 통째로 다시 만들었다(head 와 병렬로 불러 앞을 못 봄).
+test("본문 섹션이 되만든 환경 표와 제목은 걷어낸다", () => {
+  const got = cleanSectionText(
+    lines("[99990001] 지연 현상 분석 요청", "| 항목 | 내용 |", "|---|---|", "| 제품 | Sample |", "", "실제 본문입니다."),
+  );
+  assert.equal(got, "실제 본문입니다.");
+});
+
+test("제목과 환경 표는 head 섹션에서는 살린다", () => {
+  const text = lines("[99990001] 지연 현상 분석 요청", "", "| 항목 | 내용 |", "|---|---|", "| 제품 | Sample |");
+  assert.equal(cleanSectionText(text, true), text);
+});
+
+// 실측에서 head 가 표 뒤에 문제 정의 본문까지 이어 썼다. 뒤따르는 절과 내용이 겹친다.
+test("head 가 표 뒤에 본문까지 쓰면 표에서 끊는다", () => {
+  const got = cleanSectionText(
+    lines("[99990001] 제목", "", "| 항목 | 내용 |", "|---|---|", "| 제품 | Sample |", "", "업그레이드 이후 지연이 발생했습니다."),
+    true,
+  );
+  assert.ok(got.endsWith("| 제품 | Sample |"), got);
+  assert.ok(!got.includes("업그레이드 이후"), got);
+});
+
+test("head 에 표가 없으면 제목 한 줄만 남긴다", () => {
+  const got = cleanSectionText(lines("[99990001] 제목", "", "덧붙인 설명은 버린다."), true);
+  assert.equal(got, "[99990001] 제목");
+});
+
+// 코드 블록 안의 파이프는 표가 아니다. 해결 방법 섹션의 명령 예시가 지워지면 안 된다.
+test("코드 블록 안의 파이프 줄은 표로 보지 않는다", () => {
+  const text = lines("아래와 같이 확인합니다.", "", "```", "| grep -v stderr", "```");
+  assert.ok(cleanSectionText(text).includes("| grep -v stderr"));
+});
+
 // 해결 방법 섹션은 설정 구문을 코드 블록으로 그대로 옮기게 되어 있다. 그건 남아야 한다.
 test("본문 안의 코드 블록은 지우지 않는다", () => {
   const text = lines("규칙을 아래와 같이 구성했습니다.", "", "```", "if $programname == 'x' then stop", "```");

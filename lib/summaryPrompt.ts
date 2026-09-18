@@ -182,9 +182,16 @@ export const CONFLUENCE_SECTIONS: readonly ConfluenceSection[] = [
   {
     id: "head",
     heading: "",
-    focus: '"[SR번호] SR 제목(한글)" 한 줄과 그 바로 아래 환경 표만 출력합니다.',
+    // 실측에서 표에 "NSX-T 기반 환경" 이 들어갔다. TAC 이 참고로 언급했을 뿐
+    // 이 고객 환경은 Silk Overlay 였다. 원인 규칙만으로는 환경 표를 막지 못한다.
+    focus: '"[SR번호] SR 제목(한글)" 한 줄과 그 바로 아래 환경 표만 출력합니다.\n환경 표에는 이 고객 환경의 것으로 원문에서 확인된 항목만 씁니다. 비교나 참고로 언급되었을 뿐 이 환경에 해당하지 않는 구성은 넣지 않습니다.',
   },
-  { id: "problem", heading: "문제 정의", focus: '"문제 정의" 섹션의 본문 문단만 출력합니다.' },
+  {
+    id: "problem",
+    heading: "문제 정의",
+    // head 와 병렬로 부르므로 앞 섹션을 못 본다. 그대로 두면 제목과 환경 표를 다시 만든다.
+    focus: '"문제 정의" 섹션의 본문 문단만 출력합니다. 제목 줄과 환경 표는 앞에서 이미 작성했으므로 절대 다시 출력하지 않습니다.',
+  },
   {
     id: "cause",
     heading: "원인 및 기술 배경",
@@ -212,13 +219,59 @@ const HEADING_ECHO = new RegExp(
   `^\\s*#{0,3}\\s*(${CONFLUENCE_SECTIONS.map((s) => s.heading).filter((h) => h !== "").join("|")})\\s*$`,
 );
 
-export function cleanSectionText(text: string): string {
-  return text
-    .split("\n")
-    .filter((line) => !HEADING_ECHO.test(line))
-    .join("\n")
-    .replace(/^\s*```[\w]*\s*$/, "")
-    .trim();
+/** "[37027473] 제목" 처럼 문서 머리에만 와야 하는 줄. */
+const TITLE_ECHO = /^\s*\[[^\]]+\]\s*\S/;
+
+/**
+ * 절 본문을 정리한다.
+ *
+ * allowHead 가 거짓이면 제목 줄과 마크다운 표도 걷어낸다. 본문 섹션은 문단으로만
+ * 서술하게 되어 있고(프롬프트 "서술 방식"), 제목과 환경 표는 문서 머리에만 온다.
+ * 실측에서 문제 정의 섹션이 환경 표를 통째로 다시 만들었다 — 프롬프트로 막되
+ * 조립에서도 한 번 더 막는다.
+ *
+ * 코드 블록 안은 건드리지 않는다. 해결 방법 섹션이 설정 구문을 그대로 옮기기 때문이다.
+ */
+export function cleanSectionText(text: string, allowHead = false): string {
+  const out: string[] = [];
+  let inFence = false;
+  for (const line of text.split("\n")) {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+    if (HEADING_ECHO.test(line)) continue;
+    if (allowHead) {
+      out.push(line);
+      continue;
+    }
+    if (/^\s*\|/.test(line)) continue;
+    if (TITLE_ECHO.test(line) && out.every((l) => l.trim() === "")) continue;
+    out.push(line);
+  }
+  return (allowHead ? trimToTable(out) : out).join("\n").trim();
+}
+
+/**
+ * head 섹션은 제목 한 줄과 환경 표까지다.
+ *
+ * 실측에서 모델이 표 뒤에 문제 정의 본문까지 이어 썼다. 그대로 두면 제목 없는 문단이
+ * 표 밑에 붙고, 뒤따르는 "문제 정의" 절과 내용이 겹친다. 표가 끝나는 줄에서 끊는다.
+ * 표가 아예 없으면 제목 한 줄만 남긴다.
+ */
+function trimToTable(lines: readonly string[]): string[] {
+  let lastTable = -1;
+  for (const [index, line] of lines.entries()) {
+    if (/^\s*\|/.test(line)) lastTable = index;
+  }
+  if (lastTable !== -1) return lines.slice(0, lastTable + 1);
+  const title = lines.find((line) => line.trim() !== "");
+  return title === undefined ? [] : [title];
 }
 
 /**
@@ -232,7 +285,8 @@ export function assembleConfluenceDoc(
 ): string {
   const blocks: string[] = [];
   for (const { section, text } of parts) {
-    const body = cleanSectionText(text);
+    // 제목과 환경 표는 head 섹션에서만 살린다.
+    const body = cleanSectionText(text, section.id === "head");
     if (body === "") continue;
     blocks.push(section.heading === "" ? body : `${section.heading}\n\n${body}`);
   }
