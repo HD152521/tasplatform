@@ -30,6 +30,8 @@ export interface CaseListRow {
   description_html: string;
   case_version: number | null;
   team_id: string;
+  /** Confluence 에 올린 문서 URL. 안 올렸으면 null. */
+  confluence_url: string | null;
 }
 
 export interface ThreadViewRow {
@@ -60,7 +62,9 @@ SELECT
     WHERE t.request_id = c.request_id AND t.is_ours = 0
       AND COALESCE(t.res_date_ms, 0) >
           COALESCE((SELECT r.last_read_thread_ms FROM case_reads r WHERE r.request_id = c.request_id), 0)
-  ) AS unread_replies
+  ) AS unread_replies,
+  (SELECT s.content FROM case_summaries s
+     WHERE s.request_id = c.request_id AND s.kind = 'confluence_published' LIMIT 1) AS confluence_url
 FROM cases c
 ${whereClause}
 ORDER BY c.last_updated_ms DESC, c.request_id DESC

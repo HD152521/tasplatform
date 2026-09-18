@@ -122,6 +122,9 @@ export function CaseList({
                         {row.request_id_formatted}
                       </span>
                       <Badge fg={tone.fg} bg={tone.bg}>{row.status}</Badge>
+                      {row.confluence_url !== null && row.confluence_url !== "" && (
+                        <Badge fg={COLOR.ok} bg="#e9f7ee">SR 올림</Badge>
+                      )}
                       {unread && (
                         <Badge fg={COLOR.waitUs} bg={COLOR.waitUsBg} strong>
                           새 답변 {row.unread_replies}

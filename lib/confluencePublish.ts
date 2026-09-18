@@ -11,6 +11,7 @@ import "server-only";
 import { atlassianConfig, AtlassianError, type AtlassianConfig } from "./atlassian.ts";
 import { getCase } from "./queries.ts";
 import { openDb } from "./db.ts";
+import { isoNow } from "./dates.ts";
 import { toConfluenceStorage } from "./confluenceStorage.ts";
 
 interface V2Page {
@@ -55,6 +56,25 @@ function pageUrl(base: string, page: V2Page): string {
 export interface PublishResult {
   url: string;
   created: boolean;
+}
+
+/**
+ * "이 SR 은 Confluence 에 올렸다" 표시를 남긴다(완료 리스트의 배지가 이걸 읽는다).
+ * 스키마 변경 없이 기존 case_summaries 를 kind='confluence_published' 로 재사용한다.
+ */
+async function recordPublished(requestId: number, url: string): Promise<void> {
+  const db = await openDb();
+  try {
+    await db.run(
+      `INSERT INTO case_summaries (request_id, kind, content, source, generated_at)
+       VALUES (?, 'confluence_published', ?, 'ai', ?)
+       ON CONFLICT(request_id, kind) DO UPDATE SET
+         content = excluded.content, generated_at = excluded.generated_at`,
+      [requestId, url, isoNow()],
+    );
+  } finally {
+    await db.close();
+  }
 }
 
 /** 케이스의 캐시된 Confluence 요약을 실제 Confluence 페이지로 올린다(있으면 갱신). */
@@ -117,7 +137,9 @@ export async function publishSummaryToConfluence(requestId: number): Promise<Pub
       body: { representation: "storage", value: storage },
       version: { number: nextVersion, message: "SR 자동 갱신" },
     });
-    return { url: pageUrl(config.base, updated), created: false };
+    const url = pageUrl(config.base, updated);
+    await recordPublished(requestId, url);
+    return { url, created: false };
   }
 
   const created = await cfetch<V2Page>(config, "POST", "/wiki/api/v2/pages", {
@@ -127,5 +149,7 @@ export async function publishSummaryToConfluence(requestId: number): Promise<Pub
     parentId: config.confluenceParentId,
     body: { representation: "storage", value: storage },
   });
-  return { url: pageUrl(config.base, created), created: true };
+  const url = pageUrl(config.base, created);
+  await recordPublished(requestId, url);
+  return { url, created: true };
 }
