@@ -1,38 +1,18 @@
-# GitLab CI/CD — broadcom-sr (web / worker / mcp 단일 레포)
+# CI/CD — 배포 대상이 둘로 갈린다.
+#   worker : 이 VM(shell 러너)에서 pull + systemctl restart  (브라우저 필요 → VM)
+#   web/mcp: TAS 로 cf push                                    (브라우저 불필요 → 컨테이너)
 #
-# 지금은 검증(verify)만 확실히 돌린다. 배포(deploy)는 파운데이션 사양
-# (Scheduler 타일 · Postgres 서비스 · 빌드팩 Node 버전)이 정해진 뒤 붙인다.
-#
-# 요구: 러너가 Docker 실행자여서 image 를 쓸 수 있어야 한다.
-#       (shell 러너면 node:24 를 러너에 직접 설치하고 default.image 줄을 제거)
-#
-# Node 24 필수: 테스트가 .ts 를 직접 실행(type stripping)하고 node:sqlite 를 쓴다.
+# 러너: 그룹 shell 러너(sr-vm). "Run untagged jobs" 를 켜두면 tags 없이 잡을 받는다.
+#   태그를 붙였다면 각 잡에 `tags: [<태그>]` 를 추가할 것.
 
 stages:
-  - verify
-  - build
+  - test
+  - deploy
 
-default:
-  image: node:24
-  # 잦은 재설치를 줄이기 위해 npm 캐시를 lockfile 기준으로 보관
-  cache:
-    key:
-      files:
-        - package-lock.json
-    paths:
-      - .npm/
-
-variables:
-  npm_config_cache: "$CI_PROJECT_DIR/.npm"
-  # 테스트는 브라우저를 띄우지 않는다 → Chromium(~150MB) 다운로드 생략
-  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-  TZ: "Asia/Seoul"
-
-# ── 검증: 타입체크 + 전체 테스트 (모든 push / MR) ─────────────────
-verify:
-  stage: verify
+# 테스트: 타입체크 + 유닛테스트. 브라우저 안 띄우므로 가볍고 빠르다.
+test:
+  stage: test
   script:
-    - node --version   # 24.x 확인
     - npm ci
     - npm run typecheck
     - npm test
@@ -40,46 +20,30 @@ verify:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
 
-# ── 프론트 빌드 산출물 확인 (next build 이 깨지지 않는지) ──────────
-build-web:
-  stage: build
-  script:
-    - npm ci
-    - npm run build
-  artifacts:
-    paths:
-      - .next/
-    expire_in: 1 day
+# worker 배포: main push 시 이 VM 의 수집기를 최신으로 갱신하고 재시작.
+# 실제 작업은 레포 밖 고정 스크립트(/usr/local/bin/sr-deploy.sh)가 한다 —
+# 레포 안 스크립트를 sudo 로 물리면 push 로 root 를 탈취당할 수 있어서다.
+deploy_worker:
+  stage: deploy
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - sudo /usr/local/bin/sr-deploy.sh
 
-# ── 배포 (TODO — 아래 선결 후 활성화) ────────────────────────────
-# 선결:
-#   1) SQLite → Postgres 이전 + 세션/기기신뢰 상태를 DB 로 (ephemeral FS 때문)
-#   2) TS → JS 컴파일(prod 는 .ts 직접 실행 금지), 빌드팩 Node 버전 확인
-#   3) Scheduler for Tanzu 타일(worker 스케줄), Postgres 서비스 바인딩
-#   4) 시크릿은 cf set-env / CredHub (SR_SECRET_KEY, SR_USERNAME/PASSWORD ...)
+# --- TAS(web/mcp) 배포: cf CLI + CI 변수 준비되면 주석 해제 ---
+# 필요한 CI/CD 변수(Settings > CI/CD > Variables, Masked):
+#   CF_API, CF_USER, CF_PASSWORD, CF_ORG(PA), CF_SPACE(PA)
+# 그리고 러너 VM 에 cf CLI 설치 필요.
+# worker 는 VM 이 담당하므로 web·mcp 만 개별 push 한다(manifest 의 worker 는 건드리지 않음).
 #
-# deploy-web:
+# deploy_tas:
 #   stage: deploy
-#   image: <cf-cli 포함 이미지>
+#   rules:
+#     - if: '$CI_COMMIT_BRANCH == "main"'
+#       when: manual        # 원할 때만 수동 실행(무심코 TAS 재배포 방지)
 #   script:
-#     - cf api "$CF_API" && cf auth "$CF_USER" "$CF_PASSWORD"
+#     - cf api "$CF_API" --skip-ssl-validation
+#     - cf auth "$CF_USER" "$CF_PASSWORD"
 #     - cf target -o "$CF_ORG" -s "$CF_SPACE"
-#     - cf push broadcom-sr-web  -f manifest/web.yml
-#   rules:
-#     - if: '$CI_COMMIT_BRANCH == "main"'
-#       when: manual
-#
-# deploy-mcp:
-#   stage: deploy
-#   script:
-#     - cf push broadcom-sr-mcp -f manifest/mcp.yml
-#   rules:
-#     - if: '$CI_COMMIT_BRANCH == "main"'
-#       when: manual
-#
-# worker 는 앱이 아니라 Scheduler 잡:
-#   cf create-job broadcom-sr-web sr-collect "node dist/collector/collect.js"
-#   cf schedule-job sr-collect --cron "*/15 8-20 * * *"
+#     - cf push broadcom-sr-web -f manifest.yml
+#     - cf push broadcom-sr-mcp -f manifest.yml
