@@ -31,20 +31,22 @@ deploy_worker:
     # 러너가 체크아웃한 소스($CI_PROJECT_DIR)를 앱 디렉터리로 동기화·재시작(git fetch 없음).
     - sudo /usr/local/bin/sr-deploy.sh "$CI_PROJECT_DIR"
 
-# --- TAS(web/mcp) 배포: cf CLI + CI 변수 준비되면 주석 해제 ---
-# 필요한 CI/CD 변수(Settings > CI/CD > Variables, Masked):
-#   CF_API, CF_USER, CF_PASSWORD, CF_ORG(PA), CF_SPACE(PA)
-# 그리고 러너 VM 에 cf CLI 설치 필요.
-# worker 는 VM 이 담당하므로 web·mcp 만 개별 push 한다(manifest 의 worker 는 건드리지 않음).
-#
-# deploy_tas:
-#   stage: deploy
-#   rules:
-#     - if: '$CI_COMMIT_BRANCH == "main"'
-#       when: manual        # 원할 때만 수동 실행(무심코 TAS 재배포 방지)
-#   script:
-#     - cf api "$CF_API" --skip-ssl-validation
-#     - cf auth "$CF_USER" "$CF_PASSWORD"
-#     - cf target -o "$CF_ORG" -s "$CF_SPACE"
-#     - cf push broadcom-sr-web -f manifest.yml
-#     - cf push broadcom-sr-mcp -f manifest.yml
+# TAS(web/mcp) 자동 배포. main push 시 web·mcp 만 cf push 한다.
+#   worker 는 VM 이 담당하므로 여기서 안 건드린다(manifest 의 worker app 은 push 대상에서 제외).
+#   cf push 는 cf set-env 로 넣은 기존 환경변수(SR_DATABASE_URL·SR_SECRET_KEY·SR_PG_SCHEMA 등)를
+#   보존한다 — manifest 의 env 만 덮어쓴다.
+# 준비물:
+#   - 러너 VM 에 cf CLI 설치(1회)
+#   - CI/CD Variables(Settings > CI/CD > Variables, Masked·Protected):
+#       CF_API, CF_USER, CF_PASSWORD, CF_ORG(PA), CF_SPACE(PA)
+#       선택 CF_PG_INSTANCE(바인딩할 Postgres 서비스명, 기본 PA-postgres)
+deploy_tas:
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - cf api "$CF_API" --skip-ssl-validation
+    - cf auth "$CF_USER" "$CF_PASSWORD"
+    - cf target -o "$CF_ORG" -s "$CF_SPACE"
+    - cf push broadcom-sr-web -f manifest.yml --var pg_instance="${CF_PG_INSTANCE:-PA-postgres}"
+    - cf push broadcom-sr-mcp -f manifest.yml --var pg_instance="${CF_PG_INSTANCE:-PA-postgres}"
