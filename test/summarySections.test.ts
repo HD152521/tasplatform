@@ -10,6 +10,7 @@ import {
   CONFLUENCE_SECTIONS,
   SECTION_TIMEOUT_MS,
   assembleConfluenceDoc,
+  firstSentence,
   cleanSectionText,
   sectionSystemPrompt,
 } from "../lib/summaryPrompt.ts";
@@ -46,7 +47,8 @@ test("출력 골격의 섹션이 순서대로 정의되어 있다", () => {
 test("섹션 프롬프트는 기존 본문 프롬프트와 사실 규칙, 이번 지시를 함께 준다", () => {
   const prompt = sectionSystemPrompt(byId("cause"));
   assert.ok(prompt.includes("# 출력 골격"), "기존 프롬프트 본문이 그대로 있어야 한다");
-  assert.ok(prompt.includes("원인으로 쓰지 않습니다"), "배제된 가설 규칙");
+  assert.ok(prompt.includes("관측·확인된 사실"), "원인은 이 환경에서 확인된 것만");
+  assert.ok(prompt.includes("참고로만 언급했다면 원인이 아닙니다"), "배제된 가설 규칙");
   assert.ok(prompt.includes("~로 추정됩니다"), "추정 표기 규칙");
   assert.ok(prompt.includes("# 이번 호출"), "이번 섹션 지시");
   assert.ok(prompt.includes("섹션 제목 줄은 출력하지 않습니다"));
@@ -121,6 +123,19 @@ test("조립하면 골격 순서대로 제목과 본문이 붙는다", () => {
   // 골격 순서가 지켜져야 한다.
   assert.ok(doc.indexOf("문제 정의") < doc.indexOf("원인 및 기술 배경"));
   assert.ok(doc.indexOf("해결 방법") < doc.indexOf("최종 결과"));
+});
+
+// 실측에서 최종 결과가 577자에 걸쳐 여러 문단으로 나왔다. 골격상 한 문장이다.
+test("최종 결과는 첫 문장에서 끊는다", () => {
+  const doc = assembleConfluenceDoc([
+    { section: byId("result"), text: lines("조치를 적용하여 해결하였습니다.", "", "추가로 후속 계획도 안내하였습니다.") },
+  ]);
+  assert.ok(doc.includes("조치를 적용하여 해결하였습니다."), doc);
+  assert.ok(!doc.includes("후속 계획"), doc);
+});
+
+test("firstSentence 는 마침표뿐인 영문 문장도 끊는다", () => {
+  assert.equal(firstSentence("Applied the fix. Then verified."), "Applied the fix.");
 });
 
 // 한 섹션이 빈 채로 와도 제목만 덩그러니 남기지 않는다.
