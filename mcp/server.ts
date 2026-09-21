@@ -29,7 +29,12 @@ import {
   getSummaryHandler,
   listCasesHandler,
 } from "./readTools.ts";
-import { summaryDeps, writeDeps } from "./serverDeps.ts";
+import {
+  buildReportHandler,
+  getInstanceCountsHandler,
+  getMonthlyWorkHandler,
+} from "./reportTools.ts";
+import { reportDeps, summaryDeps, writeDeps } from "./serverDeps.ts";
 import { createSrHandler, replyHandler } from "./writeTools.ts";
 
 // Cloud Foundry/TAS 는 앱이 반드시 자기가 지정한 $PORT 에 바인딩하길 요구한다
@@ -181,6 +186,68 @@ function registerTools(server: McpServer): void {
       const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
       if (!auth.ok) return toolAuthError(auth);
       return toolJson(await replyHandler(writeDeps, auth.teamId, args));
+    },
+  );
+
+  /* ---------------- 정기점검 보고서 ---------------- */
+
+  server.registerTool(
+    "get_monthly_work",
+    {
+      description:
+        "정기점검 보고서의 '작업 진행 현황' 을 그 달 Jira 에서 만든다. " +
+        "같은 작업 내역은 한 줄로 합쳐지며, 법인과 전산센터 중 한쪽만 여럿일 수 있다. " +
+        "보고서에서 빠진 이슈는 skipped 에 이유와 함께 담긴다.",
+      inputSchema: { month: z.string().describe("YYYY-MM") },
+    },
+    async (args, extra) => {
+      const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
+      if (!auth.ok) return toolAuthError(auth);
+      return toolJson(await getMonthlyWorkHandler(reportDeps, args));
+    },
+  );
+
+  server.registerTool(
+    "get_instance_counts",
+    {
+      description:
+        "그 달 보고서의 인스턴스 수치(저장된 것)를 조회한다. " +
+        "저장된 것이 없으면 saved 가 null 이고, required 에 채워야 할 아홉 칸이 담긴다.",
+      inputSchema: { month: z.string().describe("YYYY-MM") },
+    },
+    async (args, extra) => {
+      const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
+      if (!auth.ok) return toolAuthError(auth);
+      return toolJson(await getInstanceCountsHandler(reportDeps, args));
+    },
+  );
+
+  const envCount = z.object({
+    dev: z.number().min(0),
+    prod: z.number().min(0),
+    dr: z.number().min(0),
+  });
+
+  server.registerTool(
+    "build_report",
+    {
+      description:
+        "정기점검 보고서를 받을 수 있는 다운로드 주소를 돌려준다. " +
+        "인스턴스 수치(은행·중앙회·공동 ORG 의 개발/운영/DR)를 함께 주면 저장한 뒤 주소를 준다. " +
+        "안 주면 저장된 값을 쓰고, 그것도 없으면 무엇을 물어봐야 하는지 알려 준다. " +
+        "전월값은 이전 달 저장분에서 자동으로 끌어온다. " +
+        "파일은 이 주소를 열 때 만들어지며 몇 분 걸릴 수 있다.",
+      inputSchema: {
+        month: z.string().describe("YYYY-MM"),
+        bank: envCount.optional().describe("은행"),
+        central: envCount.optional().describe("중앙회"),
+        shared: envCount.optional().describe("공동 ORG"),
+      },
+    },
+    async (args, extra) => {
+      const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
+      if (!auth.ok) return toolAuthError(auth);
+      return toolJson(await buildReportHandler(reportDeps, args));
     },
   );
 }

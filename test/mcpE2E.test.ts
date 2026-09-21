@@ -154,9 +154,15 @@ test(
       try {
         const { tools } = await client.listTools();
         const names = tools.map((t) => t.name).sort();
+        // 도구 목록을 못 박아 둔다 — 붙는 쪽이 보는 표면이라 모르는 사이에 늘거나 줄면 안 된다.
         assert.deepEqual(
           names,
-          ["create_sr", "get_case", "get_summary", "list_cases", "reply"].sort(),
+          [
+            // SR
+            "create_sr", "get_case", "get_summary", "list_cases", "reply",
+            // 정기점검 보고서
+            "build_report", "get_instance_counts", "get_monthly_work",
+          ].sort(),
         );
 
         const listResult = await client.callTool({ name: "list_cases", arguments: {} });
