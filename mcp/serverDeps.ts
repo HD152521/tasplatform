@@ -10,6 +10,9 @@
  * mcp/writeTools.ts·mcp/readTools.ts 를 가짜 deps 로 직접 단위테스트한다.
  */
 import { fetchClient } from "../collector/httpClient.ts";
+import { atlassianConfig } from "../lib/atlassian.ts";
+import { loadMonth, resolvePrevious, saveMonth } from "../lib/instanceStore.ts";
+import { fetchMonthlyWork } from "../lib/jira.ts";
 import { sessionFileForTeam } from "../lib/config.ts";
 import { createCase } from "../lib/createCase.ts";
 import { hasTeamSession } from "../lib/requestAudit.ts";
@@ -18,6 +21,7 @@ import { postReply } from "../lib/reply.ts";
 import { hydrateTeamSessionFromDb, persistTeamSessionToDb } from "../lib/sessionStore.ts";
 import { getSummary } from "../lib/summary.ts";
 import type { GetSummaryDeps } from "./readTools.ts";
+import type { ReportDeps } from "./reportTools.ts";
 import type { WriteDeps } from "./writeTools.ts";
 
 export const writeDeps: WriteDeps = {
@@ -34,4 +38,19 @@ export const writeDeps: WriteDeps = {
 
 export const summaryDeps: GetSummaryDeps = {
   getSummary,
+};
+
+/**
+ * 정기점검 보고서 도구 배선.
+ *
+ * appUrl 은 다운로드 주소의 앞부분이다. 비어 있으면 상대 경로가 되어 붙는 쪽에서 못 연다
+ * — manifest 가 세 앱 모두에 SR_APP_URL 을 넣어 둔다.
+ */
+export const reportDeps: ReportDeps = {
+  atlassianConfig,
+  fetchMonthlyWork,
+  loadMonth,
+  saveMonth,
+  resolvePrevious,
+  appUrl: (process.env.SR_APP_URL ?? "").trim(),
 };
