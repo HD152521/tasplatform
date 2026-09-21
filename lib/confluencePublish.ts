@@ -12,6 +12,7 @@ import { atlassianConfig, AtlassianError, type AtlassianConfig } from "./atlassi
 import { getCase } from "./queries.ts";
 import { openDb } from "./db.ts";
 import { isoNow } from "./dates.ts";
+import { firstLine } from "./summaryPrompt.ts";
 import { toConfluenceStorage } from "./confluenceStorage.ts";
 
 interface V2Page {
@@ -105,8 +106,16 @@ export async function publishSummaryToConfluence(requestId: number): Promise<Pub
 
   const detail = await getCase(requestId);
   if (detail === null) throw new Error("케이스를 찾을 수 없습니다.");
-  const title = `[SR ${detail.request_id_formatted}] ${detail.subject}`.trim();
-  const storage = toConfluenceStorage(content);
+
+  // 페이지 제목은 요약 첫 줄(= buildDocTitle 이 만든 "[SR <넘버>] <한글제목> (완료)")을 쓴다.
+  // detail.subject 는 영문 원문이라 쓰지 않는다. 못 뽑으면 영문 원문으로 폴백.
+  const title = firstLine(content) || `[SR ${detail.request_id_formatted}] ${detail.subject}`.trim();
+
+  // 본문에서는 그 제목 줄을 뺀다 — 페이지 제목으로 이미 쓰므로 본문에 또 넣지 않는다.
+  const lines = content.split("\n");
+  const titleIdx = lines.findIndex((l) => l.trim() !== "");
+  const bodyText = titleIdx >= 0 ? lines.slice(titleIdx + 1).join("\n").trim() : content;
+  const storage = toConfluenceStorage(bodyText);
 
   // 2) 스페이스 키 → spaceId
   const spaces = await cfetch<V2List<{ id: string }>>(
