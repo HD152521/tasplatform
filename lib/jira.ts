@@ -8,7 +8,8 @@
  *   법인     = 상위 에픽 이름       "NH은행 운영지원" → 은행 / "NH중앙회 운영지원" → 중앙회
  *              "NH본사 지원" 은 보고서에 넣지 않는다.
  *   작업일   = 생성일 ~ 종료일      같은 날이면 한 날짜로 접는다.
- *   합치기   = 법인과 작업 내역이 같으면 한 줄. 전산센터는 "운영,DR" 로 모으고
+ *   합치기   = 작업 내역이 같으면 한 줄. 단 법인과 전산센터 중 한쪽만 여럿일 수 있다.
+ *              둘 다 여럿이면 어느 센터가 어느 법인 것인지 모르므로 법인별로 나눈다.
  *              작업일은 포괄 범위로 넓힌다 (1~3 과 2~4 → 1~4).
  *   지원유형 = 늘 "방문"
  *   이슈사항 = 늘 "특이사항 없음"
@@ -19,7 +20,7 @@
 import "server-only";
 import { get, type AtlassianConfig } from "./atlassian.ts";
 import {
-  dateOf, isHeadOffice, mergeKey, mergeRows, parseCenter, spanLabel, workStatusLabel,
+  dateOf, isHeadOffice, mergeRows, parseCenter, spanLabel, workStatusLabel,
   type Mergeable,
 } from "./jiraFormat.ts";
 
@@ -30,7 +31,11 @@ export interface WorkRow {
   url: string;
   /** 전산센터. 제목에 대괄호가 없으면 빈 문자열. */
   center: string;
-  corp: Corp;
+  /**
+   * 법인. 합쳐진 줄은 "은행,중앙회" 처럼 여럿일 수 있어 Corp 로 좁히지 않는다.
+   * 전산센터가 하나뿐일 때만 법인이 합쳐진다 — lib/jiraFormat.ts 의 mergeRows 참고.
+   */
+  corp: string;
   /** "08/03 – 08/14" 또는 "08/03". 미종료면 "08/03 –". */
   span: string;
   title: string;
@@ -232,18 +237,20 @@ export async function fetchMonthlyWork(
     });
   }
 
-  // 같은 법인·같은 작업 내역이면 한 줄로 합친다.
+  // 작업 내역이 같으면 합친다. 단 법인과 전산센터 중 한쪽만 여럿일 수 있다
+  // — 둘 다 여럿이면 어느 센터가 어느 법인 것인지 모르므로 법인별로 나뉜다.
   const rows: WorkRow[] = mergeRows(drafts).map((row) => ({
     key: row.key,
     url: row.url,
     center: row.center,
-    corp: row.corp as Corp,
+    corp: row.corp,
     span: spanLabel(row.startDate, row.endDate),
     title: row.title,
     support: row.support,
     issue: row.issue,
     note: row.note,
-    keys: drafts.filter((d) => mergeKey(d) === mergeKey(row)).map((d) => d.key),
+    // 합쳐진 줄은 corp 가 "은행,중앙회" 가 될 수 있어 키로 되짚지 못한다. 원본을 그대로 받는다.
+    keys: row.parts.map((d) => d.key),
     merged: row.merged,
   }));
 
