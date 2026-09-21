@@ -122,6 +122,7 @@ function writeSection(
 async function composeSections(
   source: string,
   detail: { request_id_formatted: string; status: string; created_on: string; last_updated: string; priority: string },
+  target?: string,
 ): Promise<string> {
   const title = sectionById("title");
   const meta = sectionById("meta");
@@ -150,6 +151,8 @@ async function composeSections(
       status: detail.status,
       priority: detail.priority,
       meta: parseMeta(metaText),
+      // 화면에서 고른 대상 환경(선택). 없으면 buildMetaTable 이 "(입력 필요)" 로 둔다.
+      target,
     }),
     sections: written,
   });
@@ -163,6 +166,7 @@ export async function getSummary(
   requestId: number,
   kind: SummaryKind,
   force = false,
+  target?: string,
 ): Promise<Summary | { error: string }> {
   if (!force) {
     const cached = await readCached(requestId, kind);
@@ -190,7 +194,7 @@ export async function getSummary(
     })),
   });
 
-  const content = await composeSections(source, detail);
+  const content = await composeSections(source, detail, target);
   const summary: Summary = {
     content,
     source: "ai",

@@ -17,6 +17,18 @@ const KINDS: ReadonlyArray<{ id: Kind; label: string; note: string }> = [
   { id: "confluence", label: "Confluence 문서", note: "SR 현행화 양식" },
 ];
 
+// 대상 환경(선택). 고르면 표의 "대상 환경" 칸에 들어가고, 비우면 "(입력 필요)" 로 남는다.
+// 은행/중앙회는 본문만으로 자동 판별이 어려워 사람이 고르게 둔다.
+const TARGET_OPTIONS: readonly string[] = [
+  "은행 개발",
+  "은행 운영",
+  "중앙회 개발",
+  "중앙회 운영",
+  "은행/중앙회 개발",
+  "은행/중앙회 운영",
+  "은행/중앙회 개발·운영",
+];
+
 export function SummaryPanel({ requestId }: { requestId: number }) {
   const [kind, setKind] = useState<Kind | null>(null);
   const [text, setText] = useState("");
@@ -26,6 +38,7 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
   const [copied, setCopied] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState<{ url: string; created: boolean } | null>(null);
+  const [target, setTarget] = useState("");
 
   async function load(next: Kind, force = false): Promise<void> {
     setKind(next);
@@ -36,7 +49,7 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
       const response = await fetch("/api/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestId, kind: next, force }),
+        body: JSON.stringify({ requestId, kind: next, force, target }),
       });
       const data = (await response.json()) as SummaryResponse;
       if (data.error !== undefined || data.content === undefined) {
@@ -111,6 +124,24 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
             </button>
           ))}
         </div>
+      </div>
+
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+        marginTop: 12, fontSize: 12.5, color: COLOR.muted,
+      }}>
+        <span>대상 환경 <span style={{ color: COLOR.faint }}>(선택)</span></span>
+        <select
+          value={target} onChange={(e) => setTarget(e.target.value)} disabled={busy}
+          style={{
+            padding: "5px 9px", fontSize: 12.5, fontFamily: "inherit",
+            border: `1px solid ${COLOR.line}`, borderRadius: 6, background: COLOR.surface,
+          }}
+        >
+          <option value="">(선택 안 함 · &quot;입력 필요&quot;로 둠)</option>
+          {TARGET_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <span style={{ color: COLOR.faint }}>고른 뒤 <b>다시 만들기</b>를 눌러야 표에 반영됩니다</span>
       </div>
 
       {error !== "" && (

@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST(request: Request) {
-  let body: { requestId?: unknown; kind?: unknown; force?: unknown };
+  let body: { requestId?: unknown; kind?: unknown; force?: unknown; target?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -23,7 +23,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await getSummary(requestId, body.kind, body.force === true);
+    const target = typeof body.target === "string" ? body.target.trim() : undefined;
+    const result = await getSummary(requestId, body.kind, body.force === true, target || undefined);
     if ("error" in result) return NextResponse.json(result, { status: 404 });
     return NextResponse.json(result);
   } catch (error) {
