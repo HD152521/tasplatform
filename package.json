@@ -19,7 +19,9 @@
     "capture": "node collector/capture.ts",
     "collect:cve": "node collector/collect-cves.ts",
     "translate:cve": "node collector/translate-cves.ts",
-    "mcp": "node --conditions=react-server mcp/server.ts"
+    "mcp": "node --conditions=react-server mcp/server.ts",
+    "token": "node scripts/team-token.ts",
+    "prewarm": "node collector/prewarm.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

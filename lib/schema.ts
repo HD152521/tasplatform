@@ -306,4 +306,12 @@ CREATE TABLE IF NOT EXISTS llm_connections (
   system_prompt TEXT    NOT NULL DEFAULT '',
   updated_at    TEXT    NOT NULL DEFAULT ''
 );
+
+-- 프로세스 사이에 남겨야 하는 작은 값들(워터마크 등).
+-- TAS 는 파일시스템이 ephemeral 이라 파일에 두면 재시작마다 사라진다.
+CREATE TABLE IF NOT EXISTS app_state (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT ''
+);
 `;
