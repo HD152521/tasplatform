@@ -6,11 +6,15 @@
  *
  * 케이스 본문을 외부로 보내므로 OpenAI 만 쓴다 (lib/openai.ts 의 경고 참고).
  * 한 번 만들면 저장해 두고 다시 부르지 않는다 — force 로만 다시 만든다.
+ *
+ * server-only 를 붙이지 않는다. 수집기(collector/prewarm.ts)가 새로 종료된 케이스의
+ * 요약을 미리 만들어 두려고 부르기 때문이다 — 그쪽은 평범한 node 로 도므로 server-only
+ * 마커가 있으면 import 즉시 throw 한다. lib/replySummary.ts 가 같은 이유로 같은 선택을
+ * 했고, 그래서 진입점도 lib/ai.ts(server-only) 가 아니라 lib/aiChat.ts 를 쓴다.
  */
-import "server-only";
 import { openDb } from "./db.ts";
 import { isoNow } from "./dates.ts";
-import { chat } from "./ai.ts";
+import { chat } from "./aiChat.ts";
 import {
   CONFLUENCE_SECTIONS,
   CONFLUENCE_USER_PREFIX,

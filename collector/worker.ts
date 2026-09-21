@@ -33,6 +33,11 @@ const SIGKILL_GRACE_MS = 5_000; // SIGTERM 후 이만큼 안 죽으면 SIGKILL
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
 const COLLECT_ENTRY = resolve(HERE, "collect.ts");
+const PREWARM_ENTRY = resolve(HERE, "prewarm.ts");
+
+// 요약은 건당 약 60초다. 한 회차 상한(SR_PREWARM_MAX, 기본 3건)에 여유를 더해 잡는다.
+// collect 의 상한을 나눠 쓰지 않는다 — 수집이 요약 때문에 죽으면 안 된다.
+const PREWARM_TIMEOUT_MS = 600_000;
 
 interface WorkerConfig {
   /** 회차 사이 간격(ms). */
@@ -103,10 +108,10 @@ function interruptibleSleep(ms: number): Promise<void> {
  * 남긴 뒤 다음 회차로 넘어간다. 죽인 자식이 쥔 collect 락은 다음 회차에서 pid 생존 체크로
  * 회수되므로 worker 는 계속 진행하면 된다. 정상 종료 시 타이머는 반드시 정리한다(누수 금지).
  */
-function runCollectOnce(timeoutMs: number): Promise<void> {
+function runChildOnce(entry: string, timeoutMs: number, label: string): Promise<void> {
   return new Promise((resolveRun) => {
     const startedMs = Date.now();
-    const child = spawn(process.execPath, [COLLECT_ENTRY], {
+    const child = spawn(process.execPath, [entry], {
       cwd: REPO_ROOT,
       stdio: "inherit",
     });
@@ -117,7 +122,7 @@ function runCollectOnce(timeoutMs: number): Promise<void> {
 
     const watchdog = setTimeout(() => {
       timedOut = true;
-      console.error(`[worker] 수집 회차가 상한(${timeoutMs}ms)을 넘겨 중단합니다(timeout → SIGTERM).`);
+      console.error(`[worker] ${label} 회차가 상한(${timeoutMs}ms)을 넘겨 중단합니다(timeout → SIGTERM).`);
       child.kill("SIGTERM");
       killTimer = setTimeout(() => {
         console.error("[worker] 자식이 SIGTERM 에 응답하지 않아 강제 종료합니다(SIGKILL).");
@@ -138,7 +143,7 @@ function runCollectOnce(timeoutMs: number): Promise<void> {
       if (settled) return;
       settled = true;
       cleanup();
-      console.error(`[worker] 수집 프로세스 시작 실패: ${error.message}`);
+      console.error(`[worker] ${label} 프로세스 시작 실패: ${error.message}`);
       resolveRun();
     });
 
@@ -151,7 +156,7 @@ function runCollectOnce(timeoutMs: number): Promise<void> {
       if (timedOut) how = `timeout, ${secs}s`;
       else if (signal !== null) how = `시그널 ${signal}, ${secs}s`;
       else how = `종료코드 ${code ?? "?"}, ${secs}s`;
-      console.log(`[worker] 수집 회차 종료 (${how})`);
+      console.log(`[worker] ${label} 회차 종료 (${how})`);
       resolveRun();
     });
   });
@@ -164,8 +169,15 @@ async function runLoop(config: WorkerConfig): Promise<void> {
 
   while (!stopping) {
     if (isWithinHours(new Date(), config.hoursSpec)) {
-      await runCollectOnce(config.timeoutMs);
+      await runChildOnce(COLLECT_ENTRY, config.timeoutMs, "수집");
       if (stopping) break;
+
+      // 새로 종료된 케이스의 요약을 미리 만든다. 수집과 프로세스를 나눈 이유는
+      // prewarm.ts 머리말 참고 — 요약이 수집의 watchdog 을 먹어 치우면 안 된다.
+      // 실패해도 다음 회차에 다시 시도되므로 여기서 붙잡지 않는다.
+      await runChildOnce(PREWARM_ENTRY, PREWARM_TIMEOUT_MS, "요약 예열");
+      if (stopping) break;
+
       await interruptibleSleep(config.intervalMs);
     } else {
       // 운영 시간대 밖 — 이번 회차는 건너뛰고 짧게 자다 재확인한다.
@@ -180,7 +192,7 @@ async function runLoop(config: WorkerConfig): Promise<void> {
  * 우아한 종료.
  *
  * CF 는 셧다운에 SIGTERM 을 보낸다. 진행 중 자식은 강제로 죽이지 않고 끝나길 기다리며
- * (runLoop 가 runCollectOnce 를 await 중), 잠자는 중이면 즉시 깨워 루프를 멈춘다.
+ * (runLoop 가 runChildOnce 를 await 중), 잠자는 중이면 즉시 깨워 루프를 멈춘다.
  * 이렇게 하면 반쯤 쓰다 만 회차나 유령 자식 프로세스를 남기지 않는다.
  */
 function requestStop(signal: string): void {
