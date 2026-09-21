@@ -191,6 +191,14 @@ function registerTools(server: McpServer): void {
 
   /* ---------------- 정기점검 보고서 ---------------- */
 
+  // 연·월은 숫자 둘로 받는다. "2026-08" 로 합쳐 받으면 챗봇이 연도를 스스로 알아내야
+  // 하는데, 사용자는 "8월달" 이라고만 말하는 것이 보통이다.
+  const yearArg = z.number().int().min(2000).max(2100).describe("연도 4자리 (예: 2026)");
+  const monthArg = z.number().int().min(1).max(12).describe("월 1~12 (예: 8)");
+  // 인스턴스 수치는 평평한 숫자 아홉 개다. 중첩 객체로 받으면 붙는 쪽 클라이언트가
+  // 그 JSON Schema 를 다룬다는 보장이 없다.
+  const countArg = (label: string) => z.number().min(0).optional().describe(label);
+
   server.registerTool(
     "get_monthly_work",
     {
@@ -198,7 +206,7 @@ function registerTools(server: McpServer): void {
         "정기점검 보고서의 '작업 진행 현황' 을 그 달 Jira 에서 만든다. " +
         "같은 작업 내역은 한 줄로 합쳐지며, 법인과 전산센터 중 한쪽만 여럿일 수 있다. " +
         "보고서에서 빠진 이슈는 skipped 에 이유와 함께 담긴다.",
-      inputSchema: { month: z.string().describe("YYYY-MM") },
+      inputSchema: { year: yearArg, month: monthArg },
     },
     async (args, extra) => {
       const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
@@ -213,7 +221,7 @@ function registerTools(server: McpServer): void {
       description:
         "그 달 보고서의 인스턴스 수치(저장된 것)를 조회한다. " +
         "저장된 것이 없으면 saved 가 null 이고, required 에 채워야 할 아홉 칸이 담긴다.",
-      inputSchema: { month: z.string().describe("YYYY-MM") },
+      inputSchema: { year: yearArg, month: monthArg },
     },
     async (args, extra) => {
       const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
@@ -222,26 +230,27 @@ function registerTools(server: McpServer): void {
     },
   );
 
-  const envCount = z.object({
-    dev: z.number().min(0),
-    prod: z.number().min(0),
-    dr: z.number().min(0),
-  });
-
   server.registerTool(
     "build_report",
     {
       description:
         "정기점검 보고서를 받을 수 있는 다운로드 주소를 돌려준다. " +
-        "인스턴스 수치(은행·중앙회·공동 ORG 의 개발/운영/DR)를 함께 주면 저장한 뒤 주소를 준다. " +
+        "인스턴스 수치 아홉 개를 함께 주면 저장한 뒤 주소를 준다. " +
         "안 주면 저장된 값을 쓰고, 그것도 없으면 무엇을 물어봐야 하는지 알려 준다. " +
         "전월값은 이전 달 저장분에서 자동으로 끌어온다. " +
         "파일은 이 주소를 열 때 만들어지며 몇 분 걸릴 수 있다.",
       inputSchema: {
-        month: z.string().describe("YYYY-MM"),
-        bank: envCount.optional().describe("은행"),
-        central: envCount.optional().describe("중앙회"),
-        shared: envCount.optional().describe("공동 ORG"),
+        year: yearArg,
+        month: monthArg,
+        bankDev: countArg("은행 개발"),
+        bankProd: countArg("은행 운영"),
+        bankDr: countArg("은행 DR"),
+        centralDev: countArg("중앙회 개발"),
+        centralProd: countArg("중앙회 운영"),
+        centralDr: countArg("중앙회 DR"),
+        sharedDev: countArg("공동 ORG 개발"),
+        sharedProd: countArg("공동 ORG 운영"),
+        sharedDr: countArg("공동 ORG DR"),
       },
     },
     async (args, extra) => {
