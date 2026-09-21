@@ -169,8 +169,9 @@ export function JiraWork({ month, initial }: { month: string; initial: string[] 
                       <td style={td}>
                         <input type="checkbox" checked={on} onChange={() => toggle(r.key)} />
                       </td>
-                      <td style={td}>{r.center === "" ? "-" : r.center}</td>
-                      <td style={td}>{r.corp}</td>
+                      {/* 합쳐진 값은 줄바꿈으로 이어져 있다(보고서가 한 칸에 문단을 나눠 쓴다). */}
+                      <td style={stacked}>{r.center === "" ? "-" : r.center}</td>
+                      <td style={stacked}>{r.corp}</td>
                       <td style={{ ...td, fontFamily: MONO_STACK, whiteSpace: "nowrap" }}>{r.span}</td>
                       <td style={td}>{r.support}</td>
                       <td style={td}>
@@ -236,3 +237,11 @@ const th: React.CSSProperties = {
 const td: React.CSSProperties = {
   padding: "9px 10px", borderBottom: `1px solid ${COLOR.divider}`, color: COLOR.body,
 };
+
+/**
+ * 전산센터·법인 칸.
+ *
+ * 합쳐진 값은 줄바꿈으로 이어져 있다 — 보고서가 한 칸 안에서 문단을 나눠 쓰기 때문이다.
+ * pre-line 이 없으면 화면에서 "운영DR" 처럼 붙어 보인다.
+ */
+const stacked: React.CSSProperties = { ...td, whiteSpace: "pre-line" };

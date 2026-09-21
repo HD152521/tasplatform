@@ -95,12 +95,26 @@ export function titleKey(row: { title: string }): string {
   return row.title.trim();
 }
 
-/** 한 칸에 든 값을 낱개로 푼다. "개발/운영" 이나 이미 합쳐진 "운영,DR" 도 푼다. */
+/** 합쳐진 값을 잇는 구분자. 실제 보고서가 한 칸 안에서 문단을 나눠 쓴다. */
+const JOIN = "\n";
+
+/**
+ * 한 칸에 든 값을 낱개로 푼다.
+ *
+ * 원본이 "개발/운영" 일 수 있고, 이미 합쳐진 값(줄바꿈)이나 옛 표기(쉼표)가 다시
+ * 들어올 수도 있다. 셋 다 같은 구분자로 본다.
+ */
 function splitLabel(raw: string): string[] {
-  return raw.split(/[,/]/).map((p) => p.trim()).filter((p) => p !== "");
+  return raw.split(/[,/\n]/).map((p) => p.trim()).filter((p) => p !== "");
 }
 
-/** 여러 값을 순서 유지하며 중복 없이 합친다(전산센터·법인 공용). */
+/**
+ * 여러 값을 순서 유지하며 중복 없이 합친다(전산센터·법인 공용).
+ *
+ * 줄바꿈으로 잇는 이유는 실제 보고서가 그렇기 때문이다 — 6월 보고서의 "운영DR" 칸은
+ * 사실 문단 두 개("운영", "DR")였다. scripts/build_report.py 가 줄바꿈을 문단
+ * 경계로 삼아(87행) 그대로 그려 준다.
+ */
 function mergeLabels(values: readonly string[]): string {
   const seen: string[] = [];
   for (const raw of values) {
@@ -108,7 +122,7 @@ function mergeLabels(values: readonly string[]): string {
       if (!seen.includes(value)) seen.push(value);
     }
   }
-  return seen.join(",");
+  return seen.join(JOIN);
 }
 
 /** 전산센터를 순서 유지하며 중복 없이 합친다. */
@@ -124,7 +138,7 @@ export function mergeCorps(corps: readonly string[]): string {
 /** 이 묶음에 든 서로 다른 전산센터 수. 1 이면 법인을 합쳐도 어디 것인지 흐려지지 않는다. */
 export function distinctCenterCount(rows: ReadonlyArray<{ center: string }>): number {
   const merged = mergeLabels(rows.map((r) => r.center));
-  return merged === "" ? 0 : merged.split(",").length;
+  return merged === "" ? 0 : merged.split(JOIN).length;
 }
 
 /**
