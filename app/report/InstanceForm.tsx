@@ -138,9 +138,13 @@ export function InstanceForm({
             marginTop: 12,
           }}>
             <span />
+            {/*
+              값이 오른쪽 정렬이라 제목도 오른쪽에 붙여야 숫자 위에 온다.
+              입력칸의 오른쪽 여백(10px)에 테두리 1px 을 더해 끝선을 맞춘다.
+            */}
             {ENVS.map((e) => (
               <span key={e.key} style={{
-                fontSize: 11, color: COLOR.faint, textAlign: "center",
+                fontSize: 11, color: COLOR.faint, textAlign: "right", paddingRight: 11,
               }}>
                 {e.label}
               </span>
@@ -160,7 +164,8 @@ export function InstanceForm({
                     onChange={(ev) => set(g.key, e.key, ev.target.value)}
                     placeholder="0"
                     style={{
-                      ...controlStyle, width: "100%", padding: "7px 8px",
+                      // 아래 전월 입력칸과 같은 여백이어야 두 표의 숫자 끝선이 맞는다.
+                      ...controlStyle, width: "100%", padding: "7px 10px",
                       fontFamily: MONO_STACK, fontSize: 12.5, textAlign: "right",
                     }}
                   />
@@ -173,7 +178,8 @@ export function InstanceForm({
           </p>
         </Card>
 
-        <Card style={{ padding: "16px 18px", marginBottom: 14 }}>
+        {/* 위 카드와 같은 패딩이어야 두 카드의 안쪽 선이 맞는다. */}
+        <Card style={{ padding: "18px 20px", marginBottom: 14 }}>
           <Label>전월 인스턴스</Label>
 
           {manualPrev ? (
