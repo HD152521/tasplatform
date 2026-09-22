@@ -124,7 +124,13 @@ export function InstanceForm({
         .sr-count { -moz-appearance: textfield; appearance: textfield; }
       `}</style>
       {/* 왼쪽: 입력 */}
-      <section style={{ flex: "1 1 368px", minWidth: 0, maxWidth: 480 }}>
+      {/*
+        입력칸이 border-box 가 되면서 여백+테두리 22px 이 폭 안으로 들어왔다.
+        368px 은 그만큼 남아도는 값이라 330 으로 줄인다. 줄인 만큼 오른쪽 표가
+        가져간다 — 표는 540px 를 원하는데 1280px 화면에서 515px 밖에 못 받아
+        '증감' 칸이 잘리고 있었다.
+      */}
+      <section style={{ flex: "1 1 330px", minWidth: 0, maxWidth: 380 }}>
         <Card style={{ padding: "18px 20px", marginBottom: 14 }}>
           {/* 대상 월 선택은 머리말(MonthPicker)로 옮겼다 — 모든 단계에서 바꿀 수 있어야 한다. */}
           <Label>인스턴스 수</Label>
