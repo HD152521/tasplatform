@@ -422,6 +422,107 @@ export async function listAudit(db: Db, limit = 100): Promise<AuditRow[]> {
   return rows.map((row) => ({ ...(row as object) })) as AuditRow[];
 }
 
+/** 기술문서 한 건. 저장 형태 그대로다(본문 섹션은 네 칸으로 편다). */
+export interface KbArticleRow {
+  article_id: number;
+  slug: string;
+  url: string;
+  title: string;
+  /** product-chip 원문. 줄바꿈으로 이어 둔다. */
+  products: string;
+  /** 우리 제품으로 판정된 이름. 빈 문자열이면 우리 환경과 무관하다. */
+  matched: string;
+  lastmod: string;
+  published: string;
+  modified: string;
+  issue: string;
+  environment: string;
+  cause: string;
+  resolution: string;
+}
+
+/**
+ * 이미 받아본 문서의 id → lastmod. 사이트맵과 대조해 새 문서·개정분만 골라낸다.
+ * 18만 건 전부가 아니라 받아본 것만 들어 있어 가볍다.
+ *
+ * matched 를 함께 싣는다. 우리 제품이 아니라고 이미 판정된 문서는 개정돼도
+ * 본문을 다시 받을 이유가 없다 — 이게 하루 300건을 몇십 건으로 줄이는 지점이다.
+ */
+export async function getKbSeen(db: Db): Promise<Map<number, KbSeen>> {
+  const rows = await db.all<{ article_id: number; lastmod: string; matched: string }>(
+    "SELECT article_id, lastmod, matched FROM kb_articles",
+  );
+  return new Map(rows.map((r) => [Number(r.article_id), { lastmod: r.lastmod, matched: r.matched }]));
+}
+
+/** 받아본 적 있는 문서의 상태. */
+export interface KbSeen {
+  readonly lastmod: string;
+  readonly matched: string;
+}
+
+/** 저장. 이미 있으면 갱신한다. 처음 보는 문서면 true. */
+export async function upsertKbArticle(db: Db, row: KbArticleRow): Promise<boolean> {
+  const before = await db.get("SELECT 1 AS x FROM kb_articles WHERE article_id = ?", [row.article_id]);
+  const now = isoNow();
+  await db.run(
+    `INSERT INTO kb_articles (
+       article_id, slug, url, title, products, matched, lastmod, published, modified,
+       issue, environment, cause, resolution, fetched_at, first_seen
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(article_id) DO UPDATE SET
+       slug = excluded.slug,
+       url = excluded.url,
+       title = excluded.title,
+       products = excluded.products,
+       matched = excluded.matched,
+       lastmod = excluded.lastmod,
+       published = excluded.published,
+       modified = excluded.modified,
+       issue = excluded.issue,
+       environment = excluded.environment,
+       cause = excluded.cause,
+       resolution = excluded.resolution,
+       fetched_at = excluded.fetched_at,
+       -- 문서가 개정됐으면 기존 판정을 지운다. 내용이 바뀌었는데 예전 판정을 들고 있으면 안 된다.
+       verdict = CASE WHEN kb_articles.lastmod <> excluded.lastmod THEN '' ELSE kb_articles.verdict END,
+       verdict_why = CASE WHEN kb_articles.lastmod <> excluded.lastmod THEN '' ELSE kb_articles.verdict_why END`,
+    [
+      row.article_id, row.slug, row.url, row.title, row.products, row.matched,
+      row.lastmod, row.published, row.modified,
+      row.issue, row.environment, row.cause, row.resolution, now, now,
+    ],
+  );
+  return before === undefined;
+}
+
+/** 아직 환경 적합성 판정이 없는 우리 제품 문서. 최신 것부터. */
+export async function listKbUnjudged(db: Db, limit: number): Promise<KbArticleRow[]> {
+  const rows = await db.all(
+    `SELECT article_id, slug, url, title, products, matched, lastmod, published, modified,
+            issue, environment, cause, resolution
+       FROM kb_articles
+      WHERE matched <> '' AND verdict = ''
+      ORDER BY article_id DESC
+      LIMIT ?`,
+    [limit],
+  );
+  return rows.map((row) => ({ ...(row as object) })) as KbArticleRow[];
+}
+
+export async function setKbVerdict(
+  db: Db,
+  articleId: number,
+  verdict: string,
+  why: string,
+): Promise<void> {
+  await db.run(
+    "UPDATE kb_articles SET verdict = ?, verdict_why = ?, judged_at = ? WHERE article_id = ?",
+    [verdict, why, isoNow(), articleId],
+  );
+}
+
+
 /** 케이스 대화 번역 한 건. */
 export interface TranslationRow {
   scope: string;

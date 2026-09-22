@@ -25,11 +25,11 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   const signedIn = session.exists && !session.expired;
 
   // DB가 아직 없어도 화면은 떠야 하므로 실패하면 0으로 둔다.
-  let counts = { open: 0, closed: 0, unread: 0, cves: 0, criticalCves: 0 };
+  let counts = { open: 0, closed: 0, unread: 0, cves: 0, criticalCves: 0, kb: 0, kbMatch: 0 };
   try {
     counts = await countsForNav();
   } catch {
-    counts = { open: 0, closed: 0, unread: 0, cves: 0, criticalCves: 0 };
+    counts = { open: 0, closed: 0, unread: 0, cves: 0, criticalCves: 0, kb: 0, kbMatch: 0 };
   }
 
   return (

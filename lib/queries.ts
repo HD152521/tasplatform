@@ -252,6 +252,7 @@ export function listAttachments(requestId: number, dbFile?: string): Promise<Att
 /** 사이드바에 쓰는 건수. 매 페이지 렌더마다 호출되므로 가볍게 센다. */
 export function countsForNav(): Promise<{
   open: number; closed: number; unread: number; cves: number; criticalCves: number;
+  kb: number; kbMatch: number;
 }> {
   return withDb(async (db) => {
     const rows = (await db.all(
@@ -277,7 +278,13 @@ export function countsForNav(): Promise<{
     const cveRows = (await db.all("SELECT severity FROM cves")) as Array<{ severity: string }>;
     const criticalCves = cveRows.filter((r) => r.severity === "CRITICAL").length;
 
-    return { open, closed, unread, cves: cveRows.length, criticalCves };
+    // 기술문서는 우리 제품으로 걸러진 것만 센다. 배지는 '관련 있음' 판정만 올린다.
+    const kbRows = (await db.all(
+      "SELECT verdict FROM kb_articles WHERE matched <> ''",
+    )) as Array<{ verdict: string }>;
+    const kbMatch = kbRows.filter((r) => r.verdict === "match").length;
+
+    return { open, closed, unread, cves: cveRows.length, criticalCves, kb: kbRows.length, kbMatch };
   });
 }
 
@@ -423,6 +430,52 @@ export function listProductComponents(): Promise<ProductComponent[]> {
     ),
   );
 }
+
+export interface KbViewRow {
+  article_id: number;
+  url: string;
+  title: string;
+  products: string;
+  matched: string;
+  lastmod: string;
+  published: string;
+  issue: string;
+  environment: string;
+  cause: string;
+  resolution: string;
+  verdict: string;
+  verdict_why: string;
+  dismissed: number;
+}
+
+/**
+ * 우리 제품으로 걸러진 기술문서. 최신 문서부터.
+ * 제품 태그가 안 걸린 문서는 화면에 올리지 않는다 — 받아본 기록으로만 남는다.
+ */
+export function listKbArticles(limit = 300): Promise<KbViewRow[]> {
+  return withDb(async (db) =>
+    toPlain<KbViewRow>(
+      await db.all(
+        `SELECT article_id, url, title, products, matched, lastmod, published,
+                issue, environment, cause, resolution, verdict, verdict_why, dismissed
+           FROM kb_articles
+          WHERE matched <> ''
+          ORDER BY article_id DESC
+          LIMIT ?`,
+        [limit],
+      ),
+    ),
+  );
+}
+
+/** 훑어본 총 건수. 화면에서 "N건 중 M건" 을 보여주는 데 쓴다. */
+export function countKbScanned(): Promise<number> {
+  return withDb(async (db) => {
+    const row = await db.get<{ c: number }>("SELECT COUNT(*) AS c FROM kb_articles");
+    return Number(row?.c ?? 0);
+  });
+}
+
 
 /**
  * 저장된 한국어 번역을 읽는다. `${scope}:${ref_id}` → 번역문.

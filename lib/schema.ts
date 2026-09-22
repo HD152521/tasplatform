@@ -129,6 +129,35 @@ CREATE TABLE IF NOT EXISTS cves (
 
 CREATE INDEX IF NOT EXISTS idx_cves_published ON cves(published DESC);
 
+-- Broadcom 기술문서(Knowledge Base).
+-- 사이트맵에서 목록을 받고, 신규 문서만 본문을 받아 제품 태그(product-chip)로 거른다.
+-- 제품 태그를 저장해 두면 그 뒤 개정분은 본문을 다시 안 받아도 우리 제품인지 판정된다.
+-- matched 가 비어 있으면 우리 제품이 아니다(받아본 기록으로만 남긴다).
+-- verdict 는 우리 환경 적합성 판정: '' 미판정 / match / maybe / no.
+CREATE TABLE IF NOT EXISTS kb_articles (
+  article_id  INTEGER PRIMARY KEY,
+  slug        TEXT NOT NULL DEFAULT '',
+  url         TEXT NOT NULL DEFAULT '',
+  title       TEXT NOT NULL DEFAULT '',
+  products    TEXT NOT NULL DEFAULT '',
+  matched     TEXT NOT NULL DEFAULT '',
+  lastmod     TEXT NOT NULL DEFAULT '',
+  published   TEXT NOT NULL DEFAULT '',
+  modified    TEXT NOT NULL DEFAULT '',
+  issue       TEXT NOT NULL DEFAULT '',
+  environment TEXT NOT NULL DEFAULT '',
+  cause       TEXT NOT NULL DEFAULT '',
+  resolution  TEXT NOT NULL DEFAULT '',
+  fetched_at  TEXT NOT NULL,
+  first_seen  TEXT NOT NULL,
+  verdict     TEXT NOT NULL DEFAULT '',
+  verdict_why TEXT NOT NULL DEFAULT '',
+  judged_at   TEXT NOT NULL DEFAULT '',
+  dismissed   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_kb_matched ON kb_articles(matched, article_id DESC);
+
 -- 케이스 첨부파일.
 -- 파일 실체는 Broadcom 쪽(supportftp)에 있고 우리는 목록과 링크만 갖는다.
 -- 204MB 짜리도 있어서 내려받아 보관하지 않는다.
