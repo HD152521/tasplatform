@@ -162,6 +162,7 @@ test(
             "create_sr", "get_case", "get_summary", "list_cases", "reply",
             // 정기점검 보고서
             "build_report", "get_instance_counts", "get_monthly_work",
+            "get_monthly_cases", "set_report_picks",
           ].sort(),
         );
 
