@@ -13,6 +13,8 @@ import { fetchClient } from "../collector/httpClient.ts";
 import { atlassianConfig } from "../lib/atlassian.ts";
 import { loadMonth, resolvePrevious, saveMonth } from "../lib/instanceStore.ts";
 import { fetchMonthlyWork } from "../lib/jira.ts";
+import { listCasesInMonth } from "../lib/queries.ts";
+import { loadPicks, savePicks } from "../lib/reportPicks.ts";
 import { sessionFileForTeam } from "../lib/config.ts";
 import { createCase } from "../lib/createCase.ts";
 import { hasTeamSession } from "../lib/requestAudit.ts";
@@ -52,5 +54,9 @@ export const reportDeps: ReportDeps = {
   loadMonth,
   saveMonth,
   resolvePrevious,
+  listCasesInMonth,
+  // 화면(app/report)과 같은 report_picks 테이블이다. 채팅에서 고른 것이 화면에 보인다.
+  loadPicks,
+  savePicks,
   appUrl: (process.env.SR_APP_URL ?? "").trim(),
 };

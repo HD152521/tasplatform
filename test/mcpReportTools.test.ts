@@ -11,10 +11,15 @@ import {
   buildReportHandler,
   downloadUrl,
   getInstanceCountsHandler,
+  getMonthlyCasesHandler,
   getMonthlyWorkHandler,
   hasAnyCount,
   monthKeyOf,
+  parseKeyList,
   readCounts,
+  readKind,
+  resolveSelection,
+  setReportPicksHandler,
   type ReportDeps,
 } from "../mcp/reportTools.ts";
 
@@ -35,10 +40,20 @@ function deps(over: Partial<ReportDeps> = {}): ReportDeps {
       confluenceSpace: "S",
       confluenceParentId: "1",
     }),
-    fetchMonthlyWork: async () => ({ rows: [{ title: "작업" }], skipped: [], scanned: 1 }) as never,
+    fetchMonthlyWork: async () => ({
+      rows: [{ key: "PA-1", title: "작업" }, { key: "PA-2", title: "작업2" }],
+      skipped: [], scanned: 2,
+    }) as never,
     loadMonth: async () => null,
     saveMonth: async (month) => ({ month }) as never,
     resolvePrevious: async () => ({ values: {} as never, fromMonth: "2026-07" }),
+    listCasesInMonth: async () => [
+      { request_id: 990001, request_id_formatted: "SR-990001", subject: "증상" },
+      { request_id: 990002, request_id_formatted: "SR-990002", subject: "증상2" },
+    ] as never,
+    // 기본값은 "SR 은 골라 뒀고 Jira 는 안 골랐다" — 실제로 가장 흔한 상태다.
+    loadPicks: async (_month, kind) => (kind === "sr" ? ["990001"] : []),
+    savePicks: async () => {},
     appUrl: "https://sr.example.com",
     ...over,
   };
@@ -198,4 +213,149 @@ test("도구는 보고서를 만들지 않고 주소만 돌려준다", async () 
   const got = await buildReportHandler(deps(), { year: 2026, month: 8, ...NINE });
   assert.ok(got.ok);
   assert.match(got.note, /주소를 열면/);
+});
+
+/* ------------------------------------------------------------------ *
+ * 항목 고르기
+ * ------------------------------------------------------------------ */
+
+test("쉼표로 이은 key 목록을 쪼갠다", () => {
+  assert.deepEqual(parseKeyList("PA-101, PA-104"), ["PA-101", "PA-104"]);
+  // 줄바꿈으로 붙여 보내는 경우도 있다. 중복은 순서를 지키며 걷어낸다.
+  assert.deepEqual(parseKeyList("PA-1\nPA-2\nPA-1"), ["PA-1", "PA-2"]);
+  assert.deepEqual(parseKeyList(""), []);
+  assert.deepEqual(parseKeyList(undefined), []);
+});
+
+test("kind 는 sr 과 jira 만 받는다", () => {
+  assert.equal(readKind("sr"), "sr");
+  assert.equal(readKind("jira"), "jira");
+  assert.equal(readKind("SR"), null);
+  assert.equal(readKind(undefined), null);
+});
+
+test("남길 것을 주면 그대로 고른다", () => {
+  const got = resolveSelection(["A", "B", "C"], { keys: "A, C" });
+  assert.ok("keys" in got);
+  assert.deepEqual(got.keys, ["A", "C"]);
+});
+
+test("뺄 것을 주면 나머지를 고른다", () => {
+  const got = resolveSelection(["A", "B", "C"], { excludeKeys: "B" });
+  assert.ok("keys" in got);
+  assert.deepEqual(got.keys, ["A", "C"]);
+});
+
+// 모델이 없는 키를 지어내도 조용히 저장하면 빌드에서 그 줄이 사라지는 것으로만 드러난다.
+test("목록에 없는 key 는 저장하지 않고 돌려준다", () => {
+  const got = resolveSelection(["A", "B"], { keys: "A, ZZ" });
+  assert.ok("keys" in got);
+  assert.deepEqual(got.keys, ["A"]);
+  assert.deepEqual(got.unknownKeys, ["ZZ"]);
+});
+
+test("둘 다 주거나 둘 다 안 주면 거부한다", () => {
+  assert.ok("message" in resolveSelection(["A"], {}));
+  assert.ok("message" in resolveSelection(["A"], { keys: "A", excludeKeys: "A" }));
+});
+
+// 빈 선택은 "하나도 안 넣는다" 가 아니라 "선택 없음" 으로 읽힌다 — Jira 는 정반대로
+// 전부 들어가고 SR 은 빌드가 실패한다. 어느 쪽도 사용자가 기대한 결과가 아니다.
+test("전부 빼는 것은 거부한다", () => {
+  const got = resolveSelection(["A", "B"], { excludeKeys: "A, B" });
+  assert.ok("message" in got);
+  assert.match(got.message, /최소 한 건/);
+});
+
+test("아는 key 가 하나도 없으면 거부한다", () => {
+  const got = resolveSelection(["A"], { keys: "ZZ" });
+  assert.ok("message" in got);
+  assert.match(got.message, /하나도 없습니다/);
+});
+
+/* ------------------------------------------------------------------ *
+ * get_monthly_cases · set_report_picks
+ * ------------------------------------------------------------------ */
+
+test("SR 후보에 번호와 key 를 함께 싣는다", async () => {
+  const got = await getMonthlyCasesHandler(deps(), { year: 2026, month: 8 });
+  assert.ok(got.ok);
+  assert.deepEqual(got.cases[0], {
+    no: 1, key: "990001", label: "SR-990001", openedOn: undefined,
+    subject: "증상", status: undefined, product: undefined, party: undefined,
+  });
+  assert.deepEqual(got.picked, ["990001"]);
+});
+
+test("작업 목록에도 번호와 현재 선택을 싣는다", async () => {
+  const got = await getMonthlyWorkHandler(deps(), { year: 2026, month: 8 });
+  assert.ok(got.ok);
+  assert.deepEqual(got.rows[0], { no: 1, key: "PA-1", title: "작업" });
+  // 선택이 없으면 전부 들어간다 — 화면의 기본값과 같다.
+  assert.deepEqual(got.picked, []);
+  assert.match(got.pickedNote, /전부 들어갑니다/);
+});
+
+test("고른 것을 화면과 같은 곳에 저장한다", async () => {
+  let wrote: { month: string; kind: string; refs: readonly string[] } | null = null;
+  const got = await setReportPicksHandler(
+    deps({ savePicks: async (month, kind, refs) => { wrote = { month, kind, refs }; } }),
+    { year: 2026, month: 8, kind: "jira", excludeKeys: "PA-2" },
+  );
+  assert.ok(got.ok);
+  assert.deepEqual(wrote, { month: "2026-08", kind: "jira", refs: ["PA-1"] });
+  assert.equal(got.saved, 1);
+  assert.equal(got.available, 2);
+});
+
+test("SR 도 같은 도구로 고른다", async () => {
+  let refs: readonly string[] = [];
+  const got = await setReportPicksHandler(
+    deps({ savePicks: async (_m, _k, r) => { refs = r; } }),
+    { year: 2026, month: 8, kind: "sr", keys: "990002" },
+  );
+  assert.ok(got.ok);
+  assert.deepEqual(refs, ["990002"]);
+});
+
+test("kind 가 없거나 이상하면 거부한다", async () => {
+  const got = await setReportPicksHandler(deps(), { year: 2026, month: 8, keys: "PA-1" });
+  assert.ok(!got.ok);
+  assert.match(got.message, /kind/);
+});
+
+test("저장 실패로 이어질 선택은 쓰지 않는다", async () => {
+  let wrote = false;
+  const got = await setReportPicksHandler(
+    deps({ savePicks: async () => { wrote = true; } }),
+    { year: 2026, month: 8, kind: "jira", excludeKeys: "PA-1, PA-2" },
+  );
+  assert.ok(!got.ok);
+  assert.ok(!wrote, "전부 빼는 선택을 저장하면 안 된다");
+});
+
+/* ------------------------------------------------------------------ *
+ * SR 미선택 방어
+ * ------------------------------------------------------------------ */
+
+// 여기서 막지 않으면 주소를 받아 열었을 때에야 502 로 드러난다 —
+// 챗봇은 이미 "다 됐습니다" 라고 말한 뒤다.
+test("SR 을 안 골랐으면 주소를 주지 않고 무엇을 해야 할지 알려 준다", async () => {
+  const got = await buildReportHandler(
+    deps({ loadPicks: async () => [] }),
+    { year: 2026, month: 8, ...NINE },
+  );
+  assert.ok(!got.ok);
+  assert.match(got.message, /set_report_picks/);
+  assert.match(got.message, /인스턴스 수치는 저장/);
+});
+
+test("선택 건수를 함께 돌려준다", async () => {
+  const got = await buildReportHandler(
+    deps({ loadPicks: async (_m, kind) => (kind === "sr" ? ["990001", "990002"] : ["PA-1"]) }),
+    { year: 2026, month: 8, ...NINE },
+  );
+  assert.ok(got.ok);
+  assert.equal(got.srPicked, 2);
+  assert.equal(got.workPicked, 1);
 });
