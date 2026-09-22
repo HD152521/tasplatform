@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { ProductComponent } from "../../lib/queries.ts";
-import { COLOR, Card, RADIUS, controlStyle } from "../ui.tsx";
+import { COLOR, Card, MONO_STACK, RADIUS, controlStyle } from "../ui.tsx";
 
 /**
  * SR 작성 도우미.
@@ -82,6 +82,49 @@ export function DraftForm({ combos }: { combos: ProductComponent[] }) {
   const componentName = activeComponent?.componentName ?? "";
   const [stage, setStage] = useState<"write" | "confirm">("write");
   const [busy, setBusy] = useState(false);
+  // 한국어 원문. 등록되는 것은 d.content(영문)이고 이 값은 보내지 않는다.
+  const [korean, setKorean] = useState("");
+  const [composing, setComposing] = useState(false);
+  const [composeError, setComposeError] = useState("");
+  /** 원문에 없어 담당자가 채워야 할 것들. */
+  const [gaps, setGaps] = useState<string[]>([]);
+
+  /** 한국어를 영문 본문으로 정리한다. 원문은 그대로 두고 Content 만 채운다. */
+  async function compose(): Promise<void> {
+    setComposing(true);
+    setComposeError("");
+    try {
+      const response = await fetch("/api/draft/compose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: korean,
+          productName, componentName,
+          release: d.release, severity: d.severity,
+          // 이미 제목을 적어 뒀으면 그대로 둔다.
+          subject: d.subject,
+        }),
+      });
+      const data = (await response.json()) as {
+        ok?: boolean; message?: string; subject?: string; content?: string; missing?: string[];
+      };
+      if (data.ok !== true || typeof data.content !== "string") {
+        setComposeError(data.message ?? `정리에 실패했습니다 (HTTP ${response.status}).`);
+        return;
+      }
+      setD((prev) => ({
+        ...prev,
+        content: data.content ?? "",
+        // 제목은 비어 있을 때만 채운다. 담당자가 적어 둔 것을 덮지 않는다.
+        subject: prev.subject.trim() === "" ? (data.subject ?? "").slice(0, SUBJECT_LIMIT) : prev.subject,
+      }));
+      setGaps(data.missing ?? []);
+    } catch (e) {
+      setComposeError(e instanceof Error ? e.message : "정리 중 오류가 발생했습니다.");
+    } finally {
+      setComposing(false);
+    }
+  }
   const [error, setError] = useState("");
   const [created, setCreated] = useState<{ id: string; num: number } | null>(null);
   const router = useRouter();
@@ -245,12 +288,71 @@ export function DraftForm({ combos }: { combos: ProductComponent[] }) {
                  style={inputStyle} />
         </Field>
 
-        <Field label="Content" required
-               hint="배경과 질문을 함께 적으시면 됩니다. 질문에 번호를 붙이면 답변도 나뉘어 옵니다.">
-          <textarea value={d.content} onChange={set("content")} rows={14}
-                    placeholder={"Background\nTPCF 10.4로 업그레이드한 뒤 Tanzu Hub 연동을 검토 중입니다.\n\nQuestions\n1. OTel 활성화 시 VM당 추가 CPU/메모리 권고치가 있습니까?\n2. 리소스 증설이 필요합니까?"}
-                    style={{ ...inputStyle, lineHeight: 1.7 }} />
-        </Field>
+        {/*
+          왼쪽에 한국어로 적고 오른쪽 영문을 받는다. 등록되는 것은 **오른쪽** 이다.
+          한국어 원문은 지우지 않는다 — 다시 정리하거나 대조할 때 필요하다.
+          좁아지면 위아래로 접힌다(폼 칸이 원래 넓지 않다).
+        */}
+        <div style={{
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(258px, 1fr))", gap: 14,
+        }}>
+          <Field label="내용 (한국어)"
+                 hint="편하게 적으세요. 아래 버튼이 영문으로 정리합니다.">
+            <textarea
+              value={korean} onChange={(e) => setKorean(e.target.value)} rows={14}
+              placeholder={"TPCF 10.4로 올린 뒤 Tanzu Hub 연동을 검토 중입니다.\n\nOTel 켜면 VM당 CPU/메모리가 얼마나 더 드는지,\n증설이 필요한지 알고 싶습니다."}
+              style={textAreaStyle}
+            />
+          </Field>
+
+          <Field label="Content" required
+                 hint="실제로 등록되는 글입니다. 직접 고쳐도 됩니다.">
+            <textarea
+              value={d.content} onChange={set("content")} rows={14}
+              placeholder={"Hello Support Team,\n\n(왼쪽에 적고 '영문 정리'를 누르면 여기에 채워집니다)\n\nQuestions\n1. ...\n\nThanks,"}
+              style={{ ...textAreaStyle, fontFamily: MONO_STACK, fontSize: 12.5 }}
+            />
+          </Field>
+        </div>
+
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 2,
+        }}>
+          <button
+            type="button" onClick={() => void compose()}
+            disabled={composing || korean.trim() === ""}
+            style={{
+              ...inputStyle, width: "auto", padding: "8px 15px", fontSize: 13, fontWeight: 600,
+              cursor: composing || korean.trim() === "" ? "default" : "pointer",
+              background: korean.trim() === "" ? COLOR.ground : COLOR.accent,
+              color: korean.trim() === "" ? COLOR.faint : "#ffffff",
+              borderColor: korean.trim() === "" ? COLOR.field : COLOR.accent,
+            }}
+          >
+            {composing ? "정리하는 중…" : "영문 정리"}
+          </button>
+          {composeError !== "" && (
+            <span style={{ fontSize: 12, color: COLOR.waitUs }}>{composeError}</span>
+          )}
+          {composeError === "" && gaps.length === 0 && d.content !== "" && !composing && (
+            <span style={{ fontSize: 12, color: COLOR.muted }}>
+              정리했습니다. 내용을 확인하고 등록하세요.
+            </span>
+          )}
+        </div>
+
+        {/* 원문에 없어 Broadcom 이 되물을 법한 것들. 본문에는 (to be confirmed) 로 남아 있다. */}
+        {gaps.length > 0 && (
+          <div style={{
+            background: COLOR.warnBg, border: `1px solid #f0d69a`, borderRadius: 8,
+            padding: "11px 14px", fontSize: 12.5, color: COLOR.warn, lineHeight: 1.7,
+          }}>
+            <b>이 정보가 있으면 한 번에 끝날 확률이 올라갑니다</b>
+            <ul style={{ margin: "5px 0 0", paddingLeft: 18 }}>
+              {gaps.map((g) => <li key={g}>{g}</li>)}
+            </ul>
+          </div>
+        )}
 
       </Card>
 
@@ -399,6 +501,16 @@ const inputStyle: React.CSSProperties = {
   border: `1px solid ${COLOR.field}`, borderRadius: RADIUS.control,
   fontFamily: "inherit", boxSizing: "border-box", outline: "none", resize: "vertical",
   height: 38,
+};
+
+/**
+ * 여러 줄 입력칸.
+ *
+ * inputStyle 의 height:38 이 rows 를 눌러, 열네 줄짜리로 둔 칸이 한 줄로 찌그러져
+ * 있었다. 높이를 풀어 rows 가 먹게 한다.
+ */
+const textAreaStyle: React.CSSProperties = {
+  ...inputStyle, height: "auto", lineHeight: 1.7,
 };
 
 /** 한 줄에 두 칸. 각 칸이 같은 폭을 갖도록 flex-basis 0 으로 둔다. */
