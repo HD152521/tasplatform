@@ -54,13 +54,11 @@ export function InstanceForm({
   savedInput,
   previous,
   previousMonth,
-  savedMonths,
 }: {
   month: string;
   savedInput: InstanceInput | null;
   previous: PreviousMonth;
   previousMonth: string | null;
-  savedMonths: Array<{ month: string; savedAt: string }>;
 }) {
   const [input, setInput] = useState<InstanceInput>(savedInput ?? EMPTY);
   // 앞선 달이 저장돼 있으면(previousMonth !== null) 이 값은 읽기 전용이다.
@@ -115,31 +113,29 @@ export function InstanceForm({
 
   return (
     <div style={{ display: "flex", gap: 22, alignItems: "flex-start" }}>
+      {/*
+        number 입력의 증감 화살표를 숨긴다. 칸 오른쪽을 15px 남짓 먹어서 네 자리 수치가
+        눌려 보였다. 값은 여전히 숫자로만 받는다(type·inputMode 그대로).
+        인라인 스타일로는 가상요소를 못 건드려 style 요소로 둔다.
+      */}
+      <style>{`
+        .sr-count::-webkit-outer-spin-button,
+        .sr-count::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .sr-count { -moz-appearance: textfield; appearance: textfield; }
+      `}</style>
       {/* 왼쪽: 입력 */}
-      <section style={{ width: 322, flexShrink: 0 }}>
+      <section style={{ width: 368, flexShrink: 0 }}>
         <Card style={{ padding: "18px 20px", marginBottom: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-            <Label>대상 월</Label>
-            <select
-              value={month}
-              onChange={(e) => { window.location.href = `/report?month=${e.target.value}`; }}
-              style={{ ...controlStyle, padding: "6px 10px", fontSize: 13 }}
-            >
-              {[month, ...savedMonths.map((m) => m.month)]
-                .filter((m, i, all) => all.indexOf(m) === i)
-                .sort((a, b) => b.localeCompare(a))
-                .map((m) => (
-                  <option key={m} value={m}>{m.replace("-", "년 ")}월</option>
-                ))}
-            </select>
-          </div>
+          {/* 대상 월 선택은 머리말(MonthPicker)로 옮겼다 — 모든 단계에서 바꿀 수 있어야 한다. */}
+          <Label>인스턴스 수</Label>
 
           {/* 3 x 3 표. 칸을 넓게 두면 세로로 길어져 한눈에 안 들어온다. */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: "84px repeat(3, 1fr)",
+            gridTemplateColumns: "72px repeat(3, minmax(0, 1fr))",
             gap: "6px 8px",
             alignItems: "center",
+            marginTop: 12,
           }}>
             <span />
             {ENVS.map((e) => (
@@ -158,6 +154,7 @@ export function InstanceForm({
                 {ENVS.map((e) => (
                   <input
                     key={e.key}
+                    className="sr-count"
                     type="number" min={0} inputMode="numeric"
                     value={input[g.key][e.key] === 0 ? "" : input[g.key][e.key]}
                     onChange={(ev) => set(g.key, e.key, ev.target.value)}
@@ -197,6 +194,7 @@ export function InstanceForm({
                       {f.label}
                     </span>
                     <input
+                      className="sr-count"
                       type="number" min={0} inputMode="numeric"
                       value={prev[f.key] === 0 ? "" : prev[f.key]}
                       onChange={(ev) => setPrevField(f.key, ev.target.value)}
