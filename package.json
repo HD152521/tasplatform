@@ -19,6 +19,8 @@
     "capture": "node collector/capture.ts",
     "collect:cve": "node collector/collect-cves.ts",
     "translate:cve": "node collector/translate-cves.ts",
+    "collect:kb": "node collector/collect-kb.ts",
+    "judge:kb": "node collector/judge-kb.ts",
     "mcp": "node --conditions=react-server mcp/server.ts",
     "token": "node scripts/team-token.ts",
     "prewarm": "node collector/prewarm.ts"
