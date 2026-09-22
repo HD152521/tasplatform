@@ -314,4 +314,17 @@ CREATE TABLE IF NOT EXISTS app_state (
   value      TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL DEFAULT ''
 );
+
+-- 케이스 대화의 한국어 번역.
+-- scope 는 'thread'(스레드 한 건) 또는 'case_desc'(최초 등록 본문)이고 ref_id 는 그 id 다.
+-- 스레드는 한 번 오면 바뀌지 않으므로 한 번 번역하면 다시 부르지 않는다.
+CREATE TABLE IF NOT EXISTS text_translations (
+  scope      TEXT NOT NULL,
+  ref_id     INTEGER NOT NULL,
+  lang       TEXT NOT NULL,
+  text       TEXT NOT NULL DEFAULT '',
+  model      TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (scope, ref_id, lang)
+);
 `;

@@ -1,22 +1,28 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
+import { needsTranslation } from "../../../lib/caseTranslate.ts";
 import {
-  getCase, isClosedStatus, listAttachments, listThreads, markCaseRead,
+  getCase, isClosedStatus, listAttachments, listThreads, loadCaseTranslations, markCaseRead,
   type AttachmentViewRow,
 } from "../../../lib/queries.ts";
 import { Badge, COLOR, Card, MONO_STACK, RADIUS, formatStamp, statusColors } from "../../ui.tsx";
 import { ReplyBox } from "./ReplyBox.tsx";
+import { LangToggle } from "./LangToggle.tsx";
 import { SummaryPanel } from "./SummaryPanel.tsx";
 
 export const dynamic = "force-dynamic";
 
 export default async function CaseDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ lang?: string }>;
 }) {
   const { id } = await params;
+  // 기본은 원문이다. 원문이 정본이고 번역은 읽기를 돕는 보조다.
+  const lang = (await searchParams).lang === "ko" ? "ko" : "en";
   const requestId = Number(id);
   if (!Number.isFinite(requestId)) notFound();
 
@@ -35,6 +41,21 @@ export default async function CaseDetailPage({
     const key = doc.thread_id ?? 0;
     byThread.set(key, [...(byThread.get(key) ?? []), doc]);
   }
+
+  // 한국어로 볼 때만 저장된 번역을 싣는다. 없는 것은 원문 그대로 보인다.
+  const refs = [
+    { scope: "case_desc", refId: requestId },
+    ...threads.map((t) => ({ scope: "thread", refId: t.thread_id })),
+  ];
+  const translated = lang === "ko" ? await loadCaseTranslations(refs) : new Map<string, string>();
+  /** 한국어 화면에서 보여줄 글. 번역이 없으면 원문 그대로다. */
+  const shown = (scope: string, refId: number, original: string): string =>
+    translated.get(scope + ":" + refId) ?? original;
+  /** 아직 번역이 없어 원문으로 보이는 건수. */
+  const pending = lang !== "ko" ? 0 : refs.filter((r, i) => {
+    const original = i === 0 ? detail.description_text : (threads[i - 1]?.body_text ?? "");
+    return needsTranslation(original) && !translated.has(r.scope + ":" + r.refId);
+  }).length;
 
   const lastThread = threads[threads.length - 1];
   const waitingOnUs = lastThread !== undefined && lastThread.is_ours === 0;
@@ -74,6 +95,9 @@ export default async function CaseDetailPage({
               <span style={{ fontFamily: MONO_STACK }}>{`v${detail.case_version}`}</span>
             </>
           )}
+          <span style={{ marginLeft: "auto" }}>
+            <LangToggle requestId={detail.request_id} lang={lang} pending={pending} />
+          </span>
         </div>
       </header>
 
@@ -84,7 +108,7 @@ export default async function CaseDetailPage({
           {detail.description_text !== "" && (
             <Card style={{ padding: "18px 20px", marginBottom: 14 }}>
               <SpeakerRow ours label="최초 등록 내용" at={formatStamp(detail.created_on_ms)} />
-              <Body text={detail.description_text} />
+              <Body text={shown("case_desc", requestId, detail.description_text)} />
             </Card>
           )}
 
@@ -111,7 +135,7 @@ export default async function CaseDetailPage({
                   at={formatStamp(thread.res_date_ms)}
                   latest={latest}
                 />
-                <Body text={thread.body_text} />
+                <Body text={shown("thread", thread.thread_id, thread.body_text)} />
                 {docs.length > 0 && <Files docs={docs} />}
               </Card>
             );
