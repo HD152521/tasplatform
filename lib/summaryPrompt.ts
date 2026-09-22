@@ -309,7 +309,8 @@ export interface MetaValues {
  *
  * 그래서 모델에게 맡기지 않고 빈칸임을 드러낸다. 틀린 값이 조용히 실리는 것보다 낫다.
  */
-export const TARGET_PLACEHOLDER = "(입력 필요)";
+export { TARGET_PLACEHOLDER } from "./summaryTarget.ts";
+import { TARGET_PLACEHOLDER } from "./summaryTarget.ts";
 
 /**
  * meta 섹션 출력에서 두 값을 뽑는다.

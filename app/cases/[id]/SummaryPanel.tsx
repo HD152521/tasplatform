@@ -1,7 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { COLOR, Card } from "../../ui.tsx";
+import { useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import {
+  TARGET_CORPS,
+  TARGET_ENVS,
+  TARGET_PLACEHOLDER,
+  buildTargetLabel,
+} from "../../../lib/summaryTarget.ts";
+import { COLOR, Card, MONO_STACK } from "../../ui.tsx";
 
 type Kind = "confluence";
 
@@ -17,17 +24,40 @@ const KINDS: ReadonlyArray<{ id: Kind; label: string; note: string }> = [
   { id: "confluence", label: "Confluence 문서", note: "SR 현행화 양식" },
 ];
 
-// 대상 환경(선택). 고르면 표의 "대상 환경" 칸에 들어가고, 비우면 "(입력 필요)" 로 남는다.
-// 은행/중앙회는 본문만으로 자동 판별이 어려워 사람이 고르게 둔다.
-const TARGET_OPTIONS: readonly string[] = [
-  "은행 개발",
-  "은행 운영",
-  "중앙회 개발",
-  "중앙회 운영",
-  "은행/중앙회 개발",
-  "은행/중앙회 운영",
-  "은행/중앙회 개발·운영",
-];
+/** 태그 한 묶음. 앞에 무엇을 고르는 줄인지 적는다. */
+function TagGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 6,
+      padding: "4px 5px 4px 10px", borderRadius: 999, background: COLOR.ground,
+    }}>
+      <span style={{ fontSize: 11, color: COLOR.faint, whiteSpace: "nowrap" }}>{label}</span>
+      {children}
+    </span>
+  );
+}
+
+/** 고른 것을 켜고 끄는 토글. 하나 고를 때마다 대상 환경 표기가 바뀐다. */
+function Tag({
+  label, on, disabled, onClick,
+}: { label: string; on: boolean; disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button" onClick={onClick} disabled={disabled} aria-pressed={on}
+      style={{
+        padding: "4px 11px", fontSize: 12.5, fontFamily: "inherit",
+        fontWeight: on ? 600 : 400,
+        color: on ? "#ffffff" : COLOR.body,
+        background: on ? COLOR.accent : COLOR.surface,
+        border: `1px solid ${on ? COLOR.accent : COLOR.field}`,
+        borderRadius: 999, cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
 
 export function SummaryPanel({ requestId }: { requestId: number }) {
   const [kind, setKind] = useState<Kind | null>(null);
@@ -38,7 +68,19 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
   const [copied, setCopied] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState<{ url: string; created: boolean } | null>(null);
-  const [target, setTarget] = useState("");
+  // 법인과 환경을 따로 고른다. 둘 다 여러 개 고를 수 있다.
+  const [corps, setCorps] = useState<readonly string[]>([]);
+  const [envs, setEnvs] = useState<readonly string[]>([]);
+  const target = useMemo(() => buildTargetLabel(corps, envs), [corps, envs]);
+
+  /** 있으면 빼고 없으면 넣는다. 순서는 표기를 만들 때 선언 순서로 정리된다. */
+  const toggle = (
+    set: (next: readonly string[]) => void,
+    current: readonly string[],
+    value: string,
+  ): void => {
+    set(current.includes(value) ? current.filter((v) => v !== value) : [...current, value]);
+  };
 
   async function load(next: Kind, force = false): Promise<void> {
     setKind(next);
@@ -126,22 +168,60 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
         </div>
       </div>
 
-      <div style={{
-        display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
-        marginTop: 12, fontSize: 12.5, color: COLOR.muted,
-      }}>
-        <span>대상 환경 <span style={{ color: COLOR.faint }}>(선택)</span></span>
-        <select
-          value={target} onChange={(e) => setTarget(e.target.value)} disabled={busy}
-          style={{
-            padding: "5px 9px", fontSize: 12.5, fontFamily: "inherit",
-            border: `1px solid ${COLOR.line}`, borderRadius: 6, background: COLOR.surface,
-          }}
-        >
-          <option value="">(선택 안 함 · &quot;입력 필요&quot;로 둠)</option>
-          {TARGET_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <span style={{ color: COLOR.faint }}>고른 뒤 <b>다시 만들기</b>를 눌러야 표에 반영됩니다</span>
+      {/*
+        대상 환경. 법인과 환경을 따로, 여러 개 고를 수 있다.
+        예전엔 미리 조합해 둔 선택지 일곱 개짜리 select 였는데, 조합이 늘면 감당이 안 되고
+        DR·AWS 는 아예 고를 수가 없었다.
+      */}
+      <div style={{ marginTop: 14 }}>
+        <div style={{
+          display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap",
+          fontSize: 12.5, color: COLOR.muted, marginBottom: 8,
+        }}>
+          <span>대상 환경 <span style={{ color: COLOR.faint }}>(선택)</span></span>
+          <span style={{
+            fontFamily: MONO_STACK, fontSize: 12,
+            color: target === "" ? COLOR.faint : COLOR.ink,
+            fontWeight: target === "" ? 400 : 600,
+          }}>
+            {target === "" ? TARGET_PLACEHOLDER : target}
+          </span>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <TagGroup label="법인">
+            {TARGET_CORPS.map((c) => (
+              <Tag
+                key={c.id} label={c.label} on={corps.includes(c.id)} disabled={busy}
+                onClick={() => toggle(setCorps, corps, c.id)}
+              />
+            ))}
+          </TagGroup>
+          <TagGroup label="환경">
+            {TARGET_ENVS.map((e) => (
+              <Tag
+                key={e} label={e} on={envs.includes(e)} disabled={busy}
+                onClick={() => toggle(setEnvs, envs, e)}
+              />
+            ))}
+          </TagGroup>
+          {target !== "" && (
+            <button
+              type="button" disabled={busy}
+              onClick={() => { setCorps([]); setEnvs([]); }}
+              style={{
+                padding: 0, border: "none", background: "none", fontFamily: "inherit",
+                fontSize: 11.5, color: COLOR.faint, cursor: busy ? "default" : "pointer",
+              }}
+            >
+              지우기
+            </button>
+          )}
+        </div>
+
+        <p style={{ margin: "9px 0 0", fontSize: 11.5, color: COLOR.faint }}>
+          고른 뒤 <b>다시 만들기</b>를 눌러야 표에 반영됩니다. 안 고르면 {TARGET_PLACEHOLDER} 로 남습니다.
+        </p>
       </div>
 
       {error !== "" && (
