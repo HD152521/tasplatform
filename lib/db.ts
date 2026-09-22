@@ -521,3 +521,55 @@ export async function setKbVerdict(
     [verdict, why, isoNow(), articleId],
   );
 }
+
+
+/** 케이스 대화 번역 한 건. */
+export interface TranslationRow {
+  scope: string;
+  ref_id: number;
+  text: string;
+}
+
+/**
+ * 저장된 번역을 한꺼번에 읽는다. `${scope}:${ref_id}` → 번역문.
+ *
+ * 화면이 렌더될 때마다 부르므로 한 번의 쿼리로 끝낸다.
+ */
+export async function loadTranslations(
+  db: Db,
+  lang: string,
+  refs: ReadonlyArray<{ scope: string; refId: number }>,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (refs.length === 0) return out;
+  // scope 종류가 둘뿐이라 scope 별로 IN 절을 만든다.
+  const scopes = [...new Set(refs.map((r) => r.scope))];
+  for (const scope of scopes) {
+    const ids = refs.filter((r) => r.scope === scope).map((r) => r.refId);
+    const holes = ids.map(() => "?").join(",");
+    const rows = await db.all<{ ref_id: number; text: string }>(
+      `SELECT ref_id, text FROM text_translations
+        WHERE lang = ? AND scope = ? AND ref_id IN (${holes})`,
+      [lang, scope, ...ids],
+    );
+    for (const row of rows) out.set(`${scope}:${Number(row.ref_id)}`, row.text);
+  }
+  return out;
+}
+
+export async function saveTranslation(
+  db: Db,
+  lang: string,
+  scope: string,
+  refId: number,
+  text: string,
+  model: string,
+): Promise<void> {
+  await db.run(
+    `INSERT INTO text_translations (scope, ref_id, lang, text, model, created_at)
+     VALUES (?,?,?,?,?,?)
+     ON CONFLICT(scope, ref_id, lang) DO UPDATE SET
+       text = excluded.text, model = excluded.model, created_at = excluded.created_at`,
+    [scope, refId, lang, text, model, isoNow()],
+  );
+}

@@ -4,7 +4,8 @@
  * 뷰어는 포털에 절대 접속하지 않는다. 화면을 몇 번 새로고침하든
  * Broadcom 쪽 트래픽은 0이다.
  */
-import { openDb, type Db } from "./db.ts";
+import { TRANSLATE_LANG } from "./caseTranslate.ts";
+import { loadTranslations, openDb, type Db } from "./db.ts";
 
 export interface CaseListRow {
   request_id: number;
@@ -473,4 +474,15 @@ export function countKbScanned(): Promise<number> {
     const row = await db.get<{ c: number }>("SELECT COUNT(*) AS c FROM kb_articles");
     return Number(row?.c ?? 0);
   });
+}
+
+
+/**
+ * 저장된 한국어 번역을 읽는다. `${scope}:${ref_id}` → 번역문.
+ * 없는 건은 키가 없고, 화면은 원문을 그대로 쓴다.
+ */
+export function loadCaseTranslations(
+  refs: ReadonlyArray<{ scope: string; refId: number }>,
+): Promise<Map<string, string>> {
+  return withDb((db) => loadTranslations(db, TRANSLATE_LANG, refs));
 }

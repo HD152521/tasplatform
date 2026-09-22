@@ -32,7 +32,9 @@ import {
 import {
   buildReportHandler,
   getInstanceCountsHandler,
+  getMonthlyCasesHandler,
   getMonthlyWorkHandler,
+  setReportPicksHandler,
 } from "./reportTools.ts";
 import { reportDeps, summaryDeps, writeDeps } from "./serverDeps.ts";
 import { createSrHandler, replyHandler } from "./writeTools.ts";
@@ -205,13 +207,60 @@ function registerTools(server: McpServer): void {
       description:
         "정기점검 보고서의 '작업 진행 현황' 을 그 달 Jira 에서 만든다. " +
         "같은 작업 내역은 한 줄로 합쳐지며, 법인과 전산센터 중 한쪽만 여럿일 수 있다. " +
-        "보고서에서 빠진 이슈는 skipped 에 이유와 함께 담긴다.",
+        "보고서에서 빠진 이슈는 skipped 에 이유와 함께 담긴다. " +
+        "각 줄의 key 가 선택에 쓰는 값이고, no 는 사용자에게 보여 줄 번호다. " +
+        "picked 가 비어 있으면 전부 들어간다 — 뺄 것이 있으면 set_report_picks 를 쓴다.",
       inputSchema: { year: yearArg, month: monthArg },
     },
     async (args, extra) => {
       const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
       if (!auth.ok) return toolAuthError(auth);
       return toolJson(await getMonthlyWorkHandler(reportDeps, args));
+    },
+  );
+
+  // 고를 항목은 배열이 아니라 쉼표로 이은 문자열로 받는다. 이 파일의 다른 인자와 같은
+  // 이유다 — 붙는 쪽이 배열 스키마를 다룬다는 보장이 없다.
+  const keyListArg = (label: string) =>
+    z.string().optional().describe(label);
+
+  server.registerTool(
+    "get_monthly_cases",
+    {
+      description:
+        "정기점검 보고서에 넣을 SR 후보(그 달에 등록된 케이스)를 조회한다. " +
+        "각 줄의 key 가 선택에 쓰는 값이고, no 는 사용자에게 보여 줄 번호다. " +
+        "picked 는 지금 저장된 선택이다. **SR 은 고르지 않으면 보고서를 만들 수 없다.**",
+      inputSchema: { year: yearArg, month: monthArg },
+    },
+    async (args, extra) => {
+      const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
+      if (!auth.ok) return toolAuthError(auth);
+      return toolJson(await getMonthlyCasesHandler(reportDeps, args));
+    },
+  );
+
+  server.registerTool(
+    "set_report_picks",
+    {
+      description:
+        "보고서에 넣을 항목을 고른다. 화면의 2·3단계와 같은 곳에 저장되므로 " +
+        "채팅에서 고른 것이 화면에도 그대로 보인다. " +
+        "남길 것을 keys 에 주거나, 뺄 것을 excludeKeys 에 준다(둘 중 하나만). " +
+        "값은 목록 조회에서 받은 key 를 쉼표로 이어 준다 — 번호(no)가 아니다. " +
+        "목록에 없는 key 는 저장하지 않고 unknownKeys 로 돌려준다.",
+      inputSchema: {
+        year: yearArg,
+        month: monthArg,
+        kind: z.enum(["sr", "jira"]).describe('"sr" = SR 목록, "jira" = 작업 진행 현황'),
+        keys: keyListArg('남길 항목의 key 를 쉼표로 이어 준다 (예: "PA-101, PA-104")'),
+        excludeKeys: keyListArg('뺄 항목의 key 를 쉼표로 이어 준다 (예: "PA-112, PA-130")'),
+      },
+    },
+    async (args, extra) => {
+      const auth = await authenticateFromToolHeaders(extra.requestInfo?.headers);
+      if (!auth.ok) return toolAuthError(auth);
+      return toolJson(await setReportPicksHandler(reportDeps, args));
     },
   );
 
@@ -235,6 +284,7 @@ function registerTools(server: McpServer): void {
     {
       description:
         "정기점검 보고서를 받을 수 있는 다운로드 주소를 돌려준다. " +
+        "SR 을 먼저 골라 두어야 한다(set_report_picks). " +
         "인스턴스 수치 아홉 개를 함께 주면 저장한 뒤 주소를 준다. " +
         "안 주면 저장된 값을 쓰고, 그것도 없으면 무엇을 물어봐야 하는지 알려 준다. " +
         "전월값은 이전 달 저장분에서 자동으로 끌어온다. " +

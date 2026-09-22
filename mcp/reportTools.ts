@@ -26,6 +26,8 @@ import type { AtlassianConfig } from "../lib/atlassian.ts";
 import type { InstanceInput, PreviousMonth } from "../lib/instanceCount.ts";
 import type { SavedMonth } from "../lib/instanceStore.ts";
 import type { WorkResult } from "../lib/jira.ts";
+import type { MonthCaseRow } from "../lib/queries.ts";
+import type { PickKind } from "../lib/reportPicks.ts";
 
 export interface ReportDeps {
   /** null 이면 Atlassian 설정이 없다. */
@@ -34,6 +36,11 @@ export interface ReportDeps {
   loadMonth: (month: string) => Promise<SavedMonth | null>;
   saveMonth: (month: string, input: InstanceInput, previous: PreviousMonth) => Promise<SavedMonth>;
   resolvePrevious: (month: string) => Promise<{ values: PreviousMonth; fromMonth: string | null }>;
+  /** 그 달에 등록된 SR. 보고서 2단계의 후보다. */
+  listCasesInMonth: (month: string) => Promise<MonthCaseRow[]>;
+  /** 선택 조회·저장. 화면(app/report)과 **같은 report_picks 테이블**을 쓴다. */
+  loadPicks: (month: string, kind: PickKind) => Promise<string[]>;
+  savePicks: (month: string, kind: PickKind, refs: readonly string[]) => Promise<void>;
   /** 다운로드 주소의 앞부분. 보통 SR_APP_URL. */
   appUrl: string;
 }
@@ -109,6 +116,87 @@ export function downloadUrl(appUrl: string, month: string): string {
 }
 
 /* ------------------------------------------------------------------ *
+ * 항목 선택
+ * ------------------------------------------------------------------ */
+
+export function readKind(value: unknown): PickKind | null {
+  return value === "sr" || value === "jira" ? value : null;
+}
+
+/**
+ * "PA-101, PA-104" 를 목록으로 쪼갠다.
+ *
+ * 배열이 아니라 쉼표로 이은 문자열로 받는다. 이 파일의 다른 인자와 같은 이유다 —
+ * 붙는 쪽 클라이언트가 배열 스키마를 다룬다는 보장이 없다. 줄바꿈으로 붙여 보내는
+ * 경우도 있어 함께 받는다. 중복은 순서를 지키며 걷어낸다.
+ */
+export function parseKeyList(raw: unknown): string[] {
+  if (typeof raw !== "string") return [];
+  const seen = new Set<string>();
+  for (const part of raw.split(/[,\n]/)) {
+    const key = part.trim();
+    if (key !== "") seen.add(key);
+  }
+  return [...seen];
+}
+
+export interface SelectionArgs {
+  keys?: unknown;
+  excludeKeys?: unknown;
+}
+
+/**
+ * keys / excludeKeys 를 실제로 저장할 목록으로 푼다.
+ *
+ * 있는 것만 저장한다. 모델이 없는 키를 지어내도 조용히 저장하면 빌드에서 그 줄이
+ * 사라지는 것으로만 드러난다 — 그래서 모르는 키는 unknown 으로 돌려준다.
+ *
+ * 결과가 0건이면 거부한다. 빈 선택은 "하나도 안 넣는다" 가 아니라 **선택 없음**으로
+ * 읽힌다: lib/pptx.ts 는 Jira 선택이 비면 전부 넣고(정반대다), SR 선택이 비면
+ * 빌드를 실패시킨다. 어느 쪽도 사용자가 기대한 결과가 아니다.
+ */
+export function resolveSelection(
+  available: readonly string[],
+  args: SelectionArgs,
+): { keys: string[]; unknownKeys: string[] } | { message: string } {
+  const wanted = parseKeyList(args.keys);
+  const excluded = parseKeyList(args.excludeKeys);
+
+  if (wanted.length > 0 && excluded.length > 0) {
+    return { message: "keys 와 excludeKeys 중 하나만 주세요." };
+  }
+  if (wanted.length === 0 && excluded.length === 0) {
+    return {
+      message:
+        "무엇을 넣을지 알려 주세요. 남길 것을 keys 에, 뺄 것을 excludeKeys 에 " +
+        '쉼표로 이어 줍니다 (예: excludeKeys="PA-112, PA-130").',
+    };
+  }
+
+  const have = new Set(available);
+  if (wanted.length > 0) {
+    const keys = wanted.filter((k) => have.has(k));
+    const unknownKeys = wanted.filter((k) => !have.has(k));
+    if (keys.length === 0) {
+      return {
+        message:
+          `keys 가 이 달의 목록에 하나도 없습니다: ${unknownKeys.join(", ")}. ` +
+          "먼저 목록을 조회해 그 key 를 그대로 주세요.",
+      };
+    }
+    return { keys, unknownKeys };
+  }
+
+  const drop = new Set(excluded.filter((k) => have.has(k)));
+  const keys = available.filter((k) => !drop.has(k));
+  const unknownKeys = excluded.filter((k) => !have.has(k));
+  if (keys.length === 0) {
+    return { message: "전부 빼면 보고서에 넣을 항목이 없습니다. 최소 한 건은 남겨 주세요." };
+  }
+  return { keys, unknownKeys };
+}
+
+/* ------------------------------------------------------------------ *
  * 도구 핸들러
  * ------------------------------------------------------------------ */
 
@@ -116,7 +204,16 @@ export function downloadUrl(appUrl: string, month: string): string {
 export async function getMonthlyWorkHandler(
   deps: ReportDeps,
   args: MonthArgs,
-): Promise<ReportResult<{ month: string; rows: unknown[]; skipped: unknown[]; scanned: number }>> {
+): Promise<
+  ReportResult<{
+    month: string;
+    rows: unknown[];
+    skipped: unknown[];
+    scanned: number;
+    picked: string[];
+    pickedNote: string;
+  }>
+> {
   const parsed = monthKeyOf(args);
   if ("message" in parsed) return { ok: false, message: parsed.message };
 
@@ -127,14 +224,119 @@ export async function getMonthlyWorkHandler(
   }
 
   const result = await deps.fetchMonthlyWork(config, parsed.key);
+  const picked = await deps.loadPicks(parsed.key, "jira");
   return {
     ok: true,
     month: parsed.key,
     // 전산센터·법인은 합쳐지면 줄바꿈으로 이어져 있다(보고서가 한 칸에 문단을 나눠 쓴다).
-    rows: result.rows,
+    // no 는 사용자가 "3번" 이라고 말할 수 있게 붙이는 **이 응답 한정** 번호다.
+    // 저장은 반드시 key 로 한다 — 다음 조회에서 번호는 달라질 수 있다.
+    rows: result.rows.map((row, index) => ({ no: index + 1, ...row })),
     // 보고서에서 빠진 이슈와 이유. 왜 안 보이는지 묻는 일이 잦다.
     skipped: result.skipped,
     scanned: result.scanned,
+    // 지금 저장된 선택. 비어 있으면 전부 들어간다(화면의 기본값과 같다).
+    picked,
+    pickedNote: picked.length === 0
+      ? "저장된 선택이 없습니다. 이대로 만들면 전부 들어갑니다."
+      : `${picked.length}건이 선택돼 있습니다.`,
+  };
+}
+
+/**
+ * 그 달에 등록된 SR 목록. 보고서 2단계의 후보다.
+ *
+ * Jira 와 달리 **선택이 비면 빌드가 실패한다**(lib/pptx.ts). 그래서 여기서는
+ * 고르라고 분명히 말해 준다.
+ */
+export async function getMonthlyCasesHandler(
+  deps: ReportDeps,
+  args: MonthArgs,
+): Promise<ReportResult<{ month: string; cases: unknown[]; picked: string[]; pickedNote: string }>> {
+  const parsed = monthKeyOf(args);
+  if ("message" in parsed) return { ok: false, message: parsed.message };
+
+  const cases = await deps.listCasesInMonth(parsed.key);
+  const picked = await deps.loadPicks(parsed.key, "sr");
+  return {
+    ok: true,
+    month: parsed.key,
+    cases: cases.map((c, index) => ({
+      no: index + 1,
+      // 저장은 이 key(케이스 번호 문자열)로 한다. 화면도 같은 값을 쓴다.
+      key: String(c.request_id),
+      label: c.request_id_formatted,
+      openedOn: c.created_on,
+      subject: c.subject,
+      status: c.status,
+      product: c.category,
+      party: c.party_name,
+    })),
+    picked,
+    pickedNote: picked.length === 0
+      ? "아직 고른 SR 이 없습니다. set_report_picks 로 골라야 보고서를 만들 수 있습니다."
+      : `${picked.length}건이 선택돼 있습니다.`,
+  };
+}
+
+/**
+ * 보고서에 넣을 항목을 고른다. 화면의 2·3단계와 같은 곳에 저장한다.
+ *
+ * 채팅에서 고른 것이 화면에 그대로 보이고 반대도 된다 — 같은 report_picks 테이블에
+ * 같은 key 를 넣기 때문이다.
+ */
+export async function setReportPicksHandler(
+  deps: ReportDeps,
+  args: MonthArgs & SelectionArgs & { kind?: unknown },
+): Promise<
+  ReportResult<{
+    month: string;
+    kind: PickKind;
+    saved: number;
+    keys: string[];
+    unknownKeys: string[];
+    available: number;
+  }>
+> {
+  const parsed = monthKeyOf(args);
+  if ("message" in parsed) return { ok: false, message: parsed.message };
+  const month = parsed.key;
+
+  const kind = readKind(args.kind);
+  if (kind === null) {
+    return { ok: false, message: 'kind 는 "sr"(SR 목록) 또는 "jira"(작업 진행 현황) 입니다.' };
+  }
+
+  // 무엇을 고를 수 있는지 먼저 알아야 없는 키를 걸러낼 수 있다.
+  let available: string[];
+  if (kind === "sr") {
+    available = (await deps.listCasesInMonth(month)).map((c) => String(c.request_id));
+  } else {
+    const config = deps.atlassianConfig();
+    if (config === null) return { ok: false, message: "Atlassian 설정이 없습니다." };
+    if (config.jiraProject === "") {
+      return { ok: false, message: "JIRA_PROJECT 가 설정되지 않았습니다." };
+    }
+    available = (await deps.fetchMonthlyWork(config, month)).rows.map((r) => r.key);
+  }
+
+  if (available.length === 0) {
+    return { ok: false, message: `${month} 에는 고를 수 있는 항목이 없습니다.` };
+  }
+
+  const resolved = resolveSelection(available, args);
+  if ("message" in resolved) return { ok: false, message: resolved.message };
+
+  await deps.savePicks(month, kind, resolved.keys);
+  return {
+    ok: true,
+    month,
+    kind,
+    saved: resolved.keys.length,
+    keys: resolved.keys,
+    // 모르는 키는 저장하지 않았다. 챗봇이 사용자에게 되물을 수 있게 돌려준다.
+    unknownKeys: resolved.unknownKeys,
+    available: available.length,
   };
 }
 
@@ -168,6 +370,8 @@ export async function buildReportHandler(
     url: string;
     saved: SavedMonth | null;
     previousFrom: string | null;
+    srPicked: number;
+    workPicked: number;
     note: string;
   }>
 > {
@@ -202,14 +406,32 @@ export async function buildReportHandler(
     }
   }
 
+  // SR 선택이 비면 빌드가 실패한다(lib/pptx.ts). 여기서 막지 않으면 주소를 받아
+  // 열었을 때에야 502 로 드러난다 — 챗봇은 이미 "다 됐습니다" 라고 말한 뒤다.
+  const srPicked = await deps.loadPicks(month, "sr");
+  if (srPicked.length === 0) {
+    return {
+      ok: false,
+      message:
+        `${month} 에 고른 SR 이 없어 보고서를 만들 수 없습니다. ` +
+        "get_monthly_cases 로 후보를 보여 주고, set_report_picks(kind=\"sr\") 로 고른 뒤 다시 불러 주세요." +
+        (saved !== null ? " (인스턴스 수치는 저장해 두었습니다.)" : ""),
+    };
+  }
+
+  const workPicked = await deps.loadPicks(month, "jira");
   return {
     ok: true,
     month,
     url: downloadUrl(deps.appUrl, month),
     saved,
     previousFrom,
+    srPicked: srPicked.length,
+    // 0 이면 그 달 작업이 **전부** 들어간다. 빼고 싶은 것이 있으면 set_report_picks 를 쓴다.
+    workPicked: workPicked.length,
     note:
       "이 주소를 열면 보고서가 만들어져 내려받아집니다. " +
-      "SR 건수만큼 AI 를 부르므로 몇 분 걸릴 수 있습니다.",
+      "SR 건수만큼 AI 를 부르므로 몇 분 걸릴 수 있습니다." +
+      (workPicked.length === 0 ? " 작업 진행 현황은 선택이 없어 전부 들어갑니다." : ""),
   };
 }

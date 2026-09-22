@@ -107,6 +107,10 @@ export const controlStyle: CSSProperties = {
   borderRadius: RADIUS.control,
   cursor: "pointer",
   fontFamily: "inherit",
+  // 이게 없으면 width:100% 인 칸이 여백+테두리만큼(가로 22px) 더 넓어져 옆 칸을 덮는다.
+  // 전역 CSS 리셋이 없어서 브라우저 기본값(content-box)이 그대로 먹는다.
+  // 앱의 다른 폼들은 각자 이 줄을 따로 들고 있었다 — 여기 한 번만 둔다.
+  boxSizing: "border-box",
 };
 
 /**
