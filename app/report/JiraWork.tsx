@@ -153,7 +153,10 @@ export function JiraWork({ month, initial }: { month: string; initial: string[] 
       {rows !== null && rows.length > 0 && (
         <>
           <div style={{ overflowX: "auto", marginTop: 12 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <table style={{
+              // 여덟 칸이라 좁아지면 글자가 옆 칸을 침범한다. 줄이는 대신 가로로 스크롤한다.
+              width: "100%", minWidth: 860, borderCollapse: "collapse", fontSize: 12.5,
+            }}>
               <thead>
                 <tr>
                   <th style={{ ...th, width: 34 }} />

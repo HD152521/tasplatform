@@ -112,7 +112,7 @@ export function InstanceForm({
   }
 
   return (
-    <div style={{ display: "flex", gap: 22, alignItems: "flex-start" }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 22, alignItems: "flex-start" }}>
       {/*
         number 입력의 증감 화살표를 숨긴다. 칸 오른쪽을 15px 남짓 먹어서 네 자리 수치가
         눌려 보였다. 값은 여전히 숫자로만 받는다(type·inputMode 그대로).
@@ -124,7 +124,7 @@ export function InstanceForm({
         .sr-count { -moz-appearance: textfield; appearance: textfield; }
       `}</style>
       {/* 왼쪽: 입력 */}
-      <section style={{ width: 368, flexShrink: 0 }}>
+      <section style={{ flex: "1 1 368px", minWidth: 0, maxWidth: 480 }}>
         <Card style={{ padding: "18px 20px", marginBottom: 14 }}>
           {/* 대상 월 선택은 머리말(MonthPicker)로 옮겼다 — 모든 단계에서 바꿀 수 있어야 한다. */}
           <Label>인스턴스 수</Label>
@@ -138,9 +138,13 @@ export function InstanceForm({
             marginTop: 12,
           }}>
             <span />
+            {/*
+              값이 오른쪽 정렬이라 제목도 오른쪽에 붙여야 숫자 위에 온다.
+              입력칸의 오른쪽 여백(10px)에 테두리 1px 을 더해 끝선을 맞춘다.
+            */}
             {ENVS.map((e) => (
               <span key={e.key} style={{
-                fontSize: 11, color: COLOR.faint, textAlign: "center",
+                fontSize: 11, color: COLOR.faint, textAlign: "right", paddingRight: 11,
               }}>
                 {e.label}
               </span>
@@ -160,7 +164,8 @@ export function InstanceForm({
                     onChange={(ev) => set(g.key, e.key, ev.target.value)}
                     placeholder="0"
                     style={{
-                      ...controlStyle, width: "100%", padding: "7px 8px",
+                      // 아래 전월 입력칸과 같은 여백이어야 두 표의 숫자 끝선이 맞는다.
+                      ...controlStyle, width: "100%", padding: "7px 10px",
                       fontFamily: MONO_STACK, fontSize: 12.5, textAlign: "right",
                     }}
                   />
@@ -173,7 +178,8 @@ export function InstanceForm({
           </p>
         </Card>
 
-        <Card style={{ padding: "16px 18px", marginBottom: 14 }}>
+        {/* 위 카드와 같은 패딩이어야 두 카드의 안쪽 선이 맞는다. */}
+        <Card style={{ padding: "18px 20px", marginBottom: 14 }}>
           <Label>전월 인스턴스</Label>
 
           {manualPrev ? (
@@ -251,11 +257,13 @@ export function InstanceForm({
       </section>
 
       {/* 오른쪽: 계산 결과 — 슬라이드 1 과 같은 구조 */}
-      <section style={{ flex: 1, minWidth: 0 }}>
+      <section style={{ flex: "999 1 460px", minWidth: 0 }}>
         <Card style={{ padding: "18px 20px", marginBottom: 14 }}>
           <Label>01 클라우드 운영 현황</Label>
           <div style={{ overflowX: "auto", marginTop: 12 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <table style={{
+              width: "100%", minWidth: 540, borderCollapse: "collapse", fontSize: 12.5,
+            }}>
               <thead>
                 <tr>
                   {["법인", "운영구분", "클러스터", "호스트", "Container (AI)", "비고", "증감"]
@@ -295,7 +303,7 @@ export function InstanceForm({
 
         <Card style={{ padding: "18px 20px" }}>
           <Label>실 운영 현황</Label>
-          <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
             <Figure label="은행" value={result.actual.bank} />
             <Figure label="중앙회" value={result.actual.central} />
             <Figure label="합계" value={result.actual.total} strong />
@@ -328,7 +336,7 @@ function Label({ children }: { children: React.ReactNode }) {
 function Figure({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) {
   return (
     <div style={{
-      flex: 1, padding: "13px 15px", borderRadius: RADIUS.control,
+      flex: "1 1 96px", minWidth: 0, padding: "13px 15px", borderRadius: RADIUS.control,
       background: strong ? COLOR.accent : COLOR.ground,
       color: strong ? "#ffffff" : COLOR.ink,
     }}>

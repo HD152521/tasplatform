@@ -126,7 +126,10 @@ export function SrPicker({
         </div>
 
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <table style={{
+            // 좁아지면 글자가 옆 칸을 침범한다. 줄이는 대신 가로로 스크롤한다.
+            width: "100%", minWidth: 700, borderCollapse: "collapse", fontSize: 12.5,
+          }}>
             <thead>
               <tr>
                 <th style={{ ...th, width: 34 }} />

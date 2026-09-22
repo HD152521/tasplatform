@@ -22,7 +22,7 @@ export function Stepper({
   counts: { sr: number; jira: number };
 }) {
   return (
-    <nav style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+    <nav style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
       {STEPS.map((s) => {
         const active = s.n === step;
         const done = s.n < step;
@@ -32,7 +32,8 @@ export function Stepper({
             key={s.n}
             href={`/report?month=${month}&step=${s.n}`}
             style={{
-              flex: 1, display: "flex", alignItems: "center", gap: 11,
+              flex: "1 1 148px", minWidth: 0,
+              display: "flex", alignItems: "center", gap: 11,
               padding: "12px 15px", textDecoration: "none",
               borderRadius: RADIUS.card,
               background: active ? COLOR.accent : COLOR.surface,
