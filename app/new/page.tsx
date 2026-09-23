@@ -1,4 +1,4 @@
-import { PRODUCT_CATALOG } from "../../lib/productCatalog.ts";
+import { mergeCatalog } from "../../lib/productCatalog.ts";
 import { listProductComponents, type ProductComponent } from "../../lib/queries.ts";
 import { COLOR, Notice } from "../ui.tsx";
 import { DraftForm } from "./DraftForm.tsx";
@@ -16,10 +16,10 @@ export default async function NewCasePage() {
     loadError = error instanceof Error ? error.message : String(error);
   }
 
-  // 수집된 케이스에서 못 뽑으면 내장 목록으로 채운다. 드롭다운이 비면 SR 을 아예 못 쓴다.
-  // used 는 전부 0 이라 정렬이 안정적이고, 목록에 적어 둔 순서(많이 쓴 순)가 유지된다.
-  const fromCatalog = combos.length === 0;
-  if (fromCatalog) combos = PRODUCT_CATALOG.map((c) => ({ ...c, used: 0 }));
+  // 수집분에 내장 목록을 **더한다**. 예전처럼 "비었을 때만" 쓰면, 쓸모없는 조합이
+  // 몇 개만 있어도 내장 목록이 안 켜져 정작 필요한 제품을 못 골랐다.
+  const fromDbCount = combos.length;
+  combos = mergeCatalog(combos);
 
 
   return (
@@ -39,7 +39,7 @@ export default async function NewCasePage() {
         </Notice>
       )}
 
-      <DraftForm combos={combos} fromCatalog={fromCatalog} />
+      <DraftForm combos={combos} fromCatalog={fromDbCount === 0} />
     </>
   );
 }
