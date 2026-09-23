@@ -77,3 +77,24 @@ export const PRODUCT_CATALOG: readonly CatalogEntry[] = [
   { productId: 4508, productName: "VMware Tanzu Application Platform", componentId: 10185, componentName: "Observability" },
   { productId: 4645, productName: "VMware Tanzu Data Services", componentId: 9455, componentName: "VMware Tanzu RabbitMQ" },
 ];
+
+/**
+ * DB 에서 뽑은 조합에 내장 목록을 더한다.
+ *
+ * 예전에는 "DB 가 비면 내장 목록" 이었는데, 운영 DB 에 쓸모없는 조합이 몇 개라도
+ * 있으면(Support Portal, Product Entitlements 같은 것) 내장 목록이 아예 안 켜지고
+ * 그 몇 개만 떴다. 정작 필요한 Tanzu 제품은 고를 수가 없었다.
+ *
+ * 그래서 둘을 합친다. 같은 조합은 DB 쪽을 남긴다 — 실제로 쓴 횟수(used)가 있어야
+ * 많이 쓰는 것이 위로 온다. 내장분은 used 0 이라 그 뒤에 붙는다.
+ */
+export function mergeCatalog<T extends CatalogEntry & { used: number }>(
+  fromDb: readonly T[],
+): Array<CatalogEntry & { used: number }> {
+  const key = (c: CatalogEntry): string => `${c.productId}:${c.componentId}`;
+  const seen = new Set(fromDb.map(key));
+  return [
+    ...fromDb,
+    ...PRODUCT_CATALOG.filter((c) => !seen.has(key(c))).map((c) => ({ ...c, used: 0 })),
+  ];
+}
