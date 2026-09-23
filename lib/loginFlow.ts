@@ -19,6 +19,7 @@ import { DEFAULT_TEAM_ID, NAV_TIMEOUT_MS, PORTAL_HOME, deviceFileForTeam, sessio
 import { loginContextOptions, saveDeviceState, type StorageState } from "./browserIdentity.ts";
 import { launchBrowser } from "../collector/session.ts";
 import { LOGIN_SEL, describeLoginPage, findLoginRoot } from "../collector/loginFields.ts";
+import { warmAttachmentHost } from "./attachmentWarmup.ts";
 
 const FLOW_TTL_MS = 10 * 60 * 1000;
 const STEP_TIMEOUT_MS = 60_000;
@@ -252,6 +253,9 @@ async function settle(page: Page): Promise<"done" | "otp"> {
 async function saveSession(context: BrowserContext, teamId: string): Promise<void> {
   const path = resolve(sessionFileForTeam(teamId));
   mkdirSync(dirname(path), { recursive: true });
+  // 저장 전에 첨부 저장소에 들러 그쪽 쿠키까지 받아 둔다.
+  const warmed = await warmAttachmentHost(context);
+  if (!warmed) console.error("[login] 첨부 저장소 예열 실패 — 첨부는 원본으로 넘어갑니다");
   const state = await context.storageState({ path });
   // 기기 신뢰 쿠키를 따로 남겨 다음 로그인이 OTP 를 건너뛰게 한다.
   saveDeviceState(state as StorageState, deviceFileForTeam(teamId));
