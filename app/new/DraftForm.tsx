@@ -4,24 +4,22 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { ProductComponent } from "../../lib/queries.ts";
 import { COLOR, Card, RADIUS, controlStyle } from "../ui.tsx";
-import { Composer } from "./Composer.tsx";
+import { Composer, type ComposeMode } from "./Composer.tsx";
+import { SubmitBar } from "./SubmitBar.tsx";
 
 /**
- * SR 작성 도우미.
+ * SR 작성.
  *
- * 포털의 실제 작성 폼과 같은 필드·같은 순서. 여기서 채운 뒤 포털에 옮겨적는다.
- * 글자수 제한은 포털이 표시하는 실제 값이다.
+ * 포털의 실제 작성 폼과 같은 필드·같은 순서다. 글자수 제한도 포털이 표시하는 실제 값이다.
+ * **여기서 바로 등록된다** — /api/create 가 포털에 보낸다. 손으로 옮겨적던 시절의
+ * "포털에 옮겨적을 값" 사이드바는 걷어냈다(app/new/SubmitBar.tsx 머리말 참고).
  *
- * Company / Group Site Id / Issue Type 은 매번 같은 값이라 고정으로 둔다.
- * (실측: 케이스 37075952 의 partyName, partySiteNumber, flex 의 Issue Type)
+ * 화면은 세 덩어리다: 케이스 속성 → 내용(Composer) → 등록 바(SubmitBar).
  */
 
 /**
- * 매번 같은 값. 그리고 지금은 바꿀 수 없는 값.
- *
- * Product / Component 는 payload 에 ID 로 들어가는데(subCategoryId, compId)
- * 그 선택지 목록을 아직 확보하지 못했다. 고를 수 있는 것처럼 보여주면
- * 고른 것과 다른 값이 등록되므로, 템플릿 값 그대로 고정해서 보여준다.
+ * 매번 같은 값이라 입력받지 않고 그대로 쓴다.
+ * (실측: 케이스 37075952 의 partyName, partySiteNumber, flex 의 Issue Type)
  */
 const FIXED = {
   company: "NONGHYUP BANK (NH BANK)",
@@ -90,23 +88,28 @@ export function DraftForm({
   const componentName = activeComponent?.componentName ?? "";
   const [stage, setStage] = useState<"write" | "confirm">("write");
   const [busy, setBusy] = useState(false);
-  // 한국어 원문. 등록되는 것은 d.content(영문)이고 이 값은 보내지 않는다.
-  const [korean, setKorean] = useState("");
-  const [composing, setComposing] = useState(false);
+  /** 돌고 있는 작업. 없으면 null. */
+  const [composing, setComposing] = useState<ComposeMode | null>(null);
   const [composeError, setComposeError] = useState("");
   /** 원문에 없어 담당자가 채워야 할 것들. */
   const [gaps, setGaps] = useState<string[]>([]);
 
-  /** 한국어를 영문 본문으로 정리한다. 원문은 그대로 두고 Content 만 채운다. */
-  async function compose(): Promise<void> {
-    setComposing(true);
+  /**
+   * 본문을 그 자리에서 바꾼다.
+   *   translate 한국어 → 영어 + 팀 양식
+   *   tidy      영어 그대로 두고 모양만
+   * 되돌리기는 Composer 가 직전 값을 들고 있다.
+   */
+  async function compose(mode: ComposeMode): Promise<void> {
+    setComposing(mode);
     setComposeError("");
     try {
       const response = await fetch("/api/draft/compose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          content: korean,
+          content: d.content,
+          mode,
           productName, componentName,
           release: d.release, severity: d.severity,
           // 이미 제목을 적어 뒀으면 그대로 둔다.
@@ -130,7 +133,7 @@ export function DraftForm({
     } catch (e) {
       setComposeError(e instanceof Error ? e.message : "정리 중 오류가 발생했습니다.");
     } finally {
-      setComposing(false);
+      setComposing(null);
     }
   }
   const [error, setError] = useState("");
@@ -221,8 +224,7 @@ export function DraftForm({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-    <div style={{ display: "flex", gap: 22, alignItems: "flex-start", flexWrap: "wrap" }}>
-      <Card style={{ flex: "1 1 420px", minWidth: 0, padding: "20px 22px 6px" }}>
+      <Card style={{ padding: "20px 22px 6px" }}>
         <SectionTitle>케이스 속성</SectionTitle>
 
         {/* 매번 같은 값 — 입력받지 않고 그대로 쓴다 */}
@@ -274,6 +276,7 @@ export function DraftForm({
           </Field>
         </Row>
 
+        {/* 제품·컴포넌트는 이름이 길어 두 칸, 나머지 셋은 짧아 한 줄에 몰아 둔다. */}
         <Row>
           <Field label="Prod Release" required hint="예: TPCF 10.4, Ops Manager 3.0">
             <input value={d.release} onChange={set("release")} placeholder="TPCF 10.4" style={inputStyle} />
@@ -283,161 +286,30 @@ export function DraftForm({
               {SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </Field>
+          <Field label="Serial Number" hint="비워도 됩니다">
+            <input value={d.serial} onChange={set("serial")} placeholder="" style={inputStyle} />
+          </Field>
         </Row>
-
-        <Field label="Serial Number" hint="비워도 됩니다">
-          <input value={d.serial} onChange={set("serial")} placeholder="" style={inputStyle} />
-        </Field>
 
       </Card>
 
-      <aside style={{ width: 400, flexShrink: 0, position: "sticky", top: 26 }}>
-        <Card style={{ padding: "16px 18px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 13 }}>
-            <b style={{ fontSize: 13 }}>포털에 옮겨적을 값</b>
-            {missing.length > 0 && (
-              <span style={{ fontSize: 11, color: COLOR.waitUs }}>{`필수 ${missing.length}개 남음`}</span>
-            )}
-          </div>
 
-          <div style={{ marginBottom: 15 }}>
-            {[
-              ["Company", FIXED.company],
-              ["Group Site Id", FIXED.siteId],
-              ["Issue Type", FIXED.issueType],
-              ["Prod Release", d.release],
-              ["Severity", d.severity],
-              ["Product", productName],
-              ["Component", componentName],
-              ["Serial Number", d.serial],
-            ].map(([k, v]) => (
-              <div key={k} style={{
-                display: "flex", gap: 10, fontSize: 12, padding: "5px 0",
-                borderBottom: `1px solid ${COLOR.divider}`,
-              }}>
-                <span style={{ width: 112, flexShrink: 0, color: COLOR.faint }}>{k}</span>
-                <span style={{
-                  minWidth: 0, color: v === "" ? "#c7ccd4" : COLOR.body,
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                }}>
-                  {v === "" ? "—" : v}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          <PreviewBlock label="Subject" text={d.subject}
-                        copied={copied === "Subject"} onCopy={() => copy("Subject", d.subject)} />
-          <PreviewBlock label="Content" text={d.content} tall
-                        copied={copied === "Content"} onCopy={() => copy("Content", d.content)} />
-        </Card>
-
-        {error !== "" && (
-          <div style={{
-            marginTop: 12, background: COLOR.waitUsBg, color: COLOR.waitUs,
-            border: "1px solid #f3c7c2", borderRadius: RADIUS.control,
-            padding: "10px 13px", fontSize: 12.5, lineHeight: 1.6,
-          }}>
-            {error}
-          </div>
-        )}
-
-        {stage === "write" ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
-            <span style={{ fontSize: 11.5, color: COLOR.faint, lineHeight: 1.5 }}>
-              전송하면 Broadcom 에 케이스가 실제로 등록됩니다.
-            </span>
-            <button
-              type="button" onClick={() => setStage("confirm")} disabled={missing.length > 0}
-              style={{
-                ...controlStyle, marginLeft: "auto", padding: "9px 18px", fontWeight: 600,
-                color: missing.length === 0 ? "#ffffff" : COLOR.faint,
-                background: missing.length === 0 ? COLOR.accent : COLOR.ground,
-                borderColor: missing.length === 0 ? COLOR.accent : COLOR.field,
-                cursor: missing.length === 0 ? "pointer" : "default",
-              }}
-            >
-              SR 등록
-            </button>
-          </div>
-        ) : (
-          <div style={{ marginTop: 14 }}>
-            <div style={{
-              fontSize: 12, color: COLOR.warn, background: COLOR.warnBg,
-              border: "1px solid #f0d69a", borderRadius: RADIUS.control,
-              padding: "10px 13px", marginBottom: 11, lineHeight: 1.65,
-            }}>
-              위 내용으로 <b>새 케이스가 등록</b>됩니다. 담당 엔지니어가 배정되어 바로 읽습니다.
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button type="button" onClick={() => setStage("write")} disabled={busy}
-                      style={{ ...controlStyle, padding: "8px 14px" }}>
-                고치기
-              </button>
-              <button
-                type="button" onClick={submit} disabled={busy}
-                style={{
-                  ...controlStyle, marginLeft: "auto", padding: "8px 18px", fontWeight: 600,
-                  color: "#ffffff",
-                  background: busy ? COLOR.muted : COLOR.waitUs,
-                  borderColor: busy ? COLOR.muted : COLOR.waitUs,
-                  cursor: busy ? "default" : "pointer",
-                }}
-              >
-                {busy ? "등록 중…" : "확인, 등록합니다"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        <p style={{ margin: "12px 2px 0", fontSize: 12, color: COLOR.faint, lineHeight: 1.75 }}>
-          {fromCatalog
-            ? "Product · Component 는 실제로 SR 을 올려 본 조합을 내장해 둔 목록입니다. 여기 없는 조합은 포털에서 직접 작성해 주세요."
-            : "Product · Component 는 지금까지 올린 케이스에서 뽑은 목록입니다. 한 번도 안 써 본 조합은 포털에서 직접 작성해 주세요."}
-        </p>
-      </aside>
-    </div>
 
       {/* 본문은 화면 전체 폭을 쓴다. 좁은 칸에 두 개를 욱여넣으면 영문을 읽을 수 없다. */}
       <Composer
-        korean={korean} onKorean={setKorean}
         subject={d.subject} onSubject={(v) => setD((prev) => ({ ...prev, subject: v }))}
         subjectLimit={SUBJECT_LIMIT}
         content={d.content} onContent={(v) => setD((prev) => ({ ...prev, content: v }))}
-        onCompose={() => void compose()}
+        onCompose={(mode) => void compose(mode)}
         composing={composing} error={composeError} gaps={gaps}
       />
-    </div>
-  );
-}
 
-function PreviewBlock({
-  label, text, copied, onCopy, tall = false,
-}: { label: string; text: string; copied: boolean; onCopy: () => void; tall?: boolean }) {
-  const empty = text.trim() === "";
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: COLOR.faint, letterSpacing: "0.03em" }}>
-          {label}
-        </span>
-        <button type="button" onClick={onCopy} disabled={empty} style={{
-          ...controlStyle, marginLeft: "auto", padding: "3px 9px", fontSize: 11,
-          color: empty ? "#c7ccd4" : COLOR.muted,
-          cursor: empty ? "default" : "pointer",
-        }}>
-          {copied ? "복사됨" : "복사"}
-        </button>
-      </div>
-      <pre style={{
-        margin: 0, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.7,
-        color: empty ? "#c7ccd4" : COLOR.body,
-        background: COLOR.ground, borderRadius: RADIUS.control,
-        whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit",
-        maxHeight: tall ? 320 : 88, overflow: "auto",
-      }}>
-        {empty ? "—" : text}
-      </pre>
+      <SubmitBar
+        missing={missing} busy={busy} stage={stage} onStage={setStage}
+        onSubmit={() => void submit()} error={error}
+        copied={copied === "draft"}
+        onCopy={() => void copy("draft", `${d.subject}\n\n${d.content}`)}
+      />
     </div>
   );
 }

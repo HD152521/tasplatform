@@ -64,6 +64,58 @@ export const DRAFT_SYSTEM_PROMPT = [
   " 없으면 이 덩어리를 비워 둡니다.)",
 ].join("\n");
 
+/**
+ * 이미 영어로 적은 글을 **같은 언어 그대로** 팀 양식으로 다듬는다.
+ *
+ * 번역과 나눠 둔 이유는 섞이면 둘 다 나빠지기 때문이다. 번역 프롬프트로 영어를
+ * 넣으면 모델이 "옮길 것이 없다" 고 보고 원문을 거의 그대로 뱉거나, 반대로
+ * 한국어로 옮겨 버린다. 다듬기는 언어를 건드리지 말라고 따로 못박는다.
+ */
+export const TIDY_SYSTEM_PROMPT = [
+  "당신은 VMware Tanzu / Cloud Foundry 를 운영하는 한국 기술지원팀의 엔지니어입니다.",
+  "담당자가 **영어로** 적은 SR 본문을 팀 양식에 맞게 다듬습니다.",
+  "",
+  "# 가장 중요한 것",
+  "- **언어를 바꾸지 않습니다.** 영어로 들어온 글은 영어로 나갑니다. 한국어로 옮기지 않습니다.",
+  "- **내용을 바꾸지 않습니다.** 사실을 더하거나 빼거나 다른 말로 바꾸지 않습니다.",
+  "  문장이 어색해도 뜻이 달라질 바에는 그대로 둡니다.",
+  "",
+  "# 하는 일",
+  "- 우리 팀이 쓰는 모양으로 배치합니다.",
+  "  `Hello Support Team,` 로 시작하고, 제목 없는 영어 문단으로 본문을 쓰고,",
+  `  물어볼 것이 있으면 \`${QUESTIONS_HEADING}\` 한 줄 뒤에 번호로 나열하고, \`Thanks,\` 로 맺습니다.`,
+  "  질문이 하나도 없으면 그 줄을 쓰지 않습니다.",
+  "- Background, Symptom, Environment 같은 소제목은 붙이지 않습니다.",
+  "- 흩어진 질문을 찾아 Questions 로 모읍니다. 질문 개수와 뜻은 그대로 둡니다.",
+  "- 중복된 문장, 군더더기 인사, 깨진 줄바꿈을 정리합니다.",
+  "- 에러 문구·로그·명령어·경로·설정값·제품 버전은 **한 글자도 바꾸지 않습니다.**",
+  "",
+  "# 출력 형식",
+  "아래 세 덩어리만 이 순서로 출력합니다. 다른 말은 붙이지 않습니다.",
+  "",
+  "[SUBJECT]",
+  "(영문 제목 한 줄. 제품·버전을 대괄호로 앞에 붙입니다. 예: [TPCF 10.4] ...)",
+  "",
+  "[CONTENT]",
+  "(다듬은 영문 본문 전체)",
+  "",
+  "[MISSING]",
+  "(Broadcom 이 되물을 법한데 원문에 없는 정보를 한국어로 한 줄에 하나씩.",
+  " 없으면 이 덩어리를 비워 둡니다.)",
+].join("\n");
+
+/** 무엇을 시킬 것인가. */
+export type DraftMode = "translate" | "tidy";
+
+export function readMode(value: unknown): DraftMode {
+  // 모르는 값이 오면 번역으로 둔다. 한국어를 영어로 못 바꿔 보내는 쪽이 더 나쁘다.
+  return value === "tidy" ? "tidy" : "translate";
+}
+
+export function systemPromptFor(mode: DraftMode): string {
+  return mode === "tidy" ? TIDY_SYSTEM_PROMPT : DRAFT_SYSTEM_PROMPT;
+}
+
 export interface DraftContext {
   /** 담당자가 적은 한국어 원문. */
   readonly content: string;
@@ -74,6 +126,8 @@ export interface DraftContext {
   readonly severity?: string;
   /** 이미 적어 둔 제목. 있으면 모델이 건드리지 않는다. */
   readonly subject?: string;
+  /** 번역인가 다듬기인가. 본문 라벨이 달라진다. */
+  readonly mode?: DraftMode;
 }
 
 /** 모델에게 줄 사용자 메시지. 아는 값은 넘겨 주어 지어내지 않게 한다. */
@@ -101,7 +155,10 @@ export function buildDraftUser(ctx: DraftContext): string {
       : `[제목]\n${subject}\n(이미 정해진 제목입니다. 그대로 두세요.)`,
   );
 
-  parts.push(`[담당자가 적은 내용]\n${ctx.content.trim()}`);
+  const label = ctx.mode === "tidy"
+    ? "[담당자가 영어로 적은 내용 — 언어를 바꾸지 말고 다듬기만 하세요]"
+    : "[담당자가 적은 내용]";
+  parts.push(`${label}\n${ctx.content.trim()}`);
   return parts.join("\n\n");
 }
 

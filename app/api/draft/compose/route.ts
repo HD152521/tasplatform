@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { OpenAiError, chat, hasOpenAi } from "../../../../lib/aiChat.ts";
 import {
-  DRAFT_SYSTEM_PROMPT,
   buildDraftUser,
   parseComposed,
+  readMode,
+  systemPromptFor,
 } from "../../../../lib/srDraftPrompt.ts";
 
 export const runtime = "nodejs";
@@ -46,10 +47,12 @@ export async function POST(request: Request) {
   }
 
   try {
+    const mode = readMode(body.mode);
     const answer = await chat(
-      DRAFT_SYSTEM_PROMPT,
+      systemPromptFor(mode),
       buildDraftUser({
         content,
+        mode,
         productName: str(body.productName),
         componentName: str(body.componentName),
         release: str(body.release),

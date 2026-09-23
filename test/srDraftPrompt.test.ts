@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 import {
   DRAFT_SYSTEM_PROMPT,
   QUESTIONS_HEADING,
+  TIDY_SYSTEM_PROMPT,
   UNKNOWN_MARK,
   buildDraftUser,
   parseComposed,
+  readMode,
+  systemPromptFor,
 } from "../lib/srDraftPrompt.ts";
 
 const NEWLINE = String.fromCharCode(10);
@@ -126,4 +129,41 @@ test("대괄호 없이 라벨만 와도 읽는다", () => {
   assert.equal(got.subject, "제목");
   assert.equal(got.content, "본문");
   assert.deepEqual(got.missing, ["버전"]);
+});
+
+/* ------------------------------------------------------------------ *
+ * 번역 / 다듬기
+ * ------------------------------------------------------------------ */
+
+test("모르는 mode 는 번역으로 둔다", () => {
+  // 한국어를 영어로 못 바꿔 보내는 쪽이 더 나쁘다.
+  assert.equal(readMode("tidy"), "tidy");
+  assert.equal(readMode("translate"), "translate");
+  assert.equal(readMode(undefined), "translate");
+  assert.equal(readMode("아무거나"), "translate");
+});
+
+test("다듬기는 언어를 바꾸지 말라고 못박는다", () => {
+  assert.match(TIDY_SYSTEM_PROMPT, /언어를 바꾸지 않습니다/);
+  assert.match(TIDY_SYSTEM_PROMPT, /한국어로 옮기지 않습니다/);
+  assert.match(TIDY_SYSTEM_PROMPT, /내용을 바꾸지 않습니다/);
+});
+
+test("다듬기도 같은 틀과 같은 출력 형식을 쓴다", () => {
+  assert.ok(TIDY_SYSTEM_PROMPT.includes("Hello Support Team,"));
+  assert.ok(TIDY_SYSTEM_PROMPT.includes(QUESTIONS_HEADING));
+  assert.ok(TIDY_SYSTEM_PROMPT.includes("[SUBJECT]"));
+  assert.match(TIDY_SYSTEM_PROMPT, /Background, Symptom, Environment 같은 소제목은/);
+});
+
+test("mode 에 따라 다른 프롬프트를 고른다", () => {
+  assert.equal(systemPromptFor("tidy"), TIDY_SYSTEM_PROMPT);
+  assert.equal(systemPromptFor("translate"), DRAFT_SYSTEM_PROMPT);
+});
+
+test("다듬기일 때는 본문 라벨이 달라진다", () => {
+  const tidy = buildDraftUser({ content: "Some English text", mode: "tidy" });
+  assert.match(tidy, /언어를 바꾸지 말고 다듬기만/);
+  const translate = buildDraftUser({ content: "한국어", mode: "translate" });
+  assert.ok(!translate.includes("언어를 바꾸지 말고"));
 });
