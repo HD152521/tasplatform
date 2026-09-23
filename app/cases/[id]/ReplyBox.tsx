@@ -17,6 +17,38 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
+  /** 돌고 있는 변환. 없으면 null. */
+  const [composing, setComposing] = useState<"translate" | "tidy" | null>(null);
+  /** 변환 직전 글. 되돌리기 한 단계만 갖는다. */
+  const [prev, setPrev] = useState<string | null>(null);
+
+  /**
+   * 적은 글을 Broadcom 에 보낼 영문으로 바꾼다. 그 자리에서 갈아끼우므로
+   * 직전 글을 들고 있다가 되돌릴 수 있게 한다.
+   */
+  async function compose(mode: "translate" | "tidy"): Promise<void> {
+    setComposing(mode);
+    setError("");
+    const before = text;
+    try {
+      const response = await fetch("/api/reply/compose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: text, mode, requestId }),
+      });
+      const data = (await response.json()) as { ok?: boolean; message?: string; content?: string };
+      if (data.ok !== true || typeof data.content !== "string") {
+        setError(data.message ?? `변환에 실패했습니다 (HTTP ${response.status}).`);
+        return;
+      }
+      setPrev(before);
+      setText(data.content);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "변환 중 오류가 발생했습니다.");
+    } finally {
+      setComposing(null);
+    }
+  }
 
   const ready = text.trim() !== "";
 
@@ -93,8 +125,9 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
       {stage === "write" ? (
         <>
           <textarea
-            value={text} onChange={(e) => setText(e.target.value)} rows={7} disabled={busy}
-            placeholder="Broadcom 담당자에게 보낼 내용을 적으세요. 영문으로 쓰시는 것이 좋습니다."
+            value={text} onChange={(e) => setText(e.target.value)} rows={7}
+            disabled={busy || composing !== null}
+            placeholder="한국어로 적어도 됩니다. 아래 번역 버튼이 영문으로 바꿔 줍니다."
             style={{
               width: "100%", boxSizing: "border-box", padding: "11px 13px",
               fontSize: 13.5, lineHeight: 1.7, color: COLOR.ink,
@@ -102,14 +135,42 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
               fontFamily: "inherit", outline: "none", resize: "vertical",
             }}
           />
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
-            <span style={{ fontSize: 11.5, color: COLOR.faint, lineHeight: 1.5 }}>
-              전송하면 Broadcom 케이스에 바로 올라가고 되돌릴 수 없습니다.
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap",
+          }}>
+            {/* 한국어로 적고 보내기 전에 영문으로 바꾼다. 전송 바로 옆에 둔다. */}
+            <Convert
+              label={composing === "translate" ? "번역 중…" : "번역"}
+              hint="한국어 → 영어"
+              disabled={!ready || composing !== null}
+              onClick={() => void compose("translate")}
+            />
+            <Convert
+              label={composing === "tidy" ? "정리 중…" : "정리"}
+              hint="영어 그대로 다듬기"
+              disabled={!ready || composing !== null}
+              onClick={() => void compose("tidy")}
+            />
+            {prev !== null && composing === null && (
+              <button
+                type="button" onClick={() => { setText(prev); setPrev(null); }}
+                style={{
+                  padding: 0, border: "none", background: "none", fontFamily: "inherit",
+                  fontSize: 11.5, color: COLOR.muted, cursor: "pointer", textDecoration: "underline",
+                }}
+              >
+                되돌리기
+              </button>
+            )}
+            <span style={{
+              marginLeft: "auto", fontSize: 11.5, color: COLOR.faint, lineHeight: 1.5,
+            }}>
+              전송하면 바로 올라가고 되돌릴 수 없습니다.
             </span>
             <button
-              type="button" onClick={() => setStage("confirm")} disabled={!ready}
+              type="button" onClick={() => setStage("confirm")} disabled={!ready || composing !== null}
               style={{
-                ...controlStyle, marginLeft: "auto", padding: "8px 16px", fontWeight: 600,
+                ...controlStyle, padding: "8px 16px", fontWeight: 600,
                 color: ready ? "#ffffff" : COLOR.faint,
                 background: ready ? COLOR.accent : COLOR.ground,
                 borderColor: ready ? COLOR.accent : COLOR.field,
@@ -162,5 +223,27 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
         </>
       )}
     </Card>
+  );
+}
+
+/** 전송 옆에 붙는 작은 변환 버튼. 무엇을 하는지 한 줄로 달아 둔다. */
+function Convert({
+  label, hint, disabled, onClick,
+}: { label: string; hint: string; disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button" onClick={onClick} disabled={disabled} title={hint}
+      style={{
+        display: "inline-flex", alignItems: "baseline", gap: 6,
+        padding: "7px 12px", fontSize: 12.5, fontWeight: 600, fontFamily: "inherit",
+        color: disabled ? COLOR.faint : COLOR.ink,
+        background: disabled ? COLOR.ground : COLOR.surface,
+        border: `1px solid ${COLOR.field}`, borderRadius: RADIUS.control,
+        cursor: disabled ? "default" : "pointer", whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+      <span style={{ fontSize: 10.5, fontWeight: 400, color: COLOR.faint }}>{hint}</span>
+    </button>
   );
 }
