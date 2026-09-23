@@ -77,12 +77,75 @@ def reorder(prs, order):
 # 텍스트 채우기
 # --------------------------------------------------------------------------
 
-def set_text(frame, text):
+# "분석 및 진행 상황" 칸의 글머리 기호.
+#
+# 실제 보고서(8월_정기점검_보고서.pptx, slide5)를 풀어 확인한 값 그대로다.
+#   제목 줄("질의 내용", "진행 상황")  : Arial 의 • , marL 88900  / indent -88900
+#   그 아래 줄글                       : Wingdings 의 ü(체크), marL 357188 / indent -171450
+# set_text 가 첫 문단을 복제하는 구조라, 손대지 않으면 모든 줄이 첫 문단의 • 를
+# 물려받는다. 그래서 줄마다 따로 지정한다.
+BULLET_HEAD = ("Arial", "•", 88900, -88900)
+BULLET_ITEM = ("Wingdings", "ü", 357188, -171450)
+
+# 제목으로 볼 줄. 모델이 콜론이나 공백을 붙여 오는 일이 있어 느슨하게 맞춘다.
+ANALYSIS_HEADINGS = ("질의내용", "진행상황")
+
+
+def _is_heading(line):
+    key = line.strip().rstrip(":：").replace(" ", "")
+    return key in ANALYSIS_HEADINGS
+
+
+def analysis_bullet(line):
+    """분석 칸의 한 줄에 쓸 글머리. set_text 의 bullets 인자로 넘긴다."""
+    return BULLET_HEAD if _is_heading(line) else BULLET_ITEM
+
+
+def apply_bullet(paragraph, spec):
+    """문단의 글머리 기호를 지정한 것으로 바꾼다.
+
+    a:pPr 의 자식 순서가 스키마로 정해져 있어(… buFont, buChar, tabLst, defRPr …)
+    아무 데나 붙이면 PowerPoint 가 파일을 못 연다. 기존 글머리 요소를 걷어낸 뒤
+    tabLst/defRPr 앞에 끼워 넣는다.
+    """
+    from pptx.oxml.ns import qn
+
+    typeface, char, mar_l, indent = spec
+    pPr = paragraph._p.get_or_add_pPr()
+    pPr.set("marL", str(mar_l))
+    pPr.set("indent", str(indent))
+
+    for tag in ("a:buNone", "a:buChar", "a:buAutoNum", "a:buFont"):
+        for node in pPr.findall(qn(tag)):
+            pPr.remove(node)
+
+    anchor = None
+    for tag in ("a:tabLst", "a:defRPr", "a:extLst"):
+        found = pPr.find(qn(tag))
+        if found is not None:
+            anchor = found
+            break
+
+    bu_font = pPr.makeelement(qn("a:buFont"), {"typeface": typeface})
+    bu_char = pPr.makeelement(qn("a:buChar"), {"char": char})
+    if anchor is None:
+        pPr.append(bu_font)
+        pPr.append(bu_char)
+    else:
+        anchor.addprevious(bu_font)
+        anchor.addprevious(bu_char)
+
+
+def set_text(frame, text, bullets=None):
     """텍스트를 갈아끼우되 첫 run 의 서식(글꼴·크기·색)을 그대로 쓴다.
 
     한 칸이 수십 개 run 으로 쪼개져 있어도 첫 run 만 남기고 지운 뒤 채운다.
     여러 줄이면 첫 문단을 복제해 같은 서식을 유지한다.
+
+    bullets 를 주면 줄마다 불러 글머리 기호를 정한다(줄 -> spec 또는 None).
     """
+    from pptx.text.text import _Paragraph
+
     text = "" if text is None else str(text)
     lines = text.split("\n")
 
@@ -103,19 +166,27 @@ def set_text(frame, text):
             paragraph.text = value
 
     fill(first, lines[0])
+    written = [first]
     for line in lines[1:]:
         clone = copy.deepcopy(first._p)
         first._p.getparent().append(clone)
         # 복제한 문단의 run 을 새 값으로
-        from pptx.text.text import _Paragraph
-        fill(_Paragraph(clone, first._parent), line)
+        paragraph = _Paragraph(clone, first._parent)
+        fill(paragraph, line)
+        written.append(paragraph)
+
+    if bullets is not None:
+        for paragraph, line in zip(written, lines):
+            spec = bullets(line)
+            if spec is not None:
+                apply_bullet(paragraph, spec)
 
 
-def cell_text(table, row, col, value):
+def cell_text(table, row, col, value, bullets=None):
     """표의 한 칸을 채운다. 범위를 벗어나면 조용히 넘어가지 않고 알린다."""
     if row >= len(table.rows) or col >= len(table.columns):
         raise IndexError(f"표 범위를 벗어남: ({row},{col}) / {len(table.rows)}x{len(table.columns)}")
-    set_text(table.cell(row, col).text_frame, value)
+    set_text(table.cell(row, col).text_frame, value, bullets)
 
 
 def color_cell(table, row, col, rgb):
@@ -277,7 +348,8 @@ def fill_sr_detail(slide, sr):
     cell_text(table, 1, 5, sr["status"])
     cell_text(table, 2, 1, sr["title"])
     cell_text(table, 3, 1, sr["symptom"])
-    cell_text(table, 4, 1, sr["analysis"])
+    # 제목 줄은 •, 그 아래 줄글은 체크(ü). 실제 보고서가 그렇게 돼 있다.
+    cell_text(table, 4, 1, sr["analysis"], analysis_bullet)
     cell_text(table, 5, 1, sr["result"])
 
 
