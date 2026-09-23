@@ -22,6 +22,7 @@ import {
 } from "../lib/config.ts";
 import { saveDeviceState, type StorageState } from "../lib/browserIdentity.ts";
 import { LOGIN_SEL, describeLoginPage, findLoginRoot } from "./loginFields.ts";
+import { warmAttachmentHost } from "../lib/attachmentWarmup.ts";
 
 export class OtpRequiredError extends Error {
   constructor() {
@@ -147,6 +148,10 @@ export async function saveSession(
 ): Promise<string> {
   const path = resolve(sessionFileForTeam(teamId));
   mkdirSync(dirname(path), { recursive: true });
+  // 저장 **전에** 첨부 저장소에 들러 그쪽 쿠키까지 받아 둔다. 안 그러면 서버가
+  // 첨부를 대신 받아오지 못한다(lib/attachmentWarmup.ts 머리말 참고).
+  const warmed = await warmAttachmentHost(context);
+  if (!warmed) console.error("[login] 첨부 저장소 예열 실패 — 첨부는 원본으로 넘어갑니다");
   const state = await context.storageState({ path });
   saveDeviceState(state as StorageState, deviceFileForTeam(teamId));
   return path;
