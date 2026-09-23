@@ -23,7 +23,8 @@
     "judge:kb": "node collector/judge-kb.ts",
     "mcp": "node --conditions=react-server mcp/server.ts",
     "token": "node scripts/team-token.ts",
-    "prewarm": "node collector/prewarm.ts"
+    "prewarm": "node collector/prewarm.ts",
+    "check:attachment": "node scripts/check-attachment.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
