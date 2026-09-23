@@ -100,7 +100,22 @@ export async function launchBrowser(headless: boolean): Promise<Browser> {
       lastError = error;
     }
   }
-  throw new Error(`브라우저를 띄우지 못했습니다: ${String(lastError)}`);
+  throw new Error(`브라우저를 띄우지 못했습니다: ${String(lastError)}${launchHint(lastError)}`);
+}
+
+/**
+ * 브라우저가 아예 설치돼 있지 않을 때 무엇을 하면 되는지 한 줄 덧붙인다.
+ *
+ * Playwright 를 올릴 때마다 필요한 크로미움 **빌드 번호가 바뀐다**. 그래서 예전에
+ * 받아 둔 것이 있어도 "Executable doesn't exist" 가 난다. VM 에서는 배포 스크립트가
+ * 서비스 사용자로 맞춰 주지만(deploy/sr-deploy.sh), 그 스크립트를 새로 복사하기
+ * 전이거나 손으로 돌릴 때는 이 안내가 없으면 한참 헤맨다.
+ */
+function launchHint(error: unknown): string {
+  const text = String(error);
+  if (!/Executable doesn't exist|please run the following command/i.test(text)) return "";
+  return "\n  → 브라우저가 설치돼 있지 않습니다. 서비스를 돌리는 사용자로 실행하세요:"
+    + "\n     npx playwright install chromium";
 }
 
 /**
