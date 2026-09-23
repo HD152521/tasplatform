@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { ProductComponent } from "../../lib/queries.ts";
-import { COLOR, Card, MONO_STACK, RADIUS, controlStyle } from "../ui.tsx";
+import { COLOR, Card, RADIUS, controlStyle } from "../ui.tsx";
+import { Composer } from "./Composer.tsx";
 
 /**
  * SR 작성 도우미.
@@ -50,7 +51,14 @@ interface Draft {
   content: string;
 }
 
-export function DraftForm({ combos }: { combos: ProductComponent[] }) {
+export function DraftForm({
+  combos,
+  fromCatalog = false,
+}: {
+  combos: ProductComponent[];
+  /** 수집분이 없어 내장 목록으로 채웠는가. 힌트 문구만 달라진다. */
+  fromCatalog?: boolean;
+}) {
   const [d, setD] = useState<Draft>({
     serial: "",
     release: "",
@@ -212,8 +220,9 @@ export function DraftForm({ combos }: { combos: ProductComponent[] }) {
   }
 
   return (
-    <div style={{ display: "flex", gap: 22, alignItems: "flex-start" }}>
-      <Card style={{ flex: 1, minWidth: 0, padding: "20px 22px 6px" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div style={{ display: "flex", gap: 22, alignItems: "flex-start", flexWrap: "wrap" }}>
+      <Card style={{ flex: "1 1 420px", minWidth: 0, padding: "20px 22px 6px" }}>
         <SectionTitle>케이스 속성</SectionTitle>
 
         {/* 매번 같은 값 — 입력받지 않고 그대로 쓴다 */}
@@ -238,7 +247,8 @@ export function DraftForm({ combos }: { combos: ProductComponent[] }) {
         </div>
 
         <Row>
-          <Field label="Product" required hint="지금까지 케이스를 올린 제품만 고를 수 있습니다">
+          <Field label="Product" required
+                 hint={fromCatalog ? "실제로 SR 을 올려 본 제품 목록입니다" : "지금까지 케이스를 올린 제품만 고를 수 있습니다"}>
             <select
               value={productId}
               onChange={(e) => { setProductId(Number(e.target.value)); setComponentId(0); }}
@@ -278,81 +288,6 @@ export function DraftForm({ combos }: { combos: ProductComponent[] }) {
         <Field label="Serial Number" hint="비워도 됩니다">
           <input value={d.serial} onChange={set("serial")} placeholder="" style={inputStyle} />
         </Field>
-
-        <SectionTitle>내용</SectionTitle>
-
-        <Field label="Subject" required count={d.subject.length} limit={SUBJECT_LIMIT}
-               hint="대괄호로 제품·버전을 앞에 붙이는 것이 팀 관행입니다">
-          <input value={d.subject} onChange={set("subject")} maxLength={SUBJECT_LIMIT}
-                 placeholder="[TPCF 10.4] Resource sizing inquiry for enabling OpenTelemetry"
-                 style={inputStyle} />
-        </Field>
-
-        {/*
-          왼쪽에 한국어로 적고 오른쪽 영문을 받는다. 등록되는 것은 **오른쪽** 이다.
-          한국어 원문은 지우지 않는다 — 다시 정리하거나 대조할 때 필요하다.
-          좁아지면 위아래로 접힌다(폼 칸이 원래 넓지 않다).
-        */}
-        <div style={{
-          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(258px, 1fr))", gap: 14,
-        }}>
-          <Field label="내용 (한국어)"
-                 hint="편하게 적으세요. 아래 버튼이 영문으로 정리합니다.">
-            <textarea
-              value={korean} onChange={(e) => setKorean(e.target.value)} rows={14}
-              placeholder={"TPCF 10.4로 올린 뒤 Tanzu Hub 연동을 검토 중입니다.\n\nOTel 켜면 VM당 CPU/메모리가 얼마나 더 드는지,\n증설이 필요한지 알고 싶습니다."}
-              style={textAreaStyle}
-            />
-          </Field>
-
-          <Field label="Content" required
-                 hint="실제로 등록되는 글입니다. 직접 고쳐도 됩니다.">
-            <textarea
-              value={d.content} onChange={set("content")} rows={14}
-              placeholder={"Hello Support Team,\n\n(왼쪽에 적고 '영문 정리'를 누르면 여기에 채워집니다)\n\nQuestions\n1. ...\n\nThanks,"}
-              style={{ ...textAreaStyle, fontFamily: MONO_STACK, fontSize: 12.5 }}
-            />
-          </Field>
-        </div>
-
-        <div style={{
-          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 2,
-        }}>
-          <button
-            type="button" onClick={() => void compose()}
-            disabled={composing || korean.trim() === ""}
-            style={{
-              ...inputStyle, width: "auto", padding: "8px 15px", fontSize: 13, fontWeight: 600,
-              cursor: composing || korean.trim() === "" ? "default" : "pointer",
-              background: korean.trim() === "" ? COLOR.ground : COLOR.accent,
-              color: korean.trim() === "" ? COLOR.faint : "#ffffff",
-              borderColor: korean.trim() === "" ? COLOR.field : COLOR.accent,
-            }}
-          >
-            {composing ? "정리하는 중…" : "영문 정리"}
-          </button>
-          {composeError !== "" && (
-            <span style={{ fontSize: 12, color: COLOR.waitUs }}>{composeError}</span>
-          )}
-          {composeError === "" && gaps.length === 0 && d.content !== "" && !composing && (
-            <span style={{ fontSize: 12, color: COLOR.muted }}>
-              정리했습니다. 내용을 확인하고 등록하세요.
-            </span>
-          )}
-        </div>
-
-        {/* 원문에 없어 Broadcom 이 되물을 법한 것들. 본문에는 (to be confirmed) 로 남아 있다. */}
-        {gaps.length > 0 && (
-          <div style={{
-            background: COLOR.warnBg, border: `1px solid #f0d69a`, borderRadius: 8,
-            padding: "11px 14px", fontSize: 12.5, color: COLOR.warn, lineHeight: 1.7,
-          }}>
-            <b>이 정보가 있으면 한 번에 끝날 확률이 올라갑니다</b>
-            <ul style={{ margin: "5px 0 0", paddingLeft: 18 }}>
-              {gaps.map((g) => <li key={g}>{g}</li>)}
-            </ul>
-          </div>
-        )}
 
       </Card>
 
@@ -456,10 +391,22 @@ export function DraftForm({ combos }: { combos: ProductComponent[] }) {
         )}
 
         <p style={{ margin: "12px 2px 0", fontSize: 12, color: COLOR.faint, lineHeight: 1.75 }}>
-          Product · Component 는 지금까지 올린 케이스에서 뽑은 목록입니다.
-          한 번도 안 써 본 조합은 포털에서 직접 작성해 주세요.
+          {fromCatalog
+            ? "Product · Component 는 실제로 SR 을 올려 본 조합을 내장해 둔 목록입니다. 여기 없는 조합은 포털에서 직접 작성해 주세요."
+            : "Product · Component 는 지금까지 올린 케이스에서 뽑은 목록입니다. 한 번도 안 써 본 조합은 포털에서 직접 작성해 주세요."}
         </p>
       </aside>
+    </div>
+
+      {/* 본문은 화면 전체 폭을 쓴다. 좁은 칸에 두 개를 욱여넣으면 영문을 읽을 수 없다. */}
+      <Composer
+        korean={korean} onKorean={setKorean}
+        subject={d.subject} onSubject={(v) => setD((prev) => ({ ...prev, subject: v }))}
+        subjectLimit={SUBJECT_LIMIT}
+        content={d.content} onContent={(v) => setD((prev) => ({ ...prev, content: v }))}
+        onCompose={() => void compose()}
+        composing={composing} error={composeError} gaps={gaps}
+      />
     </div>
   );
 }
@@ -503,15 +450,6 @@ const inputStyle: React.CSSProperties = {
   height: 38,
 };
 
-/**
- * 여러 줄 입력칸.
- *
- * inputStyle 의 height:38 이 rows 를 눌러, 열네 줄짜리로 둔 칸이 한 줄로 찌그러져
- * 있었다. 높이를 풀어 rows 가 먹게 한다.
- */
-const textAreaStyle: React.CSSProperties = {
-  ...inputStyle, height: "auto", lineHeight: 1.7,
-};
 
 /** 한 줄에 두 칸. 각 칸이 같은 폭을 갖도록 flex-basis 0 으로 둔다. */
 function Row({ children }: { children: React.ReactNode }) {

@@ -1,3 +1,4 @@
+import { PRODUCT_CATALOG } from "../../lib/productCatalog.ts";
 import { listProductComponents, type ProductComponent } from "../../lib/queries.ts";
 import { COLOR, Notice } from "../ui.tsx";
 import { DraftForm } from "./DraftForm.tsx";
@@ -14,6 +15,11 @@ export default async function NewCasePage() {
   } catch (error) {
     loadError = error instanceof Error ? error.message : String(error);
   }
+
+  // 수집된 케이스에서 못 뽑으면 내장 목록으로 채운다. 드롭다운이 비면 SR 을 아예 못 쓴다.
+  // used 는 전부 0 이라 정렬이 안정적이고, 목록에 적어 둔 순서(많이 쓴 순)가 유지된다.
+  const fromCatalog = combos.length === 0;
+  if (fromCatalog) combos = PRODUCT_CATALOG.map((c) => ({ ...c, used: 0 }));
 
 
   return (
@@ -33,15 +39,7 @@ export default async function NewCasePage() {
         </Notice>
       )}
 
-      {loadError === null && combos.length === 0 && (
-        <Notice tone="warn">
-          <b>Product · Component 선택지가 비어 있습니다.</b>
-          {" 이 목록은 이미 수집된 케이스에서 뽑습니다. 수집된 케이스가 없거나, "}
-          {"케이스 상세를 아직 받지 않아 제품 정보가 비어 있을 때 이렇게 보입니다."}
-        </Notice>
-      )}
-
-      <DraftForm combos={combos} />
+      <DraftForm combos={combos} fromCatalog={fromCatalog} />
     </>
   );
 }
