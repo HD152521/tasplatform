@@ -55,3 +55,28 @@ test("빈 값·공백은 null", () => {
   assert.equal(resolveAttachmentUrl("", API), null);
   assert.equal(resolveAttachmentUrl("   ", API), null);
 });
+
+/* ------------------------------------------------------------------ *
+ * supportftp — 첨부 실물이 있는 곳
+ * ------------------------------------------------------------------ */
+
+// 실측(첨부 450건): doc_path 가 **전부** supportftp.broadcom.com 인데 허용 목록에
+// 없어 전건이 null 로 떨어졌다. 그러면 라우트가 404 JSON 을 내고, 화면의
+// <a download> 가 그 JSON 을 첨부 이름으로 저장해 "사용할 수 없는 파일" 이 된다.
+test("supportftp 첨부 경로를 통과시킨다", () => {
+  const url = "https://supportftp.broadcom.com/WebInterface/redirect.html"
+    + "?filePath=15588968/37076269/files_from_customer/logcache.png";
+  assert.equal(resolveAttachmentUrl(url, API), url);
+});
+
+test("supportftp 가 넘기는 SSO 호스트도 통과시킨다", () => {
+  // OAuth 왕복을 따라가려면 필요하다.
+  assert.ok(isAllowedHost("access.broadcom.com"));
+});
+
+test("broadcom.com 을 통째로 열지는 않는다", () => {
+  // 허용은 정확한 호스트 단위다. 아무 broadcom 하위 도메인이나 열면 SSRF 표면이 넓어진다.
+  assert.ok(!isAllowedHost("broadcom.com"));
+  assert.ok(!isAllowedHost("evil.broadcom.com"));
+  assert.ok(!isAllowedHost("supportftp.broadcom.com.evil.test"));
+});
