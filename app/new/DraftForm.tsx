@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { ProductComponent } from "../../lib/queries.ts";
 import { COLOR, Card, RADIUS, controlStyle } from "../ui.tsx";
+import { Select } from "../Select.tsx";
 import { Composer, type ComposeMode } from "./Composer.tsx";
 import { SubmitBar } from "./SubmitBar.tsx";
 
@@ -251,28 +252,20 @@ export function DraftForm({
         <Row>
           <Field label="Product" required
                  hint={fromCatalog ? "실제로 SR 을 올려 본 제품 목록입니다" : "지금까지 케이스를 올린 제품만 고를 수 있습니다"}>
-            <select
+            <Select
+              ariaLabel="Product"
               value={productId}
-              onChange={(e) => { setProductId(Number(e.target.value)); setComponentId(0); }}
-              style={inputStyle}
-            >
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
+              options={products.map((p) => ({ value: p.id, label: p.name }))}
+              onChange={(v) => { setProductId(v); setComponentId(0); }}
+            />
           </Field>
           <Field label="Component" required hint="선택한 제품에서 실제로 쓰인 것만 나옵니다">
-            <select
+            <Select
+              ariaLabel="Component"
               value={activeComponent?.componentId ?? 0}
-              onChange={(e) => setComponentId(Number(e.target.value))}
-              style={inputStyle}
-            >
-              {componentsOf.map((c) => (
-                <option key={c.componentId} value={c.componentId}>
-                  {c.componentName}
-                </option>
-              ))}
-            </select>
+              options={componentsOf.map((c) => ({ value: c.componentId, label: c.componentName }))}
+              onChange={(v) => setComponentId(v)}
+            />
           </Field>
         </Row>
 
@@ -282,9 +275,12 @@ export function DraftForm({
             <input value={d.release} onChange={set("release")} placeholder="TPCF 10.4" style={inputStyle} />
           </Field>
           <Field label="Severity" required hint="P3 이 일반 문의입니다">
-            <select value={d.severity} onChange={set("severity")} style={inputStyle}>
-              {SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            <Select
+              ariaLabel="Severity"
+              value={d.severity}
+              options={SEVERITIES.map((s) => ({ value: s, label: s }))}
+              onChange={(v) => setD((prev) => ({ ...prev, severity: v }))}
+            />
           </Field>
           <Field label="Serial Number" hint="비워도 됩니다">
             <input value={d.serial} onChange={set("serial")} placeholder="" style={inputStyle} />
