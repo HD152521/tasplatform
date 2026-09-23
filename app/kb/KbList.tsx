@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import type { KbViewRow } from "../../lib/queries.ts";
+import { KB_TRANSLATE_FIELDS, kbShown } from "../../lib/kbTranslate.ts";
+import { TranslateButton } from "../TranslateButton.tsx";
 import { Badge, COLOR, Card, MONO_STACK, RADIUS, formatStamp } from "../ui.tsx";
 
 /** 판정값별 색과 라벨. 앱 전체의 색 의미와 맞춘다(우리 일=빨강 계열). */
@@ -23,11 +25,23 @@ function stamp(raw: string): string {
   return Number.isNaN(ms) ? raw : formatStamp(ms);
 }
 
-export function KbList({ rows }: { rows: KbViewRow[] }) {
+export function KbList({
+  rows, translated,
+}: {
+  rows: KbViewRow[];
+  /** `${scope}:${article_id}` -> 번역문. 없는 칸은 원문을 쓴다. */
+  translated: Record<string, string>;
+}) {
+  const ko = new Map(Object.entries(translated));
+  /** 이 문서에 번역이 하나라도 있나. 있으면 번역 버튼 대신 원문 전환을 보여준다. */
+  const hasKo = (id: number): boolean =>
+    KB_TRANSLATE_FIELDS.some((f) => ko.has(`${f.scope}:${id}`));
   const [product, setProduct] = useState("all");
   const [verdict, setVerdict] = useState("all");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<number | null>(null);
+  /** 번역이 있어도 원문으로 보고 싶은 문서. 원문이 늘 근거다. */
+  const [raw, setRaw] = useState<ReadonlySet<number>>(new Set());
 
   const products = useMemo(() => {
     const seen = new Map<string, number>();
@@ -104,6 +118,10 @@ export function KbList({ rows }: { rows: KbViewRow[] }) {
           {shown.map((r) => {
             const tone = verdictTone(r.verdict);
             const expanded = open === r.article_id;
+            // 번역이 있고 원문 보기를 안 눌렀으면 번역을 쓴다.
+            const useKo = hasKo(r.article_id) && !raw.has(r.article_id);
+            const show = (scope: string, original: string): string =>
+              useKo ? kbShown(ko, r.article_id, scope, original) : original;
             return (
               <Card key={r.article_id} style={{
                 padding: "14px 18px",
@@ -137,7 +155,7 @@ export function KbList({ rows }: { rows: KbViewRow[] }) {
                   display: "block", fontSize: 13.5, fontWeight: 600, lineHeight: 1.6,
                   color: COLOR.ink, textDecoration: "none", marginBottom: 5,
                 }}>
-                  {r.title}
+                  {show("kb_title", r.title)}
                 </a>
 
                 {r.verdict_why !== "" && (
@@ -152,14 +170,14 @@ export function KbList({ rows }: { rows: KbViewRow[] }) {
                   WebkitLineClamp: expanded ? "none" : 2, WebkitBoxOrient: "vertical",
                   overflow: "hidden", whiteSpace: "pre-line",
                 }}>
-                  {r.issue === "" ? "(증상 섹션이 비어 있습니다)" : r.issue}
+                  {r.issue === "" ? "(증상 섹션이 비어 있습니다)" : show("kb_issue", r.issue)}
                 </p>
 
                 {expanded && (
                   <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
-                    <Section title="Environment" body={r.environment} />
-                    <Section title="Cause" body={r.cause} />
-                    <Section title="Resolution" body={r.resolution} />
+                    <Section title="Environment" body={show("kb_environment", r.environment)} />
+                    <Section title="Cause" body={show("kb_cause", r.cause)} />
+                    <Section title="Resolution" body={show("kb_resolution", r.resolution)} />
                     <div style={{ fontSize: 11, color: COLOR.faint, whiteSpace: "pre-line" }}>
                       {`제품 태그: ${r.products.split("\n").join(", ")}`}
                     </div>
@@ -176,6 +194,28 @@ export function KbList({ rows }: { rows: KbViewRow[] }) {
                 >
                   {expanded ? "접기" : "원인·조치 보기"}
                 </button>
+
+                {hasKo(r.article_id) ? (
+                  <button
+                    type="button"
+                    onClick={() => setRaw((cur) => {
+                      const next = new Set(cur);
+                      if (next.has(r.article_id)) next.delete(r.article_id);
+                      else next.add(r.article_id);
+                      return next;
+                    })}
+                    style={{
+                      marginLeft: 12, padding: 0, border: "none", background: "none",
+                      fontSize: 11.5, color: COLOR.muted, cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    {useKo ? "원문 보기" : "번역 보기"}
+                  </button>
+                ) : (
+                  <span style={{ marginLeft: 12 }}>
+                    <TranslateButton url={`/api/kb/${r.article_id}/translate`} compact />
+                  </span>
+                )}
               </Card>
             );
           })}

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { CveViewRow } from "../../lib/queries.ts";
+import { TranslateButton } from "../TranslateButton.tsx";
 import { Badge, COLOR, Card, MONO_STACK, RADIUS, formatStamp } from "../ui.tsx";
 
 /** CVSS 심각도별 색. 사용하는 색의 의미를 앱 전체와 맞춘다. */
@@ -125,6 +126,13 @@ export function CveList({ cves }: { cves: CveViewRow[] }) {
                 }}>
                   {c.summary_ko === "" ? c.summary : c.summary_ko}
                 </p>
+
+                {/* NVD 설명은 전부 영문이다. 볼 것만 눌러 번역한다. */}
+                {c.summary_ko === "" && c.summary !== "" && (
+                  <div style={{ marginTop: 8 }}>
+                    <TranslateButton url={`/api/cves/${encodeURIComponent(c.cve_id)}/translate`} compact />
+                  </div>
+                )}
               </Card>
             );
           })}

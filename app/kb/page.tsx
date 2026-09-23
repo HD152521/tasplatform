@@ -1,4 +1,7 @@
-import { countKbScanned, listKbArticles, type KbViewRow } from "../../lib/queries.ts";
+import { kbTranslationRefs } from "../../lib/kbTranslate.ts";
+import {
+  countKbScanned, listKbArticles, loadCaseTranslations, type KbViewRow,
+} from "../../lib/queries.ts";
 import { COLOR, Card, Notice } from "../ui.tsx";
 import { KbList } from "./KbList.tsx";
 
@@ -8,9 +11,12 @@ export default async function KbPage() {
   let rows: KbViewRow[] = [];
   let scanned = 0;
   let loadError: string | null = null;
+  // 저장된 한국어 번역. 없는 칸은 키가 없고, 목록이 원문을 그대로 쓴다.
+  let translated = new Map<string, string>();
 
   try {
     [rows, scanned] = await Promise.all([listKbArticles(), countKbScanned()]);
+    translated = await loadCaseTranslations(kbTranslationRefs(rows.map((r) => r.article_id)));
   } catch (error) {
     loadError = error instanceof Error ? error.message : String(error);
   }
@@ -54,7 +60,7 @@ export default async function KbPage() {
         </Card>
       )}
 
-      {rows.length > 0 && <KbList rows={rows} />}
+      {rows.length > 0 && <KbList rows={rows} translated={Object.fromEntries(translated)} />}
 
       {rows.length > 0 && (
         <p style={{ margin: "16px 2px 0", fontSize: 12, color: COLOR.faint, lineHeight: 1.75 }}>
