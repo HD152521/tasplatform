@@ -16,6 +16,13 @@ const ALLOWED_HOST_SUFFIXES: readonly string[] = [
   "wolkenservicedesk.com",
   "box.com",
   "boxcloud.com",
+  // 첨부 실물이 실제로 있는 곳. 실측(첨부 450건)에서 doc_path 가 **전부**
+  // supportftp.broadcom.com 이었는데 이 목록에 없어 전건이 null 로 떨어졌다.
+  // 그러면 라우트가 404 JSON 을 내고, 화면의 <a download> 가 그 JSON 을
+  // 첨부 이름(예: logcache.png)으로 저장해 "사용할 수 없는 파일" 이 됐다.
+  "supportftp.broadcom.com",
+  // supportftp 가 OAuth 로 넘기는 SSO 호스트. 리다이렉트를 따라가려면 필요하다.
+  "access.broadcom.com",
 ];
 
 /** host 가 허용 접미사 중 하나에 정확히 걸리는가(하위 도메인 포함, 부분일치 아님). */
