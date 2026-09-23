@@ -26,7 +26,18 @@ rsync -a --delete \
   "$SRC"/ "$APP_DIR"/
 
 cd "$APP_DIR"
-npm ci
+
+# 앱 디렉터리를 서비스 사용자 소유로 돌려놓는다.
+#
+# 이 스크립트는 sudo(root)로 돌고 rsync -a 도 root 로 쓰므로, 놔두면 앱 디렉터리가
+# 통째로 root 소유가 된다. 그러면 collector 로 도는 수집기가 세션을 못 쓴다:
+#   EACCES: permission denied, open '.../data/session.json'
+# data/ 는 rsync 에서 제외라 동기화가 건드리지 않지만, 한 번 root 소유가 되면
+# 그대로 남는다. 매 배포마다 맞춰 둔다(이미 맞으면 하는 일이 없다).
+chown -R "$RUN_USER":"$RUN_USER" "$APP_DIR"
+
+# npm ci 도 서비스 사용자로 돈다 — root 로 돌리면 node_modules 가 다시 root 소유가 된다.
+sudo -u "$RUN_USER" npm ci
 
 # Playwright 브라우저는 **서비스를 돌리는 사용자의 캐시**에 있어야 한다.
 #
