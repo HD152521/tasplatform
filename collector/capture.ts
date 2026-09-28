@@ -48,6 +48,14 @@ interface Captured {
 
 const captured: Captured[] = [];
 
+/**
+ * 조각 업로드 본문의 머리(멀티파트 헤더 줄).
+ *
+ * 한 번만 담는다 — 조각이 수십 개라도 모양은 같고, 여러 번 찍으면 화면만 어지럽다.
+ * 파일 바이트는 담지 않는다.
+ */
+let chunkHead: string | null = null;
+
 /** 우리가 실제로 필요한 헤더만 남긴다. 쿠키·토큰은 저장하지 않는다. */
 function pickHeaders(all: Record<string, string>): Record<string, string> {
   const keep = ["content-type", "content-length", "content-disposition", "location", "accept", "origin", "referer"];
@@ -156,6 +164,10 @@ function save(): void {
     .map((c) => `${String(c.index).padStart(3, "0")} | ${c.method.padEnd(5)} | ${c.status} | ${c.url}`)
     .join("\n");
   writeFileSync(resolve(OUT_DIR, "_index.txt"), index, "utf8");
+
+  if (chunkHead !== null) {
+    writeFileSync(resolve(OUT_DIR, "_chunk_head.txt"), chunkHead, "utf8");
+  }
 }
 
 async function main(): Promise<void> {
@@ -163,6 +175,29 @@ async function main(): Promise<void> {
   const context = await browser.newContext({
     storageState: resolve(SESSION_FILE),
     viewport: { width: 1600, height: 950 },
+  });
+
+  // 조각 업로드(/U/<id>~<n>~<len>)는 본문이 512KB 라 postDataBuffer() 가 null 을 준다.
+  // 그러면 "어떤 필드에 담아 보내는가" 를 알 수 없다. route 로 가로채면 머리 부분만
+  // 읽을 수 있다 — 헤더 줄에 필드 이름과 파일명이 들어 있다.
+  // 파일 바이트는 저장하지 않는다. 경계선 뒤 헤더 줄까지만 본다.
+  await context.route("**/U/*", async (route) => {
+    if (chunkHead === null) {
+      const buffer = route.request().postDataBuffer();
+      if (buffer !== null) {
+        const head = buffer.subarray(0, 512).toString("latin1");
+        // 첫 빈 줄까지가 multipart 헤더다. 그 뒤는 파일 내용이라 버린다.
+        const end = head.search(/\r?\n\r?\n/);
+        chunkHead = (end === -1 ? head : head.slice(0, end)).trim();
+        console.log("");
+        console.log("  *** 조각 업로드 본문 머리 ***");
+        for (const line of chunkHead.split(/\r?\n/)) console.log("      " + line);
+        console.log("");
+      } else {
+        chunkHead = "(본문을 읽지 못했습니다)";
+      }
+    }
+    await route.continue();
   });
 
   context.on("page", (page) => page.on("response", (r) => void record(r)));
@@ -176,7 +211,7 @@ async function main(): Promise<void> {
   console.log("");
   console.log("  [첨부 업로드]  진행 중 케이스를 열고 답변 칸에서");
   console.log("                 파일 첨부 버튼 -> 작은 파일 하나 선택");
-  console.log("                 >>> 전송(Send) 은 절대 누르지 마세요 <<<");
+  console.log("                 파일은 작은 것(10KB 정도) 하나면 충분합니다.");
   console.log("                 파일 고른 직후 아래에 요청이 찍히면 두 단계 구조입니다.");
   console.log("                 찍히지 않으면 전송할 때만 올라가는 구조입니다.");
   console.log("");

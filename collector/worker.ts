@@ -108,14 +108,14 @@ function interruptibleSleep(ms: number): Promise<void> {
  *
  * DB 를 못 읽어도 루프를 세우지 않는다. 정기 수집은 이것과 무관하게 돌아야 한다.
  */
-async function takeCollectRequest(): Promise<string | null> {
+async function takeCollectRequest(): Promise<number | null> {
   try {
     const db = await openDb();
     try {
-      const at = await pendingCollectRequest(db);
-      if (at === null) return null;
-      await markCollectHandled(db, at);
-      return at;
+      const seq = await pendingCollectRequest(db);
+      if (seq === null) return null;
+      await markCollectHandled(db, seq);
+      return seq;
     } finally {
       await db.close();
     }
