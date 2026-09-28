@@ -20,6 +20,7 @@ import { isWithinHours, parseHours, resolveDurationMs } from "./schedule.ts";
 import { isCloudFoundry } from "./launchPlan.ts";
 import { openDb } from "../lib/db.ts";
 import { markCollectHandled, pendingCollectRequest } from "../lib/collectRequest.ts";
+import { hasPendingJobs } from "../lib/attachmentJobs.ts";
 
 const DEFAULT_INTERVAL_MS = 900_000; // 15분
 const MIN_INTERVAL_MS = 1_000; // CPU 를 태우지 않기 위한 안전 하한
@@ -39,6 +40,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
 const COLLECT_ENTRY = resolve(HERE, "collect.ts");
 const PREWARM_ENTRY = resolve(HERE, "prewarm.ts");
+const ATTACHMENTS_ENTRY = resolve(HERE, "attachments.ts");
+// 첨부 한 회차 상한. 브라우저 진입 10초 + 건당 수 초라 넉넉히 둔다.
+const ATTACHMENTS_TIMEOUT_MS = 600_000;
 
 // 요약은 건당 약 60초다. 한 회차 상한(SR_PREWARM_MAX, 기본 3건)에 여유를 더해 잡는다.
 // collect 의 상한을 나눠 쓰지 않는다 — 수집이 요약 때문에 죽으면 안 된다.
@@ -126,6 +130,26 @@ async function takeCollectRequest(): Promise<number | null> {
 }
 
 /**
+ * 대기 중인 첨부 일이 있는가.
+ *
+ * 첨부는 브라우저가 있어야 처리되므로 이 기계가 해야 한다. 사람이 앞에서 기다리는
+ * 구간이라 수집 간격(15분)을 기다리게 두지 않는다. DB 를 못 읽어도 루프는 세우지 않는다.
+ */
+async function attachmentsWaiting(): Promise<boolean> {
+  try {
+    const db = await openDb();
+    try {
+      return await hasPendingJobs(db);
+    } finally {
+      await db.close();
+    }
+  } catch (error) {
+    console.error("[worker] 첨부 일 확인 실패(수집은 계속):", error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+/**
  * ms 동안 자되, 중간에 "지금 수집" 요청이 오면 바로 깬다.
  *
  * interruptibleSleep 을 짧게 여러 번 나눠 걸고 사이마다 DB 를 본다. 시그널로 깨우는
@@ -143,6 +167,10 @@ async function sleepWatchingRequests(ms: number): Promise<boolean> {
     if (requested !== null) {
       console.log(`[worker] 화면에서 수집을 요청했습니다(${requested}) — 지금 한 회차를 돌립니다.`);
       return true;
+    }
+    // 첨부는 사람이 앞에서 기다린다. 수집 간격을 기다리게 두지 않는다.
+    if (await attachmentsWaiting()) {
+      await runChildOnce(ATTACHMENTS_ENTRY, ATTACHMENTS_TIMEOUT_MS, "첨부");
     }
   }
   return false;
@@ -231,6 +259,12 @@ async function runLoop(config: WorkerConfig): Promise<void> {
       await runChildOnce(PREWARM_ENTRY, PREWARM_TIMEOUT_MS, "요약 예열");
       if (stopping) break;
 
+      // 수집 중에 쌓인 첨부 일을 처리한다.
+      if (await attachmentsWaiting()) {
+        await runChildOnce(ATTACHMENTS_ENTRY, ATTACHMENTS_TIMEOUT_MS, "첨부");
+        if (stopping) break;
+      }
+
       // 자는 동안에도 화면의 "지금 수집" 을 본다. 오면 간격을 기다리지 않고 깬다.
       await sleepWatchingRequests(config.intervalMs);
     } else {
@@ -239,6 +273,11 @@ async function runLoop(config: WorkerConfig): Promise<void> {
       if (requested !== null) {
         console.log(`[worker] 운영 시간대 밖이지만 요청이 있어 돌립니다(${requested}).`);
         await runChildOnce(COLLECT_ENTRY, config.timeoutMs, "수집");
+        if (stopping) break;
+      }
+      // 운영 시간대 밖이라도 첨부는 처리한다. 사람이 앞에서 기다리는 일이다.
+      if (await attachmentsWaiting()) {
+        await runChildOnce(ATTACHMENTS_ENTRY, ATTACHMENTS_TIMEOUT_MS, "첨부");
         if (stopping) break;
       }
       await interruptibleSleep(Math.min(OFF_HOURS_CHECK_MS, config.intervalMs));

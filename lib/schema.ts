@@ -347,6 +347,30 @@ CREATE TABLE IF NOT EXISTS app_state (
 -- 케이스 대화의 한국어 번역.
 -- scope 는 'thread'(스레드 한 건) 또는 'case_desc'(최초 등록 본문)이고 ref_id 는 그 id 다.
 -- 스레드는 한 번 오면 바뀌지 않으므로 한 번 번역하면 다시 부르지 않는다.
+-- 첨부를 주고받는 작업 큐.
+--
+-- 첨부는 supportftp(CrushFTP)에 있고, 거기 로그인은 **진짜 브라우저**가 있어야 끝난다
+-- (redirect.html 이 JS 로 이동시킨다). 웹 컨테이너에는 브라우저가 없으므로 수집기 VM 이
+-- 대신 처리한다. 웹이 여기에 행을 넣고 worker 가 집어간다.
+--
+-- payload 는 base64 다. SQLite 의 BLOB 과 Postgres 의 BYTEA 를 가르지 않으려고 문자열로
+-- 둔다(용량은 33% 늘지만 상한이 작다). 일이 끝나면 비운다 — 케이스 첨부가 DB 에 쌓이면 안 된다.
+CREATE TABLE IF NOT EXISTS attachment_jobs (
+  job_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind        TEXT    NOT NULL,                     -- upload | download
+  request_id  INTEGER NOT NULL,
+  document_id INTEGER NOT NULL DEFAULT 0,           -- 다운로드일 때 attachments.document_id
+  file_name   TEXT    NOT NULL DEFAULT '',
+  payload     TEXT    NOT NULL DEFAULT '',          -- base64. 끝나면 비운다
+  state       TEXT    NOT NULL DEFAULT 'pending',   -- pending | running | done | failed
+  error       TEXT    NOT NULL DEFAULT '',
+  actor       TEXT    NOT NULL DEFAULT '',
+  created_at  TEXT    NOT NULL,
+  updated_at  TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachment_jobs_state ON attachment_jobs(state, job_id);
+
 CREATE TABLE IF NOT EXISTS text_translations (
   scope      TEXT NOT NULL,
   ref_id     INTEGER NOT NULL,

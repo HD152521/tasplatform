@@ -10,6 +10,7 @@
     "refresh": "node collector/login.ts --auto && node scripts/seed-session.ts",
     "collect": "node collector/collect.ts",
     "worker": "node collector/worker.ts",
+    "attachments": "node collector/attachments.ts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
