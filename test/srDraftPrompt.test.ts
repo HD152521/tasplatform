@@ -8,6 +8,7 @@ import {
   buildDraftUser,
   parseComposed,
   readMode,
+  stripUngroundedTag,
   systemPromptFor,
 } from "../lib/srDraftPrompt.ts";
 
@@ -166,4 +167,65 @@ test("다듬기일 때는 본문 라벨이 달라진다", () => {
   assert.match(tidy, /언어를 바꾸지 말고 다듬기만/);
   const translate = buildDraftUser({ content: "한국어", mode: "translate" });
   assert.ok(!translate.includes("언어를 바꾸지 말고"));
+});
+
+/* ------------------------------------------------------------------ *
+ * 제목 앞 대괄호
+ *
+ * 이 자리는 담당자가 "어떤 제품·컴포넌트가 문제인지" 보고 적는 곳이다. 모델이 채우게
+ * 두면 지어낸다 — 실제로 본문에 TPCF 10.4 라고 적혀 있는데 [TAS 2.3.4] 가 붙어 나왔다.
+ * 제품도 버전도 근거 없는 값이었고, 그대로 올라가면 케이스가 엉뚱한 팀으로 갈 수 있다.
+ * ------------------------------------------------------------------ */
+
+const FACTS = "TPCF 10.4 환경에서 Apps Manager 를 통해 Application 상태를 확인하는 중";
+
+test("지어낸 제품·버전은 떼어낸다", () => {
+  assert.equal(
+    stripUngroundedTag("[TAS 2.3.4] App Metrics showing as 0", FACTS),
+    "App Metrics showing as 0",
+  );
+});
+
+test("버전 하나만 틀려도 떼어낸다", () => {
+  // 10.5 는 본문에 없다. 한 글자 차이가 알려진 이슈 대조를 어긋나게 한다.
+  assert.equal(
+    stripUngroundedTag("[TPCF 10.5] App Metrics showing as 0", FACTS),
+    "App Metrics showing as 0",
+  );
+});
+
+test("본문에 있는 제품·버전은 남긴다", () => {
+  const subject = "[TPCF 10.4] App Metrics showing as 0";
+  assert.equal(stripUngroundedTag(subject, FACTS), subject);
+});
+
+test("본문에 있는 컴포넌트명도 남긴다", () => {
+  const subject = "[Apps Manager] App Metrics showing as 0";
+  assert.equal(stripUngroundedTag(subject, FACTS), subject);
+});
+
+test("대괄호가 없으면 그대로 둔다", () => {
+  assert.equal(stripUngroundedTag("App Metrics showing as 0", FACTS), "App Metrics showing as 0");
+});
+
+test("근거가 케이스 속성에서 와도 남긴다", () => {
+  // 담당자가 Prod Release 칸에 적었으면 그것도 근거다(본문에 없어도 된다).
+  const subject = "[TPCF 10.4] Something";
+  assert.equal(stripUngroundedTag(subject, "TPCF 10.4"), subject);
+});
+
+test("빈 대괄호는 근거가 없으므로 뗀다", () => {
+  assert.equal(stripUngroundedTag("[ ] Something", FACTS), "Something");
+});
+
+test("대소문자는 따지지 않는다", () => {
+  const subject = "[tpcf 10.4] Something";
+  assert.equal(stripUngroundedTag(subject, FACTS), subject);
+});
+
+test("두 프롬프트 모두 대괄호를 지어내지 말라고 못박는다", () => {
+  for (const prompt of [DRAFT_SYSTEM_PROMPT, TIDY_SYSTEM_PROMPT]) {
+    assert.match(prompt, /대괄호를 아예 쓰지 않습니다/);
+    assert.match(prompt, /추측해서 만들지/);
+  }
 });
