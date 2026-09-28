@@ -325,3 +325,53 @@ export async function uploadToCase(
 
   return { path, bytes: total, chunks: ranges.length, md5 };
 }
+
+/* ------------------------------------------------------------------ *
+ * 첨부 위치 읽기
+ * ------------------------------------------------------------------ */
+
+export interface FtpFileRef {
+  readonly site: string;
+  readonly caseId: number;
+  /** 사이트 루트 기준 경로. 예: 15588968/36416271/files_from_customer/om_restore.sh */
+  readonly path: string;
+}
+
+/**
+ * 저장된 doc_path 에서 첨부의 실제 위치를 뽑는다.
+ *
+ * 포털이 주는 링크는 파일이 아니라 **JS 로 이동시키는 페이지**다.
+ *
+ *   https://supportftp.broadcom.com/WebInterface/redirect.html?filePath=<site>/<case>/files_from_customer/<이름>
+ *
+ * 그래서 fetch 로 그 주소를 받으면 파일이 아니라 HTML 이 온다 — 첨부 다운로드가
+ * 안 되던 이유다. filePath 만 떼어 내면 실물은 사이트 루트 아래 그 경로에 있다.
+ *
+ * 모양이 다르면 null. 추측해서 경로를 만들지 않는다.
+ */
+export function parseFilePath(docPath: string): FtpFileRef | null {
+  let url: URL;
+  try {
+    url = new URL(docPath.trim());
+  } catch {
+    return null;
+  }
+  if (!isAllowedHost(url.hostname)) return null;
+
+  const raw = url.searchParams.get("filePath") ?? "";
+  const path = raw.replace(/^\/+/, "");
+  if (path === "") return null;
+  // 경로 이탈을 막는다. 사이트 루트 밖으로 나가는 요청을 만들지 않는다.
+  if (path.split("/").some((part) => part === "." || part === "..")) return null;
+
+  const [site, caseText] = path.split("/");
+  if (site === undefined || !/^\d+$/.test(site)) return null;
+  if (caseText === undefined || !/^\d+$/.test(caseText)) return null;
+
+  return { site, caseId: Number(caseText), path };
+}
+
+/** 그 첨부를 실제로 받아올 주소. */
+export function fileUrlFor(ref: FtpFileRef): string {
+  return `${FTP_ORIGIN}/${ref.path.split("/").map(encodeURIComponent).join("/")}`;
+}

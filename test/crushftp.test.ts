@@ -16,6 +16,8 @@ import {
   UploadError,
   c2fFrom,
   chunkRanges,
+  fileUrlFor,
+  parseFilePath,
   readCommandResult,
   readMd5,
   safeFileName,
@@ -155,4 +157,54 @@ test("md5 가 없으면 null — 확인 없이 성공으로 보지 않는다", (
 
 test("md5 모양이 아니면 읽지 않는다", () => {
   assert.equal(readMd5("<md5>not-a-hash</md5>"), null);
+});
+
+/* ------------------------------------------------------------------ *
+ * 첨부 위치 읽기
+ *
+ * 포털이 주는 링크는 파일이 아니라 JS 로 이동시키는 페이지다. 그래서 그 주소를
+ * 그대로 받으면 HTML 이 온다 — 첨부 다운로드가 안 되던 이유다.
+ * ------------------------------------------------------------------ */
+
+const REDIRECT = "https://supportftp.broadcom.com/WebInterface/redirect.html";
+
+test("filePath 에서 고객사·케이스·경로를 뽑는다", () => {
+  const ref = parseFilePath(`${REDIRECT}?filePath=${SITE}/${CASE}/${UPLOAD_FOLDER}/om_restore.sh`);
+  assert.equal(ref?.site, SITE);
+  assert.equal(ref?.caseId, CASE);
+  assert.equal(ref?.path, `${SITE}/${CASE}/${UPLOAD_FOLDER}/om_restore.sh`);
+});
+
+test("앞에 붙은 슬래시는 걷어낸다", () => {
+  const ref = parseFilePath(`${REDIRECT}?filePath=/${SITE}/${CASE}/${UPLOAD_FOLDER}/a.txt`);
+  assert.equal(ref?.path, `${SITE}/${CASE}/${UPLOAD_FOLDER}/a.txt`);
+});
+
+test("경로 이탈은 거부한다", () => {
+  assert.equal(parseFilePath(`${REDIRECT}?filePath=${SITE}/${CASE}/../../etc/passwd`), null);
+  assert.equal(parseFilePath(`${REDIRECT}?filePath=./${SITE}/${CASE}/a.txt`), null);
+});
+
+test("허용하지 않는 호스트는 거부한다", () => {
+  assert.equal(parseFilePath(`https://example.com/WebInterface/redirect.html?filePath=${SITE}/${CASE}/a.txt`), null);
+});
+
+test("모양이 다르면 null — 경로를 지어내지 않는다", () => {
+  assert.equal(parseFilePath(""), null);
+  assert.equal(parseFilePath("not a url"), null);
+  assert.equal(parseFilePath(`${REDIRECT}?filePath=`), null);
+  assert.equal(parseFilePath(`${REDIRECT}?site=${SITE}&case=${CASE}`), null, "업로드용 링크는 파일 링크가 아니다");
+  assert.equal(parseFilePath(`${REDIRECT}?filePath=abc/def/a.txt`), null, "숫자가 아닌 고객사·케이스");
+});
+
+test("받아올 주소를 만든다", () => {
+  const ref = parseFilePath(`${REDIRECT}?filePath=${SITE}/${CASE}/${UPLOAD_FOLDER}/a.txt`);
+  assert.equal(fileUrlFor(ref!), `https://supportftp.broadcom.com/${SITE}/${CASE}/${UPLOAD_FOLDER}/a.txt`);
+});
+
+test("이름에 공백이나 한글이 있어도 주소가 깨지지 않는다", () => {
+  const ref = parseFilePath(`${REDIRECT}?filePath=${SITE}/${CASE}/${UPLOAD_FOLDER}/점검 결과.txt`);
+  const url = fileUrlFor(ref!);
+  assert.doesNotThrow(() => new URL(url));
+  assert.ok(!url.includes(" "), "공백이 그대로 남으면 요청이 깨진다");
 });
