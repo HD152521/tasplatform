@@ -71,9 +71,10 @@ export async function POST(request: Request) {
     // 회전된 세션 쿠키를 DB 로 백업(재시작 후 hydrate 로 복원).
     await runSideEffect("create session→db", () => persistTeamSessionToDb(teamId));
 
-    // 새 케이스는 DB 에 행 자체가 없다. 진행중 목록을 한 번 받아 채워 넣는다.
+    // 새 케이스는 DB 에 행 자체가 없다. 진행중 목록을 한 번 받아 채워 넣고,
+    // 방금 만든 건은 본문·스레드까지 받아 둔다 — 안 그러면 열어도 내용이 비어 보인다.
     if (result.ok) {
-      await runSideEffect("create refresh", () => refreshOpenCases(client, teamId));
+      await runSideEffect("create refresh", () => refreshOpenCases(client, teamId, result.requestId));
     }
 
     await recordWriteAudit({

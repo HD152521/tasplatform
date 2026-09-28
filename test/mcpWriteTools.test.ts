@@ -27,14 +27,14 @@ const sampleCase = (requestId: number, status: string, teamId: string) => ({
 
 interface DepsTracker {
   deps: WriteDeps;
-  refreshOpenCasesCalls: Array<{ teamId?: string }>;
+  refreshOpenCasesCalls: Array<{ teamId?: string; detailFor?: number }>;
   refreshCaseThreadsCalls: Array<{ requestId: number }>;
   hasSession: boolean;
 }
 
 function fakeDeps(overrides: Partial<WriteDeps> & { hasSession?: boolean; dbFile?: string } = {}): DepsTracker {
   let persistCalled = 0;
-  const refreshOpenCasesCalls: Array<{ teamId?: string }> = [];
+  const refreshOpenCasesCalls: Array<{ teamId?: string; detailFor?: number }> = [];
   const refreshCaseThreadsCalls: Array<{ requestId: number }> = [];
   const hasSession = overrides.hasSession ?? true;
 
@@ -54,7 +54,10 @@ function fakeDeps(overrides: Partial<WriteDeps> & { hasSession?: boolean; dbFile
     refreshCaseThreads: overrides.refreshCaseThreads
       ?? (async (_client, requestId: number) => { refreshCaseThreadsCalls.push({ requestId }); return true; }),
     refreshOpenCases: overrides.refreshOpenCases
-      ?? (async (_client, teamId?: string) => { refreshOpenCasesCalls.push({ teamId }); return true; }),
+      ?? (async (_client, teamId?: string, detailFor?: number) => {
+        refreshOpenCasesCalls.push({ teamId, detailFor });
+        return true;
+      }),
     dbFile: overrides.dbFile,
   };
 
@@ -97,7 +100,7 @@ test("세션이 없으면 code=session 을 돌려주고 감사 로그에 failed:
   } finally { await cleanup(); }
 });
 
-test("성공하면 감사 로그에 ok 와 새 requestId 가 남고, refreshOpenCases 가 그 팀으로 호출된다", async () => {
+test("성공하면 감사 로그에 ok 와 새 requestId 가 남고, refreshOpenCases 가 그 팀·그 케이스로 호출된다", async () => {
   const { file, cleanup } = await tempDb();
   try {
     const tracker = fakeDeps({ dbFile: file });
@@ -108,7 +111,8 @@ test("성공하면 감사 로그에 ok 와 새 requestId 가 남고, refreshOpen
     if (!result.ok) return;
     assert.equal(result.requestId, 555);
 
-    assert.deepEqual(tracker.refreshOpenCasesCalls, [{ teamId: "acme" }]);
+    // detailFor 가 없으면 방금 올린 SR 을 열어도 본문이 비어 보인다(목록 항목에 본문이 없다).
+    assert.deepEqual(tracker.refreshOpenCasesCalls, [{ teamId: "acme", detailFor: 555 }]);
 
     const db = await openDb(file);
     try {
