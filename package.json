@@ -24,7 +24,8 @@
     "mcp": "node --conditions=react-server mcp/server.ts",
     "token": "node scripts/team-token.ts",
     "prewarm": "node collector/prewarm.ts",
-    "check:attachment": "node scripts/check-attachment.ts"
+    "check:attachment": "node scripts/check-attachment.ts",
+    "check:session": "node scripts/check-session.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

@@ -96,3 +96,96 @@ test("clear 후에는 hydrate 로 복원되지 않는다", async () => {
   assert.equal(existsSync(sessionPath), false, "clear 후엔 복원되지 않아야");
   await db.close();
 });
+
+/* ------------------------------------------------------------------ *
+ * 두 대(수집기 VM · 웹)에서 세션이 갈리는 문제
+ *
+ * 예전 규칙은 "파일이 있으면 그대로 둔다" 였다. 파일과 DB 를 늘 함께 갱신하는 한 대에서만
+ * 맞는 규칙이라, 수집기가 재로그인해 DB 를 갱신해도 웹의 낡은 파일이 남아 SR 등록만
+ * "세션이 만료되었습니다" 로 막혔다. 만료된 파일은 붙잡지 않는다.
+ * ------------------------------------------------------------------ */
+
+const HOUR_MS = 3_600_000;
+/** 실제 쿠키 값은 쓰지 않는다 — 판정에 쓰이는 것은 이름과 만료뿐이다. */
+function sessionJson(hoursFromNow: number): string {
+  return JSON.stringify({
+    cookies: [
+      { name: "sspsession", domain: ".access.broadcom.com", expires: (Date.now() + hoursFromNow * HOUR_MS) / 1000 },
+    ],
+  });
+}
+
+test("만료된 파일은 살아 있는 DB 세션으로 바뀐다", async () => {
+  const db = await openDb(join(mkdtempSync(join(tmpdir(), "sess-")), "sr.db"));
+  // 수집기가 방금 로그인해 DB 에 살아 있는 세션을 올려 둔 상태를 만든다.
+  const live = sessionJson(6);
+  writeFile(sessionPath, live);
+  writeFile(devicePath, '{"cookies":["_iat1=trust"]}');
+  await persistTeamSessionToDb(TEAM, db);
+
+  // 웹 쪽 파일은 나흘 전 것으로 멈춰 있다.
+  writeFile(sessionPath, sessionJson(-96));
+
+  await hydrateTeamSessionFromDb(TEAM, db);
+  assert.equal(
+    readFileSync(sessionPath, "utf8"), live,
+    "만료된 파일을 붙잡고 있으면 SR 등록이 계속 막힌다",
+  );
+
+  rmFiles();
+  await db.close();
+});
+
+test("만료된 파일을 만료된 DB 세션으로 바꾸지는 않는다", async () => {
+  const db = await openDb(join(mkdtempSync(join(tmpdir(), "sess-")), "sr.db"));
+  writeFile(sessionPath, sessionJson(-200)); // DB 에 들어갈 쪽이 더 낡았다
+  await persistTeamSessionToDb(TEAM, db);
+
+  const mine = sessionJson(-1); // 내 파일도 만료지만 그나마 최근
+  writeFile(sessionPath, mine);
+
+  await hydrateTeamSessionFromDb(TEAM, db);
+  assert.equal(
+    readFileSync(sessionPath, "utf8"), mine,
+    "둘 다 만료면 바꿔 얻는 것이 없다 — 파일에 남은 기기 신뢰 표식만 잃는다",
+  );
+
+  rmFiles();
+  await db.close();
+});
+
+test("살아 있는 파일은 DB 를 보지도 않고 그대로 둔다", async () => {
+  const db = await openDb(join(mkdtempSync(join(tmpdir(), "sess-")), "sr.db"));
+  writeFile(sessionPath, sessionJson(-96)); // DB 쪽은 만료본
+  writeFile(devicePath, '{"cookies":["_iat1=trust"]}');
+  await persistTeamSessionToDb(TEAM, db);
+
+  const fresh = sessionJson(12); // 방금 회전된 최신 파일
+  writeFile(sessionPath, fresh);
+
+  await hydrateTeamSessionFromDb(TEAM, db);
+  assert.equal(
+    readFileSync(sessionPath, "utf8"), fresh,
+    "최신 파일을 오래된 DB 로 되돌리면 세션이 만료된다",
+  );
+
+  rmFiles();
+  await db.close();
+});
+
+test("세션이 멀쩡해도 기기 파일이 없으면 그것만 복원한다", async () => {
+  const db = await openDb(join(mkdtempSync(join(tmpdir(), "sess-")), "sr.db"));
+  const fresh = sessionJson(12);
+  writeFile(sessionPath, fresh);
+  writeFile(devicePath, '{"cookies":["_iat1=trust"]}');
+  await persistTeamSessionToDb(TEAM, db);
+
+  rmSync(devicePath, { force: true });
+  await hydrateTeamSessionFromDb(TEAM, db);
+
+  assert.equal(existsSync(devicePath), true, "기기 파일은 복원돼야(OTP 재입력 방지)");
+  assert.equal(readFileSync(sessionPath, "utf8"), fresh, "세션 파일은 건드리지 않아야");
+
+  rmFiles();
+  await db.close();
+});
