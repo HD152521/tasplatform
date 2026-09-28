@@ -4,6 +4,7 @@ import {
   buildDraftUser,
   parseComposed,
   readMode,
+  stripUngroundedTag,
   systemPromptFor,
 } from "../../../../lib/srDraftPrompt.ts";
 
@@ -48,16 +49,21 @@ export async function POST(request: Request) {
 
   try {
     const mode = readMode(body.mode);
+    const productName = str(body.productName);
+    const componentName = str(body.componentName);
+    const release = str(body.release);
+    const subject = str(body.subject);
+
     const answer = await chat(
       systemPromptFor(mode),
       buildDraftUser({
         content,
         mode,
-        productName: str(body.productName),
-        componentName: str(body.componentName),
-        release: str(body.release),
+        productName,
+        componentName,
+        release,
         severity: str(body.severity),
-        subject: str(body.subject),
+        subject,
       }),
     );
     const composed = parseComposed(answer);
@@ -67,6 +73,13 @@ export async function POST(request: Request) {
         { status: 502 },
       );
     }
+
+    // 제목 앞 대괄호는 담당자가 "어떤 제품·컴포넌트가 문제인지" 보고 적는 자리다.
+    // 모델이 없는 버전을 지어 붙인 적이 있어(본문은 TPCF 10.4 인데 [TAS 2.3.4]),
+    // 근거가 없으면 떼어낸다. 담당자가 이미 적어 둔 제목도 근거로 인정한다.
+    const facts = [release, productName, componentName, subject, content].join(" ");
+    composed.subject = stripUngroundedTag(composed.subject, facts);
+
     return NextResponse.json({ ok: true, ...composed });
   } catch (error) {
     // 실패를 빈 결과로 돌려주지 않는다. 담당자가 원문을 잃지 않게 이유를 그대로 알린다.
