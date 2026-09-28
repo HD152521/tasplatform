@@ -145,6 +145,26 @@ VM 에는 Playwright 가 있어 JS 이동을 따라갈 수 있다. 업로드와 
 - lib/crushftp.ts 의 프로토콜은 그대로 쓸 수 있다 — 브라우저로 **로그인만** 하고,
   그 컨텍스트의 쿠키로 openFile/조각/closeFile 을 보내면 된다
 
+### 0단계 확인 결과 — 브라우저로 하면 전부 된다 (2026-09-28 실측)
+
+Playwright 컨텍스트(저장된 세션)로 `redirect.html?site=&case=` 에 이동한 뒤 잰 값이다.
+읽기 명령만 썼다.
+
+    [1차]  케이스 A   (10.7초)   getUsername success=true, 묶임=A
+                                 privs=(read)(write)(view)(delete)(rename)(resume)(slideshow)
+    [2차]  케이스 B   ( 5.9초)   getUsername success=true, 묶임=B      ← 같은 컨텍스트에서 다시 이동만
+
+확인된 것:
+
+- 브라우저로 들어가면 **진짜 인증된 세션**이 나온다(success=true)
+- **케이스를 바꾸려고 logout 할 필요가 없다.** 같은 컨텍스트에서 다시 이동하면 다시 묶인다.
+  앞서 서버에서 logout 이 필요해 보였던 것은 fetch 로 하려다 생긴 착시였다
+- `files_from_customer` 에 **(write) 권한이 온다**
+- 고객사가 다른 케이스로 넘어가도 된다
+- 첫 진입 10초, 이후 6초. 브라우저를 한 번 띄워 두고 여러 건을 처리하는 편이 낫다
+
+따라서 계획대로 진행할 수 있다. 1단계(작업 전달 틀) → 2단계(다운로드) → 3단계(업로드).
+
 ### 다음 후보
 
 1. **수집기(VM)가 올린다.** 브라우저가 있으니 케이스별 OAuth 묶기를 할 수 있다.
