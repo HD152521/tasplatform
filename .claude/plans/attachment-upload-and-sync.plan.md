@@ -111,6 +111,40 @@ closeFile   command, c2f, upload_id, total_chunks, total_bytes, filePath, lastMo
 그래서 라우트와 화면 버튼은 올리지 않았다. 지금 배포하면 버튼이 거의 항상 실패한다.
 프로토콜 구현(lib/crushftp.ts)과 테스트는 남겨 둔다 — 막힌 건 묶기 한 단계뿐이다.
 
+### 결정적 사실 — CrushFTP 로그인에는 브라우저가 필요하다 (2026-09-28 실측)
+
+`redirect.html?site=&case=` 는 302 가 아니라 **자바스크립트로 이동시키는 200 HTML** 이다.
+
+    if (!url) url = window.location.href;
+    function redirect() { $(location).attr("href", url); }
+
+`fetch` 는 이 이동을 따라갈 수 없다. 그래서 웹 컨테이너에서는 CrushFTP 에 **로그인 자체가
+안 된다.** 갓 로그인한(`npm run login --auto`) 세션으로 확인한 결과:
+
+    getUsername    200  이지만 success 아님,  묶인 케이스 없음
+    getXMLListing  404  (인증 안 된 호출)
+
+**이것이 첨부 다운로드가 안 되던 진짜 이유이기도 하다.** lib/attachmentWarmup.ts 는
+쿠키만 받아올 뿐 로그인을 끝내지 못한다. allow-list·쿠키 단지·예열을 붙여도 막힌 곳은
+거기가 아니었다.
+
+### 그래서 첨부는 수집기(VM)가 다룬다
+
+VM 에는 Playwright 가 있어 JS 이동을 따라갈 수 있다. 업로드와 다운로드 **둘 다** 같은 길을 쓴다.
+
+    업로드    화면에서 파일 → DB 에 잠깐 보관 → worker 가 브라우저로 케이스에 진입해 올림
+    다운로드  worker 가 브라우저로 받아 두고, 웹은 그것을 내려줌
+
+요청 전달은 `지금 수집` 이 만든 구조(app_state)를 그대로 쓴다.
+
+주의할 점:
+
+- 파일이 DB 를 거친다. 크기 상한을 낮게 잡는다(수 MB). 큰 것은 포털에서 직접 올리게 둔다
+- 올린 뒤 DB 에서 지운다. 케이스 첨부가 DB 에 쌓이면 안 된다
+- 브라우저 한 번 띄우는 데 수십 초가 든다. 사람이 기다리므로 진행 상태를 계속 보여준다
+- lib/crushftp.ts 의 프로토콜은 그대로 쓸 수 있다 — 브라우저로 **로그인만** 하고,
+  그 컨텍스트의 쿠키로 openFile/조각/closeFile 을 보내면 된다
+
 ### 다음 후보
 
 1. **수집기(VM)가 올린다.** 브라우저가 있으니 케이스별 OAuth 묶기를 할 수 있다.
