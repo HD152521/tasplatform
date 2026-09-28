@@ -1,5 +1,6 @@
 import { getLastRun, listCasesSplit, type CaseListRow } from "../lib/queries.ts";
 import { CaseList } from "./CaseList.tsx";
+import { CollectButton } from "./CollectButton.tsx";
 import { COLOR, Notice, formatStamp } from "./ui.tsx";
 
 export const dynamic = "force-dynamic";
@@ -27,9 +28,16 @@ export default async function CaseListPage() {
   return (
     <>
       <header style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
-          진행중 케이스
-        </h1>
+        {/* 제목과 버튼을 한 줄에 둔다. 좁은 화면에서는 버튼이 아래로 내려간다. */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 12, flexWrap: "wrap",
+        }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
+            진행중 케이스
+          </h1>
+          <CollectButton />
+        </div>
         <p style={{ margin: "7px 0 0", fontSize: 13 }}>
           {/* 숫자를 나열하지 말고, 지금 해야 할 일을 문장으로 먼저 말한다. */}
           <span style={{

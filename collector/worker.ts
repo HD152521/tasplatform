@@ -18,12 +18,17 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isWithinHours, parseHours, resolveDurationMs } from "./schedule.ts";
 import { isCloudFoundry } from "./launchPlan.ts";
+import { openDb } from "../lib/db.ts";
+import { markCollectHandled, pendingCollectRequest } from "../lib/collectRequest.ts";
 
 const DEFAULT_INTERVAL_MS = 900_000; // 15분
 const MIN_INTERVAL_MS = 1_000; // CPU 를 태우지 않기 위한 안전 하한
 // 상한: 24시간. setTimeout 이 2^31-1ms 초과분을 1ms 로 클램프해 tight loop 가 되는 것을 막는다.
 const MAX_INTERVAL_MS = 86_400_000;
 const OFF_HOURS_CHECK_MS = 60_000; // 운영 시간대 밖일 때 재확인 주기
+// 화면의 "지금 수집" 을 얼마나 빨리 알아채는가. 사람이 버튼을 누르고 기다리는 구간이라
+// 짧게 잡는다. 이 간격마다 DB 를 한 번 읽는다(값 두 칸이라 가볍다).
+const REQUEST_POLL_MS = 15_000;
 
 const DEFAULT_TIMEOUT_MS = 300_000; // 5분 — collect 의 REQUEST_DELAY 등을 감안해도 넉넉하다
 const MIN_TIMEOUT_MS = 30_000; // 너무 짧으면 정상 회차를 죽인다
@@ -93,6 +98,54 @@ function interruptibleSleep(ms: number): Promise<void> {
       resolveSleep();
     };
   });
+}
+
+/**
+ * 화면에서 "지금 수집" 을 눌렀는지 본다. 눌렀으면 그 시각을, 아니면 null.
+ *
+ * 집어가는 표시를 여기서 함께 한다 — 회차를 돌리기 전에 찍어야 5분 도는 동안 같은
+ * 요청을 다시 보고 또 돌리는 일이 없다.
+ *
+ * DB 를 못 읽어도 루프를 세우지 않는다. 정기 수집은 이것과 무관하게 돌아야 한다.
+ */
+async function takeCollectRequest(): Promise<string | null> {
+  try {
+    const db = await openDb();
+    try {
+      const at = await pendingCollectRequest(db);
+      if (at === null) return null;
+      await markCollectHandled(db, at);
+      return at;
+    } finally {
+      await db.close();
+    }
+  } catch (error) {
+    console.error("[worker] 수집 요청 확인 실패(정기 수집은 계속):", error instanceof Error ? error.message : String(error));
+    return null;
+  }
+}
+
+/**
+ * ms 동안 자되, 중간에 "지금 수집" 요청이 오면 바로 깬다.
+ *
+ * interruptibleSleep 을 짧게 여러 번 나눠 걸고 사이마다 DB 를 본다. 시그널로 깨우는
+ * 길(wakeSleeper)은 그대로 살아 있어야 하므로 그 함수를 그대로 쓴다.
+ * 요청 때문에 깼으면 true — 부르는 쪽이 즉시 한 회차를 돌린다.
+ */
+async function sleepWatchingRequests(ms: number): Promise<boolean> {
+  let left = ms;
+  while (left > 0 && !stopping) {
+    const chunk = Math.min(REQUEST_POLL_MS, left);
+    await interruptibleSleep(chunk);
+    left -= chunk;
+    if (stopping) return false;
+    const requested = await takeCollectRequest();
+    if (requested !== null) {
+      console.log(`[worker] 화면에서 수집을 요청했습니다(${requested}) — 지금 한 회차를 돌립니다.`);
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -178,9 +231,16 @@ async function runLoop(config: WorkerConfig): Promise<void> {
       await runChildOnce(PREWARM_ENTRY, PREWARM_TIMEOUT_MS, "요약 예열");
       if (stopping) break;
 
-      await interruptibleSleep(config.intervalMs);
+      // 자는 동안에도 화면의 "지금 수집" 을 본다. 오면 간격을 기다리지 않고 깬다.
+      await sleepWatchingRequests(config.intervalMs);
     } else {
-      // 운영 시간대 밖 — 이번 회차는 건너뛰고 짧게 자다 재확인한다.
+      // 운영 시간대 밖 — 정기 회차는 건너뛴다. 그래도 사람이 직접 요청했으면 돌린다.
+      const requested = await takeCollectRequest();
+      if (requested !== null) {
+        console.log(`[worker] 운영 시간대 밖이지만 요청이 있어 돌립니다(${requested}).`);
+        await runChildOnce(COLLECT_ENTRY, config.timeoutMs, "수집");
+        if (stopping) break;
+      }
       await interruptibleSleep(Math.min(OFF_HOURS_CHECK_MS, config.intervalMs));
     }
   }
