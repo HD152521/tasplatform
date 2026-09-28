@@ -73,14 +73,16 @@ export function CollectButton() {
     setNote("수집을 요청했습니다. 수집기가 집어가길 기다립니다…");
     setTone("ok");
 
-    let requestedAt: string;
+    let ticket: { seq: number; afterRunId: number };
     try {
       const response = await fetch("/api/collect", { method: "POST" });
-      const data = (await response.json()) as { ok?: boolean; requestedAt?: string; message?: string };
-      if (data.ok !== true || typeof data.requestedAt !== "string") {
+      const data = (await response.json()) as {
+        ok?: boolean; seq?: number; afterRunId?: number; message?: string;
+      };
+      if (data.ok !== true || typeof data.seq !== "number") {
         throw new Error(data.message ?? "요청을 남기지 못했습니다.");
       }
-      requestedAt = data.requestedAt;
+      ticket = { seq: data.seq, afterRunId: data.afterRunId ?? 0 };
     } catch (error) {
       if (!alive.current) return;
       setPhase("error");
@@ -99,7 +101,7 @@ export function CollectButton() {
 
       let data: StatusReply;
       try {
-        const response = await fetch(`/api/collect?since=${encodeURIComponent(requestedAt)}`);
+        const response = await fetch(`/api/collect?seq=${ticket.seq}&after=${ticket.afterRunId}`);
         data = (await response.json()) as StatusReply;
       } catch {
         continue; // 한 번 못 물어본 것으로 포기하지 않는다
