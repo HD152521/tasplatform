@@ -29,19 +29,27 @@ interface StoredCookie {
   expires?: number;
 }
 
-/** teamId 를 생략하면 기본 팀의 세션 파일(기존 SESSION_FILE)을 본다. */
-export function getSessionStatus(teamId: string = DEFAULT_TEAM_ID): SessionStatus {
-  const path = resolve(sessionFileForTeam(teamId));
-  if (!existsSync(path)) {
-    return { exists: false, expiresAt: null, expired: true, deviceTrusted: false };
-  }
+/** 읽을 수 없는 세션은 만료로 본다 — 쓸 수 없다는 점에서 같다. */
+const UNUSABLE: SessionStatus = { exists: true, expiresAt: null, expired: true, deviceTrusted: false };
 
+/**
+ * 세션 JSON 문자열의 상태를 판정한다.
+ *
+ * 파일이 아니라 문자열을 받는다 — DB 백업 블롭(team_session_state.session_json)도
+ * 같은 규칙으로 재 봐야 하기 때문이다. 파일 mtime 을 보지 않으므로 수집기 VM 과
+ * 웹의 시계가 어긋나도 판정이 흔들리지 않는다.
+ */
+export function sessionStatusFromJson(json: string): SessionStatus {
   let cookies: StoredCookie[] = [];
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as { cookies?: StoredCookie[] };
-    cookies = parsed.cookies ?? [];
+    const parsed = JSON.parse(json) as { cookies?: StoredCookie[] };
+    // 이름이 문자열인 것만 남긴다. DB 백업 블롭은 어떤 모양으로든 올 수 있고, 여기서
+    // 터지면 쓰기 라우트가 hydrate 단계에서 500 으로 죽는다(세션 안내조차 못 한다).
+    cookies = (parsed.cookies ?? []).filter(
+      (c): c is StoredCookie => typeof (c as StoredCookie | undefined)?.name === "string",
+    );
   } catch {
-    return { exists: true, expiresAt: null, expired: true, deviceTrusted: false };
+    return UNUSABLE;
   }
 
   const now = Date.now();
@@ -63,4 +71,17 @@ export function getSessionStatus(teamId: string = DEFAULT_TEAM_ID): SessionStatu
     expired: expiresAt === null ? true : expiresAt <= now,
     deviceTrusted,
   };
+}
+
+/** teamId 를 생략하면 기본 팀의 세션 파일(기존 SESSION_FILE)을 본다. */
+export function getSessionStatus(teamId: string = DEFAULT_TEAM_ID): SessionStatus {
+  const path = resolve(sessionFileForTeam(teamId));
+  if (!existsSync(path)) {
+    return { exists: false, expiresAt: null, expired: true, deviceTrusted: false };
+  }
+  try {
+    return sessionStatusFromJson(readFileSync(path, "utf8"));
+  } catch {
+    return UNUSABLE;
+  }
 }

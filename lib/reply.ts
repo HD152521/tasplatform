@@ -26,22 +26,42 @@ export type ReplyResult =
   | { ok: true; message: string }
   | { ok: false; code: "session" | "version" | "failed"; message: string };
 
-/** 케이스의 현재 version. 답글 전송에 반드시 필요하다. */
+/**
+ * 케이스의 현재 version. 답글 전송에 반드시 필요하다.
+ *
+ * **왜 실패 이유를 나눠 돌려주는가.** 예전에는 어떤 실패든 null 이었다. 그래서 세션이
+ * 만료돼 401 이 와도 화면에는 "케이스 상태를 읽지 못했습니다. 잠시 후 다시 시도하세요"
+ * 가 떴고, 담당자는 기다리기만 했다 — 실제로 할 일은 다시 로그인하는 것이었다.
+ * 사람이 다음에 할 행동이 갈리므로 여기서 구분해 올린다.
+ */
+type VersionRead =
+  | { ok: true; version: number }
+  | { ok: false; reason: "session" | "failed"; detail: string };
+
 async function readVersion(
   client: ApiClient,
   requestId: number,
-): Promise<number | null> {
+): Promise<VersionRead> {
   const url =
     `${API_ORIGIN}/request/specific_request_details` +
     `?requestId=${requestId}&sections=REQUEST_MASTER`;
   const response = await client.get(url, { headers: API_HEADERS });
-  if (!response.ok()) return null;
+  if (response.status() === 401) return { ok: false, reason: "session", detail: "HTTP 401" };
+  if (!response.ok()) return { ok: false, reason: "failed", detail: `HTTP ${response.status()}` };
 
-  const body = (await response.json()) as {
-    data?: { RequestDetails?: { requestMasterVO?: { version?: number } } };
-  };
+  // 세션이 죽으면 401 이 아니라 로그인 화면(HTML)이 200 으로 오는 경우도 있다.
+  // 그때 json() 이 던지는 것을 여기서 받아 "읽지 못했다"로 돌린다.
+  let body: { data?: { RequestDetails?: { requestMasterVO?: { version?: number } } } };
+  try {
+    body = (await response.json()) as typeof body;
+  } catch {
+    return { ok: false, reason: "session", detail: "응답이 JSON 이 아님(로그인 화면일 수 있음)" };
+  }
   const version = body.data?.RequestDetails?.requestMasterVO?.version;
-  return typeof version === "number" ? version : null;
+  if (typeof version !== "number") {
+    return { ok: false, reason: "failed", detail: "응답에 version 이 없음" };
+  }
+  return { ok: true, version };
 }
 
 export async function postReply(
@@ -49,14 +69,22 @@ export async function postReply(
   requestId: number,
   text: string,
 ): Promise<ReplyResult> {
-  const version = await readVersion(client, requestId);
-  if (version === null) {
+  const read = await readVersion(client, requestId);
+  if (!read.ok) {
+    if (read.reason === "session") {
+      return {
+        ok: false,
+        code: "session",
+        message: "세션이 만료되었습니다. 다시 로그인하세요.",
+      };
+    }
     return {
       ok: false,
       code: "version",
-      message: "케이스 상태를 읽지 못했습니다. 잠시 후 다시 시도하세요.",
+      message: `케이스 상태를 읽지 못했습니다 (${read.detail}). 잠시 후 다시 시도하세요.`,
     };
   }
+  const version = read.version;
 
   const payload = {
     requestIdFormatted: String(requestId),

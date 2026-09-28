@@ -39,7 +39,7 @@ export interface WriteDeps {
     input: { subject: string; content: string; priorityId: number; productId?: number; componentId?: number },
   ) => Promise<CreateResult>;
   refreshCaseThreads: (client: ApiClient, requestId: number) => Promise<boolean>;
-  refreshOpenCases: (client: ApiClient, teamId?: string) => Promise<boolean>;
+  refreshOpenCases: (client: ApiClient, teamId?: string, detailFor?: number) => Promise<boolean>;
   /** 세션/기기 파일을 DB 백업에서 복원(쓰기 전). 재시작으로 파일이 없을 때 필요하다. */
   hydrateSession?: (teamId: string) => Promise<void>;
   /** 회전된 세션을 DB 로 백업(쓰기 후). */
@@ -116,7 +116,8 @@ export async function createSrHandler(
   }
   if (result.ok) {
     // 새 케이스가 이 팀 소유로 찍히도록 teamId 를 넘긴다 (이월 항목: team_id 배선).
-    await runSideEffect("mcp create refresh", () => deps.refreshOpenCases(client, teamId));
+    // requestId 를 함께 넘겨 본문·스레드까지 받아 둔다 — 화면에서 바로 읽을 수 있어야 한다.
+    await runSideEffect("mcp create refresh", () => deps.refreshOpenCases(client, teamId, result.requestId));
   }
 
   await recordWriteAudit(
