@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AttachmentLink } from "./AttachmentLink.tsx";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { needsTranslation } from "../../../lib/caseTranslate.ts";
@@ -306,17 +307,13 @@ function FileRow({ doc, compact = false }: { doc: AttachmentViewRow; compact?: b
     </>
   );
 
-  // 첨부는 서버 프록시(/api/attachments/[id])가 팀 세션으로 대신 받아 내려준다.
-  // doc_path 로 바로 걸면 세션 없는 브라우저가 Broadcom 사이트로 튕겨 파일이 안 받아진다.
+  // 첨부는 수집기(브라우저가 있는 기계)가 받아 온다. 여기서는 그 결과를 받아 저장한다.
+  // <a download> 을 쓰지 않는 이유는 AttachmentLink 머리말 참고 — 그 방식은 서버가
+  // 무엇을 돌려주든 파일로 저장해, 실패하면 오류 본문이 첨부 이름으로 저장된다.
   if (doc.doc_path === "" || doc.document_id <= 0) return <div style={style}>{inner}</div>;
   return (
-    <a
-      href={`/api/attachments/${doc.document_id}`}
-      download={doc.doc_name === "" ? undefined : doc.doc_name}
-      rel="noreferrer"
-      style={style}
-    >
+    <AttachmentLink documentId={doc.document_id} fileName={doc.doc_name} style={style}>
       {inner}
-    </a>
+    </AttachmentLink>
   );
 }

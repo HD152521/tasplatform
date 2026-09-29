@@ -80,20 +80,6 @@ async function fetchViaWorker(
   }
 }
 
-/**
- * 파일을 못 내줄 때는 **원본으로 보낸다**.
- *
- * 오류 본문을 돌려주면 <a download> 가 그것을 첨부 이름으로 저장해 열리지 않는 파일이
- * 된다. 원본으로 보내면 담당자가 Broadcom 에서 로그인하고 직접 받을 수 있다.
- * 사유는 헤더에 남겨 둔다 — 개발자 도구로 볼 수 있고, 파일로 저장되지는 않는다.
- */
-function bounce(source: string, why: string): Response {
-  return new Response(null, {
-    status: 302,
-    headers: { Location: source, "X-Sr-Reason": encodeURIComponent(why) },
-  });
-}
-
 /** 한글 등 비 ASCII 파일명을 안전하게 붙인다(RFC 5987). */
 function contentDisposition(name: string): string {
   const fallback = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_") || "download";
@@ -150,10 +136,9 @@ export async function GET(
     payload = await fetchViaWorker(documentId, doc.request_id, doc.doc_name);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // 오류 본문을 그대로 돌려주면 화면의 <a download> 가 그것을 첨부 이름으로 저장해
-    // "사용할 수 없는 파일" 이 된다 — 우리가 고치려던 바로 그 증상이다.
-    // 차라리 Broadcom 으로 보낸다. 거기서 로그인하고 직접 받을 수 있다.
-    return bounce(source, message);
+    // 화면이 fetch 로 받아 이 메시지를 그 자리에 보여준다(AttachmentLink).
+    // 예전처럼 Broadcom 으로 튕겨 보내지 않는다 — 자동으로 받아오는 것이 이 기능의 목적이다.
+    return NextResponse.json({ ok: false, message }, { status: 502 });
   }
   const bytes = Buffer.from(payload, "base64");
 
