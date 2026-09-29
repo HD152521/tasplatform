@@ -22,6 +22,8 @@ const POLL_MS = 3_000;
 const PICKUP_LIMIT_MS = 90_000;
 /** 한 회차 상한(worker 기본값과 같다). 넘으면 붙잡지 않고 놓아준다. */
 const RUN_LIMIT_MS = 360_000;
+/** 끝난 결과 문구를 얼마나 두고 볼 것인가. 읽을 시간은 되되 화면에 눌어붙지는 않게. */
+const DONE_LINGER_MS = 12_000;
 
 type Phase = "idle" | "queued" | "running" | "done" | "error";
 
@@ -142,6 +144,19 @@ export function CollectButton() {
         setNote(summary.text);
         // 목록을 다시 읽어 새 답변이 그 자리에서 보이게 한다.
         router.refresh();
+
+        // 결과 문구를 잠시 뒤 치운다.
+        //
+        // 안 치우면 "수집 완료 — 새 답변 없음" 이 화면에 계속 남는다. 시간이 지나면
+        // 그게 **언제 것인지** 알 수 없고, 다음에 눌렀을 때도 같은 문장이면 눌린 건지
+        // 아닌지 구분이 안 된다. 실패는 사람이 조치해야 하므로 그대로 둔다.
+        if (summary.tone === "ok") {
+          setTimeout(() => {
+            if (!alive.current) return;
+            setNote("");
+            setPhase("idle");
+          }, DONE_LINGER_MS);
+        }
         return;
       }
 
