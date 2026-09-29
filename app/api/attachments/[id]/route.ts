@@ -1,71 +1,83 @@
 /**
- * 첨부 다운로드 프록시.
+ * 첨부 다운로드.
  *
- * 그동안 화면의 첨부 링크는 docFullPath 로 바로 이어져, 클릭하면 로그인 세션이 없는
- * 브라우저가 Broadcom 사이트로 튕겨 나갔다(파일이 받아지지 않음). 여기서 서버가 팀
- * 세션 쿠키로 대신 받아, Content-Disposition: attachment 로 그대로 흘려보낸다.
+ * **여기서 직접 받지 않는다.** 첨부는 supportftp(CrushFTP)에 있고, 그 로그인은
+ * redirect.html 이 JS 로 이동시켜 끝난다 — fetch 로는 인증 자체가 안 된다.
+ * 예전에는 그걸 모르고 여기서 받아 보려다 로그인 화면(HTML)을 첨부 이름으로 저장해,
+ * 화면에서 "사용할 수 없는 파일" 이 됐다.
  *
- * 브라우저를 띄우지 않는다(collector/httpClient.ts 의 fetchClient 와 같은 쿠키 방식).
- * 다만 파일은 바이너리라 텍스트로 읽는 fetchClient 대신 CookieJar 로 직접 스트리밍한다.
+ * 그래서 브라우저가 있는 수집기 VM 에 일을 맡긴다(attachment_jobs). 여기서는 일을
+ * 넣고 기다렸다가 받아온 내용을 흘려보낸다. 처음 한 번은 수십 초가 걸린다 —
+ * 수집기가 집어가는 데 최대 15초, 브라우저 진입에 10초.
  */
 import { NextResponse } from "next/server";
-import { CookieJar } from "../../../../collector/cookieJar.ts";
-import { API_HEADERS, API_ORIGIN, sessionFileForTeam } from "../../../../lib/config.ts";
+import { API_ORIGIN } from "../../../../lib/config.ts";
 import { getAttachment } from "../../../../lib/queries.ts";
-import { isAllowedHost, resolveAttachmentUrl } from "../../../../lib/attachmentSource.ts";
-import { hasTeamSession, resolveActorTeam, runSideEffect } from "../../../../lib/requestAudit.ts";
-import { hydrateTeamSessionFromDb, persistTeamSessionToDb } from "../../../../lib/sessionStore.ts";
+import { resolveAttachmentUrl } from "../../../../lib/attachmentSource.ts";
+import { hasTeamSession, resolveActorTeam } from "../../../../lib/requestAudit.ts";
+import { hydrateTeamSessionFromDb } from "../../../../lib/sessionStore.ts";
+import { openDb } from "../../../../lib/db.ts";
+import {
+  enqueueDownload,
+  getJobPayload,
+  getJobStatus,
+} from "../../../../lib/attachmentJobs.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-/** 리다이렉트를 몇 번까지 따라갈지. OAuth 왕복이 서너 번이라 넉넉히 둔다. */
-const MAX_HOPS = 8;
+// 수집기가 받아올 때까지 기다린다. WAIT_MS 보다 넉넉해야 기다리는 도중에 잘리지 않는다.
+export const maxDuration = 180;
 
 /**
- * 쿠키를 들고 리다이렉트를 따라간다.
+ * 수집기가 받아올 때까지 기다리는 상한.
  *
- * fetch 의 redirect:"follow" 는 쿠키 단지를 모른다. supportftp 는 세션이 없으면
- * access.broadcom.com 으로 OAuth 를 돌고 _codexch 로 돌아오며 **hop 마다 쿠키를
- * 심는다**. 그걸 주고받지 않으면 끝내 로그인 화면이 돌아온다. 그래서 직접 따라가며
- * hop 마다 Cookie 를 붙이고 Set-Cookie 를 단지에 담는다.
- *
- * 따라가는 곳은 허용 호스트로 제한한다 — 열린 리다이렉트를 타고 엉뚱한 곳으로
- * 서버가 대리 요청을 보내면 안 된다.
+ * 집어가는 데 최대 15초(worker 확인 주기), 브라우저 진입에 10초, 파일 받는 데 몇 초.
+ * 넉넉히 두되 무한정 붙잡지는 않는다 — 사람이 앞에서 기다린다.
  */
-async function followWithJar(start: string, jar: CookieJar): Promise<Response> {
-  let url = start;
-  for (let hop = 0; hop < MAX_HOPS; hop += 1) {
-    const at = new URL(url);
-    const cookie = jar.header(at);
-    const response = await fetch(url, {
-      headers: { ...API_HEADERS, ...(cookie === "" ? {} : { Cookie: cookie }) },
-      redirect: "manual",
-    });
-    jar.apply(response.headers.getSetCookie(), at);
+const WAIT_MS = 120_000;
+/** 얼마나 자주 확인할지. */
+const POLL_MS = 1_500;
 
-    const location = response.headers.get("location");
-    if (response.status < 300 || response.status >= 400 || location === null) return response;
 
-    const next = new URL(location, at);
-    if (next.protocol !== "https:" && next.protocol !== "http:") return response;
-    if (!isAllowedHost(next.hostname)) return response;
-    url = next.toString();
+
+/**
+ * 수집기에 일을 맡기고 결과를 기다린다. 받아온 내용(base64)을 돌려준다.
+ *
+ * 같은 첨부가 이미 대기·처리 중이면 그 일을 함께 기다린다(enqueueDownload 가 합친다).
+ * 브라우저 한 번 띄우는 데 10초라, 여러 사람이 같은 파일을 눌러도 한 번만 받아온다.
+ */
+async function fetchViaWorker(
+  documentId: number,
+  requestId: number,
+  fileName: string,
+): Promise<string> {
+  const db = await openDb();
+  try {
+    const jobId = await enqueueDownload(db, { documentId, requestId, fileName });
+    const deadline = Date.now() + WAIT_MS;
+
+    for (;;) {
+      const status = await getJobStatus(db, jobId);
+      if (status === null) throw new Error("첨부 작업이 사라졌습니다. 다시 시도하세요.");
+      if (status.state === "failed") throw new Error(status.error || "첨부를 가져오지 못했습니다.");
+      if (status.state === "done") {
+        const full = await getJobPayload(db, jobId);
+        if (full === null || full.payload === "") {
+          // 치워진 뒤에 물어본 경우다. 다시 요청하면 받아온다.
+          throw new Error("받아 둔 내용이 사라졌습니다. 다시 시도하세요.");
+        }
+        return full.payload;
+      }
+      if (Date.now() > deadline) {
+        throw new Error(
+          "수집기가 첨부를 가져오는 데 시간이 오래 걸립니다. 잠시 후 다시 눌러 주세요.",
+        );
+      }
+      await new Promise((r) => setTimeout(r, POLL_MS));
+    }
+  } finally {
+    await db.close();
   }
-  throw new Error(`리다이렉트가 ${MAX_HOPS}번을 넘었습니다`);
-}
-
-/**
- * 파일을 못 내줄 때는 **원본으로 보낸다**.
- *
- * 오류 본문을 그대로 돌려주면 화면의 <a download> 가 그것을 첨부 이름으로 저장해
- * 열리지 않는 파일이 된다. 차라리 Broadcom 으로 보내면 거기서 로그인하고 받을 수 있다.
- */
-function bounce(source: string, why: string): Response {
-  return new Response(null, {
-    status: 302,
-    headers: { Location: source, "X-Sr-Reason": encodeURIComponent(why) },
-  });
 }
 
 /** 한글 등 비 ASCII 파일명을 안전하게 붙인다(RFC 5987). */
@@ -114,54 +126,31 @@ export async function GET(
     );
   }
 
-  const sessionFile = sessionFileForTeam(teamId);
-  const jar = CookieJar.fromFile(sessionFile);
-
-  let upstream: Response;
+  // 첨부는 수집기(브라우저가 있는 기계)가 받아 온다.
+  //
+  // 여기서 직접 받을 수 없다. supportftp 의 로그인은 redirect.html 이 **JS 로** 이동시켜
+  // 끝나므로 fetch 로는 인증 자체가 안 된다. 예전에는 그걸 모르고 여기서 받아 보려다
+  // 로그인 화면(HTML)을 파일로 저장해, 화면에서 "사용할 수 없는 파일" 이 됐다.
+  let payload: string;
   try {
-    upstream = await followWithJar(source, jar);
+    payload = await fetchViaWorker(documentId, doc.request_id, doc.doc_name);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json(
-      { ok: false, message: `첨부를 가져오지 못했습니다: ${message}` },
-      { status: 502 },
-    );
+    return NextResponse.json({ ok: false, message }, { status: 502 });
   }
+  const bytes = Buffer.from(payload, "base64");
 
-  // 회전된 세션 쿠키를 반영해 되돌린다(다음 요청 401 방지). 실패해도 다운로드는 막지 않는다.
-  await runSideEffect("attachment persist", () => jar.persist(sessionFile));
-  await runSideEffect("attachment session→db", () => persistTeamSessionToDb(teamId));
 
-  if (upstream.status === 401) return bounce(source, "세션이 만료되었습니다");
-  if (!upstream.ok || upstream.body === null) {
-    return bounce(source, `원본 응답 오류 (HTTP ${upstream.status})`);
-  }
-
-  // 로그인 페이지를 파일로 저장해 버리는 것을 막는다.
-  //
-  // supportftp 는 세션이 없으면 OAuth 로 302 를 보내고, 그 끝에서 **HTTP 200 + HTML**
-  // 로그인 화면을 준다. 그대로 흘리면 브라우저가 <a download> 때문에 그 HTML 을
-  // 첨부 이름으로 저장하고, 열리지 않는 파일이 된다. 첨부 자체가 html 인 경우가
-  // 아니라면 여기서 끊는다.
-  const upstreamType = (upstream.headers.get("content-type") ?? "").toLowerCase();
-  const wantsHtml = doc.content_type.toLowerCase().includes("html")
-    || /\.html?$/i.test(doc.doc_name);
-  if (!wantsHtml && upstreamType.includes("text/html")) {
-    return bounce(source, "Broadcom 로그인이 필요합니다");
-  }
-
-  // 저장된 content_type 을 우선하고, 없으면 업스트림 값, 그것도 없으면 범용 바이너리.
-  const contentType =
-    doc.content_type !== ""
-      ? doc.content_type
-      : upstream.headers.get("content-type") ?? "application/octet-stream";
-  const headers: Record<string, string> = {
-    "Content-Type": contentType,
-    "Content-Disposition": contentDisposition(doc.doc_name || `attachment-${documentId}`),
-    "Cache-Control": "private, no-store",
-  };
-  const length = upstream.headers.get("content-length");
-  if (length !== null) headers["Content-Length"] = length;
-
-  return new Response(upstream.body, { status: 200, headers });
+  // 저장된 content_type 을 우선한다. 수집기가 받아온 것은 이미 파일이므로
+  // 로그인 화면인지 가릴 필요가 없다 — 그 판정은 받아오는 쪽에서 이미 했다.
+  const contentType = doc.content_type !== "" ? doc.content_type : "application/octet-stream";
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      "Content-Type": contentType,
+      "Content-Disposition": contentDisposition(doc.doc_name || `attachment-${documentId}`),
+      "Content-Length": String(bytes.byteLength),
+      "Cache-Control": "private, no-store",
+    },
+  });
 }
