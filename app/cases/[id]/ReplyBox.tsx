@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { COLOR, Card, RADIUS, controlStyle } from "../../ui.tsx";
+import { AttachButton } from "./AttachButton.tsx";
 
 /**
  * 답변 작성란.
@@ -138,6 +139,12 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
           <div style={{
             display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap",
           }}>
+            {/*
+              파일 붙이기는 답변 전송과 **별개로** 바로 올라간다(첨부는 포털이 아니라
+              supportftp 로 가고, 수집기가 따로 처리한다). 그래도 사람은 "답변 쓰는 자리"
+              에서 파일을 찾으므로 같은 줄에 둔다 — 버튼 이름과 title 로 별개임을 말한다.
+            */}
+            <AttachButton requestId={requestId} />
             {/* 한국어로 적고 보내기 전에 영문으로 바꾼다. 전송 바로 옆에 둔다. */}
             <Convert
               label={composing === "translate" ? "번역 중…" : "번역"}
