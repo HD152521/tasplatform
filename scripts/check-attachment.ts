@@ -148,6 +148,31 @@ async function main(): Promise<void> {
         process.exitCode = 1;
         return;
       }
+      if (file.status() === 404 && c2f !== "") {
+        // 404 일 때 가장 알고 싶은 것은 "그럼 거기 뭐가 있나" 다.
+        // 이름이 어긋난 것인지, 정말로 치워진 것인지가 여기서 갈린다.
+        const folder = ref.path.slice(0, ref.path.lastIndexOf("/") + 1);
+        const form = new FormData();
+        form.append("command", "getXMLListing");
+        form.append("format", "JSONOBJ");
+        form.append("path", `/${folder}`);
+        form.append("c2f", c2f);
+        form.append("random", String(Math.random()));
+        const url = new URL(`${FTP_ORIGIN}/WebInterface/function/`);
+        const listed = await fetch(url, {
+          method: "POST",
+          headers: { ...API_HEADERS, Cookie: jar.header(url) },
+          body: form,
+        });
+        const body = await listed.text();
+        const names = [...body.matchAll(/"name"s*:s*"([^"]*)"/g)].map((m) => m[1] ?? "");
+        console.log("");
+        line("폴더", `/${folder}`);
+        line("찾는 이름", ref.path.slice(ref.path.lastIndexOf("/") + 1));
+        line("실제 목록", names.length === 0 ? "(비어 있음)" : "");
+        for (const name of names.slice(0, 20)) console.log(`                     ${name}`);
+        if (names.length > 20) console.log(`                     … 외 ${names.length - 20}개`);
+      }
       if (file.status() === 404) {
         console.log("\n  ✗ 파일이 서버에 없습니다(404).");
         console.log("    Broadcom 이 오래된 업로드를 치웁니다. 우리 DB 에만 남아 있는 첨부입니다.");
