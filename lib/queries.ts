@@ -5,6 +5,7 @@
  * Broadcom 쪽 트래픽은 0이다.
  */
 import { TRANSLATE_LANG } from "./caseTranslate.ts";
+import { inlineImageIds } from "./inlineImages.ts";
 import { loadTranslations, openDb, type Db } from "./db.ts";
 
 export interface CaseListRow {
@@ -141,6 +142,34 @@ export function getCase(requestId: number, options: TeamScopedQueryOptions = {})
       ? await db.all(sql, [teamId, requestId])
       : await db.all(sql, [requestId]);
     return toPlain<CaseListRow>(rows)[0] ?? null;
+  }, dbFile);
+}
+
+/**
+ * 답변 본문에 박혀 온 이미지. 스레드 id → 이미지 id 목록.
+ *
+ * **body_html 을 화면으로 내리지 않는다.** 메일 원문이 통째로 들어 있어 스레드 하나가
+ * 수십 KB 다. 여기서 id 만 뽑아 넘기면 화면이 받는 것은 짧은 문자열 몇 개뿐이다.
+ *
+ * 이미지가 없는 스레드는 아예 담지 않는다 — 대부분이 그렇다.
+ */
+export function listThreadInlineImages(
+  requestId: number,
+  dbFile?: string,
+): Promise<Map<number, string[]>> {
+  return withDb(async (db) => {
+    const rows = toPlain<{ thread_id: number; body_html: string }>(
+      await db.all(
+        "SELECT thread_id, body_html FROM threads WHERE request_id = ? AND body_html <> ''",
+        [requestId],
+      ),
+    );
+    const out = new Map<number, string[]>();
+    for (const row of rows) {
+      const ids = inlineImageIds(row.body_html);
+      if (ids.length > 0) out.set(row.thread_id, ids);
+    }
+    return out;
   }, dbFile);
 }
 
