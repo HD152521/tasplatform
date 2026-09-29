@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { AttachmentLink } from "./AttachmentLink.tsx";
+import { InlineImages } from "./InlineImages.tsx";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { needsTranslation } from "../../../lib/caseTranslate.ts";
 import {
-  getCase, isClosedStatus, listAttachments, listThreads, loadCaseTranslations, markCaseRead,
+  getCase, isClosedStatus, listAttachments, listThreadInlineImages, listThreads,
+  loadCaseTranslations, markCaseRead,
   type AttachmentViewRow,
 } from "../../../lib/queries.ts";
 import { Badge, COLOR, Card, MONO_STACK, RADIUS, formatStamp, statusColors } from "../../ui.tsx";
@@ -30,6 +32,7 @@ export default async function CaseDetailPage({
   const detail = await getCase(requestId);
   if (detail === null) notFound();
 
+  const inlineImages = await listThreadInlineImages(requestId);
   const threads = await listThreads(requestId);
   const attachments = await listAttachments(requestId);
   await markCaseRead(requestId);
@@ -137,6 +140,8 @@ export default async function CaseDetailPage({
                   latest={latest}
                 />
                 <Body text={shown("thread", thread.thread_id, thread.body_text)} />
+                {/* Broadcom 이 본문에 박아 보낸 화면 캡처. 첨부와 달리 글 안에 있다. */}
+                <InlineImages ids={inlineImages.get(thread.thread_id) ?? []} />
                 {docs.length > 0 && <Files docs={docs} />}
               </Card>
             );
