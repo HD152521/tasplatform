@@ -9,14 +9,13 @@
  *
  *   GET  /WebInterface/redirect.html?site=<site>&case=<case>
  *          → access.broadcom.com OAuth → /_codexch → 302 /<site>/<case>/
- *   POST /WebInterface/function/  command=openFile
- *   POST /U/<uploadId>~<n>~<len>  ← 조각. 1부터. 본문은 **날바이트**
- *   POST /WebInterface/function/  command=closeFile  → 응답에 md5
+ *   PUT  /<site>/<case>/files_from_customer/<이름>   ← 올리기. 본문이 곧 파일이다
+ *   POST /WebInterface/function/  command=getXMLListing  ← 올라갔는지 눈으로 확인
  *
  * ## 두 가지를 문서에서 확인했다 (추측하지 않았다)
  *
- * - 조각 본문은 멀티파트가 아니라 **날바이트**다. 브라우저 업로더는 멀티파트로 감싸지만
- *   API 가 받는 것은 본문 그대로다. 그래서 필드 이름이라는 것이 없다.
+ * - 올리기는 **PUT 한 번**이면 된다. 처음에는 브라우저가 쓰는 조각 방식을 흉내 냈는데
+ *   실제로는 파일이 올라가지 않았다(uploadToCase 머리말 참고).
  * - `c2f` 는 상수가 아니라 **CrushAuth 쿠키의 마지막 4글자**다. 캡처에서 늘 같은 값이라
  *   상수로 볼 뻔했는데, 그랬으면 다른 세션에서 조용히 실패했을 것이다.
  *   https://www.crushftp.com/crush11wiki/Wiki.jsp?page=APIFileTransfer
@@ -26,7 +25,6 @@
  * getUsername 응답이 `…,^<site>^<case>^` 를 돌려준다. 쿠키만 있다고 올릴 수 있는 것이
  * 아니라 반드시 redirect.html 을 먼저 거쳐야 한다.
  */
-import { createHash } from "node:crypto";
 import { CookieJar } from "../collector/cookieJar.ts";
 import { API_HEADERS } from "./config.ts";
 import { isAllowedHost } from "./attachmentSource.ts";
@@ -34,8 +32,6 @@ import { isAllowedHost } from "./attachmentSource.ts";
 export const FTP_ORIGIN = "https://supportftp.broadcom.com";
 /** 고객이 올리는 파일이 들어가는 폴더. 루트에는 쓰기 권한이 없다. */
 export const UPLOAD_FOLDER = "files_from_customer";
-/** 조각 크기. 실측 브라우저가 쓰는 값과 같다(문서 상한은 10MB). */
-export const CHUNK_BYTES = 512 * 1024;
 /** 리다이렉트를 따라갈 최대 횟수. OAuth 왕복이 서너 번이라 넉넉히 둔다. */
 const MAX_HOPS = 8;
 
@@ -91,26 +87,10 @@ export function c2fFrom(jar: CookieJar): string {
   return value.slice(-4);
 }
 
-/** 조각 경계. 마지막 조각만 작다. */
-export function chunkRanges(total: number, size = CHUNK_BYTES): Array<{ start: number; end: number }> {
-  if (total <= 0) throw new UploadError("rejected", "빈 파일은 올리지 않습니다.");
-  const out: Array<{ start: number; end: number }> = [];
-  for (let start = 0; start < total; start += size) {
-    out.push({ start, end: Math.min(start + size, total) });
-  }
-  return out;
-}
-
 /** CrushFTP 가 돌려주는 XML 한 겹을 벗긴다. 실패면 null. */
 export function readCommandResult(xml: string): string | null {
   const m = /<response>([\s\S]*?)<\/response>/i.exec(xml);
   return m === null ? null : (m[1] ?? "").trim();
-}
-
-/** closeFile 응답의 md5. 없으면 null. */
-export function readMd5(xml: string): string | null {
-  const m = /<md5>([0-9a-f]{32})<\/md5>/i.exec(xml);
-  return m === null ? null : (m[1] ?? "").toLowerCase();
 }
 
 /**
@@ -258,8 +238,21 @@ export interface UploadResult {
 /**
  * 파일 하나를 올린다.
  *
- * 서버가 돌려준 md5 를 우리가 계산한 것과 **대조한다.** 조각이 하나라도 어긋나면
- * 손상된 파일이 케이스에 남는데, 사람은 그걸 알 방법이 없다.
+ * **PUT 한 번이다.** 처음에는 브라우저가 쓰는 방식(openFile → 조각 → closeFile)을
+ * 그대로 흉내 냈는데, 실제로 돌려 보니 파일이 올라가지 않았다. 조각 본문이
+ * multipart 인지 날바이트인지 문서가 말하지 않고, 브라우저는 multipart 로 보냈지만
+ * 필드 이름은 캡처에 안 잡혔다(Playwright 가 512KB 본문을 안 내준다). 추측해서
+ * 맞출 문제가 아니었다.
+ *
+ * 문서에 훨씬 단순한 길이 있다 — 목적지 경로로 PUT 하면 끝이다.
+ *
+ *     curl -T KB2.txt -u user:pass http://127.0.0.1:8080/KB2.txt
+ *
+ * 필드 이름을 추측할 일도, 조각 경계를 맞출 일도 없다.
+ * https://www.crushftp.com/crush11wiki/Wiki.jsp?page=APIFileTransfer
+ *
+ * **올린 뒤 폴더를 읽어 확인한다.** 서버가 200 을 주고도 아무것도 저장하지 않는 일을
+ * 실제로 겪었다. 이름과 크기가 목록에 보여야 성공으로 본다 — md5 를 믿는 것보다 확실하다.
  */
 export async function uploadToCase(
   jar: CookieJar,
@@ -267,63 +260,48 @@ export async function uploadToCase(
 ): Promise<UploadResult> {
   const path = uploadPathFor(options.site, options.caseId, options.fileName);
   const total = options.bytes.byteLength;
-  const ranges = chunkRanges(total);
+  if (total === 0) throw new UploadError("rejected", "빈 파일은 올리지 않습니다.");
   const c2f = c2fFrom(jar);
-  // 브라우저가 쓰는 모양(영숫자 소문자)을 따른다. 서버는 우리가 정한 값을 그대로 쓴다.
-  const uploadId = `sr${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
-  await command(jar, {
-    command: "openFile",
-    c2f,
-    upload_path: path,
-    upload_size: String(total),
-    upload_id: uploadId,
-    start_resume_loc: "0",
+  const target = new URL(`${FTP_ORIGIN}${path.split("/").map(encodeURIComponent).join("/")}`);
+  const cookie = jar.header(target);
+  const response = await fetch(target, {
+    method: "PUT",
+    headers: {
+      ...API_HEADERS,
+      "content-type": "application/octet-stream",
+      "content-length": String(total),
+      ...(cookie === "" ? {} : { Cookie: cookie }),
+    },
+    body: options.bytes as unknown as BodyInit,
   });
+  jar.apply(response.headers.getSetCookie(), target);
+  const said = (await response.text()).replace(/s+/g, " ").trim();
 
-  for (const [index, range] of ranges.entries()) {
-    const body = options.bytes.subarray(range.start, range.end);
-    const url = new URL(`${FTP_ORIGIN}/U/${uploadId}~${index + 1}~${body.byteLength}`);
-    const cookie = jar.header(url);
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        ...API_HEADERS,
-        // 조각은 날바이트다. 멀티파트로 감싸지 않는다.
-        "content-type": "application/octet-stream",
-        ...(cookie === "" ? {} : { Cookie: cookie }),
-      },
-      body: body as unknown as BodyInit,
-    });
-    jar.apply(response.headers.getSetCookie(), url);
-    if (!response.ok) {
-      throw new UploadError(
-        "rejected",
-        `${index + 1}/${ranges.length} 번째 조각을 올리지 못했습니다 (HTTP ${response.status}).`,
-      );
-    }
+  if (response.status === 401 || response.status === 403) {
+    throw new UploadError("session", `첨부 서버가 거부했습니다 (HTTP ${response.status}). 다시 로그인하세요.`);
+  }
+  if (!response.ok) {
+    throw new UploadError("rejected", `올리지 못했습니다 (HTTP ${response.status}). ${said.slice(0, 160)}`);
   }
 
-  const closed = await command(jar, {
-    command: "closeFile",
+  // 올라갔는지 실제로 본다. 200 을 주고도 저장하지 않는 경우가 있었다.
+  const folder = path.slice(0, path.lastIndexOf("/") + 1);
+  const listed = await command(jar, {
+    command: "getXMLListing",
+    format: "JSONOBJ",
+    path: folder,
     c2f,
-    upload_id: uploadId,
-    total_chunks: String(ranges.length),
-    total_bytes: String(total),
-    filePath: path,
-    lastModified: String(Date.now()),
   });
-
-  const md5 = readMd5(closed);
-  const mine = createHash("md5").update(options.bytes).digest("hex");
-  if (md5 === null) {
-    throw new UploadError("mismatch", "서버가 파일 확인값을 돌려주지 않았습니다. 포털에서 확인하세요.");
-  }
-  if (md5 !== mine) {
-    throw new UploadError("mismatch", "올라간 파일이 원본과 다릅니다. 다시 시도하세요.");
+  const wanted = safeFileName(options.fileName);
+  if (!listed.includes(`"${wanted}"`)) {
+    throw new UploadError(
+      "mismatch",
+      `올렸는데 폴더에 보이지 않습니다. 포털에서 확인하세요. (응답: ${said.slice(0, 80) || "(빈 응답)"})`,
+    );
   }
 
-  return { path, bytes: total, chunks: ranges.length, md5 };
+  return { path, bytes: total, chunks: 1, md5: "" };
 }
 
 /* ------------------------------------------------------------------ *
