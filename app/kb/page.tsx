@@ -2,6 +2,7 @@ import { kbTranslationRefs } from "../../lib/kbTranslate.ts";
 import {
   countKbScanned, listKbArticles, loadCaseTranslations, type KbViewRow,
 } from "../../lib/queries.ts";
+import { CollectButton } from "../CollectButton.tsx";
 import { COLOR, Card, Notice } from "../ui.tsx";
 import { KbList } from "./KbList.tsx";
 
@@ -28,9 +29,16 @@ export default async function KbPage() {
   return (
     <>
       <header style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
-          기술 문서
-        </h1>
+        {/* 제목과 버튼을 한 줄에 둔다. 좁은 화면에서는 버튼이 아래로 내려간다. */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 12, flexWrap: "wrap",
+        }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
+            기술 문서
+          </h1>
+          <CollectButton kind="kb" />
+        </div>
         <p style={{ margin: "7px 0 0", fontSize: 13 }}>
           <span style={{
             color: match > 0 ? COLOR.waitUs : COLOR.muted,

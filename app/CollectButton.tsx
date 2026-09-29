@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { DEFAULT_COLLECT_KIND, type CollectKind } from "../lib/collectKind.ts";
 import { COLOR, controlStyle } from "./ui.tsx";
 
 /**
@@ -15,15 +16,33 @@ import { COLOR, controlStyle } from "./ui.tsx";
  *   요청함 → 수집기가 집어가길 기다림 → 수집 중 → 끝. 새 답변 N건
  *
  * 끝나면 router.refresh() 로 목록을 다시 읽는다. 새 답변이 있으면 그 자리에서 보인다.
+ *
+ * 종류(kind)마다 기다리는 시간과 할 말이 다르다. 케이스 수집만 runs 에 회차를 남겨
+ * "새 답변 N건" 을 말할 수 있고, 보안 공지·기술 문서 수집기는 아무 숫자도 남기지 않는다.
+ * 그래서 그 둘에는 숫자를 만들어 붙이지 않는다 — 없는 것을 아는 척하는 쪽이 더 나쁘다.
  */
 
 const POLL_MS = 3_000;
 /** 이 시간 안에 수집기가 집어가지 않으면 수집기가 안 도는 것으로 본다. */
 const PICKUP_LIMIT_MS = 90_000;
-/** 한 회차 상한(worker 기본값과 같다). 넘으면 붙잡지 않고 놓아준다. */
-const RUN_LIMIT_MS = 360_000;
+/**
+ * 한 회차 상한(수집기 쪽 상한과 짝을 맞춘다 — collector/worker.ts). 넘으면 붙잡지 않고
+ * 놓아준다. 기술 문서는 본문을 건당 0.9초 간격으로 받아 몇 분이 걸리므로 길게 둔다.
+ */
+const RUN_LIMIT_MS: Record<CollectKind, number> = {
+  cases: 360_000,
+  cves: 360_000,
+  kb: 660_000,
+};
 /** 끝난 결과 문구를 얼마나 두고 볼 것인가. 읽을 시간은 되되 화면에 눌어붙지는 않게. */
 const DONE_LINGER_MS = 12_000;
+
+/** 수집 중에 보여줄 말. 얼마나 기다려야 하는지 함께 말한다. */
+const RUNNING_NOTE: Record<CollectKind, string> = {
+  cases: "수집 중입니다… (보통 10초 안에 끝납니다)",
+  cves: "보안 공지를 받는 중입니다… (NVD 한도 때문에 1분쯤 걸립니다)",
+  kb: "기술 문서를 받는 중입니다… (몇 분 걸릴 수 있습니다)",
+};
 
 type Phase = "idle" | "queued" | "running" | "done" | "error";
 
@@ -39,11 +58,18 @@ interface StatusReply {
   ok?: boolean;
   state?: "idle" | "queued" | "running" | "done";
   run?: RunInfo | null;
+  /** 케이스가 아닌 종류의 성공 여부(수집기 자식 프로세스 종료 결과). */
+  succeeded?: boolean;
   message?: string;
 }
 
+interface Summary {
+  tone: "ok" | "warn" | "error";
+  text: string;
+}
+
 /** 끝난 회차를 한 문장으로. 숫자만 늘어놓지 않고 무엇을 뜻하는지 말한다. */
-function describeRun(run: RunInfo | null): { tone: "ok" | "warn" | "error"; text: string } {
+function describeRun(run: RunInfo | null): Summary {
   if (run === null) return { tone: "warn", text: "수집 기록을 읽지 못했습니다." };
   if (run.status === "session_expired") {
     // 이걸 "새 답변 0건" 으로 보여주면 안 된다 — 아예 못 읽은 것이다.
@@ -61,7 +87,28 @@ function describeRun(run: RunInfo | null): { tone: "ok" | "warn" | "error"; text
   return { tone: "ok", text: `수집 완료 — 새 답변 없음 (케이스 ${run.cases_seen}건 확인)` };
 }
 
-export function CollectButton() {
+/**
+ * 끝난 요청을 한 문장으로. 종류마다 아는 것이 다르다.
+ *
+ * 보안 공지·기술 문서는 몇 건을 받았는지 화면이 알 길이 없다(수집기가 표준출력에만
+ * 적는다). 그래서 건수를 말하지 않고, 대신 목록을 다시 읽었다는 사실과 어디를 보면
+ * 되는지를 말한다. 성공 여부만은 수집기가 남겨 주므로 실패는 실패라고 말한다.
+ */
+function describeDone(kind: CollectKind, reply: StatusReply): Summary {
+  if (kind === "cases") return describeRun(reply.run ?? null);
+  if (reply.succeeded === false) {
+    return { tone: "error", text: "수집에 실패했습니다. 수집기 로그를 확인하세요." };
+  }
+  if (kind === "cves") {
+    return { tone: "ok", text: "수집 완료 — 목록을 다시 읽었습니다 (받은 건수는 수집기 로그에 있습니다)" };
+  }
+  return {
+    tone: "ok",
+    text: "수집 완료 — 목록을 다시 읽었습니다. 판정은 이어서 돕니다(LLM 연결이 있을 때).",
+  };
+}
+
+export function CollectButton({ kind = DEFAULT_COLLECT_KIND }: { kind?: CollectKind }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("idle");
   const [note, setNote] = useState("");
@@ -77,7 +124,7 @@ export function CollectButton() {
 
     let ticket: { seq: number; afterRunId: number };
     try {
-      const response = await fetch("/api/collect", { method: "POST" });
+      const response = await fetch(`/api/collect?kind=${kind}`, { method: "POST" });
       const data = (await response.json()) as {
         ok?: boolean; seq?: number; afterRunId?: number; message?: string;
       };
@@ -103,7 +150,9 @@ export function CollectButton() {
 
       let data: StatusReply;
       try {
-        const response = await fetch(`/api/collect?seq=${ticket.seq}&after=${ticket.afterRunId}`);
+        const response = await fetch(
+          `/api/collect?kind=${kind}&seq=${ticket.seq}&after=${ticket.afterRunId}`,
+        );
         data = (await response.json()) as StatusReply;
       } catch {
         continue; // 한 번 못 물어본 것으로 포기하지 않는다
@@ -126,9 +175,9 @@ export function CollectButton() {
         if (!sawRunning) {
           sawRunning = true;
           setPhase("running");
-          setNote("수집 중입니다… (보통 10초 안에 끝납니다)");
+          setNote(RUNNING_NOTE[kind]);
         }
-        if (waited > RUN_LIMIT_MS) {
+        if (waited > RUN_LIMIT_MS[kind]) {
           setPhase("error");
           setTone("warn");
           setNote("수집이 예상보다 오래 걸립니다. 잠시 후 새로고침해 보세요.");
@@ -138,11 +187,11 @@ export function CollectButton() {
       }
 
       if (data.state === "done") {
-        const summary = describeRun(data.run ?? null);
+        const summary = describeDone(kind, data);
         setPhase("done");
         setTone(summary.tone);
         setNote(summary.text);
-        // 목록을 다시 읽어 새 답변이 그 자리에서 보이게 한다.
+        // 목록을 다시 읽어 새 항목이 그 자리에서 보이게 한다.
         router.refresh();
 
         // 결과 문구를 잠시 뒤 치운다.
@@ -166,7 +215,7 @@ export function CollectButton() {
       setNote(data.message ?? "상태를 알 수 없습니다.");
       return;
     }
-  }, [router]);
+  }, [kind, router]);
 
   const busy = phase === "queued" || phase === "running";
   const toneColor = tone === "ok" ? COLOR.ok : tone === "warn" ? COLOR.warn : COLOR.waitUs;
