@@ -6,7 +6,14 @@ import { EMPTY_PREVIOUS } from "../../../../lib/instanceCount.ts";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** 화면에서 온 값은 믿지 않는다. 음수·NaN·문자열이 그대로 DB 로 들어가면 안 된다. */
+/**
+ * 화면에서 온 값은 믿지 않는다. 음수·NaN·문자열이 그대로 DB 로 들어가면 안 된다.
+ *
+ * 소수는 거르지 않고 **적어 넣은 그대로** 저장한다(instance_counts 는 REAL).
+ * 여기서 반올림해 버리면 다음 달에 화면을 열었을 때 자기가 적은 133.4 가 133 으로
+ * 바뀌어 있다. 보고서에 들어갈 정수는 계산할 때 만든다 — lib/instanceCount.ts 의
+ * roundCount 주석에 어느 자리를 왜 골랐는지 적어 두었다.
+ */
 function readEnv(value: unknown): EnvCount | null {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as Record<string, unknown>;

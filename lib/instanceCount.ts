@@ -15,9 +15,12 @@
  *
  * 공동 인스턴스는 은행과 중앙회가 반씩 나눠 갖되, 홀수면 은행이 올림,
  * 중앙회가 내림이다. 실 운영 현황은 그 배분을 반영한 값이다.
+ *
+ * 입력은 소수일 수 있다(App Count 를 그대로 옮겨 적으면 133.4 가 나온다).
+ * 반올림은 roundCount 가 계산 입구에서 한 번만 한다 — 이유는 그 함수 주석에 적었다.
  */
 
-/** 사람이 입력하는 9개 값. */
+/** 사람이 입력하는 9개 값. 소수를 넣어도 되고, 계산 입구에서 정수로 반올림된다. */
 export interface InstanceInput {
   /** 은행 */
   bank: EnvCount;
@@ -104,6 +107,59 @@ export interface InstanceResult {
   carryOver: PreviousMonth;
 }
 
+/**
+ * 인스턴스 수 하나를 보고서에 들어갈 정수로 만든다. 0.5 는 올린다.
+ *
+ * ## 왜 하필 계산 입구에서 반올림하나
+ *
+ * 보고서 표에는 정수만 들어가므로 어딘가에서 한 번은 반올림해야 한다. 고를 수 있는
+ * 자리가 셋이었다.
+ *
+ *   1. 입력을 받는 순간 (app/api/report/instances) — 다음 달에 화면을 다시 열면
+ *      자기가 적은 133.4 가 133 으로 바뀌어 있다. 어디서 바뀐 건지 알 수 없고,
+ *      App Count 와 맞춰 볼 근거도 사라진다.
+ *   2. 보고서를 만들 때만 (lib/pptx.ts) — 화면 표는 1626.4, 보고서 표는 1626 이 된다.
+ *      검토하는 사람이 둘 중 무엇이 맞는지 알 수 없다.
+ *   3. 계산 입구 = 여기 — 저장은 입력 원본대로 남고(instance_counts 는 REAL),
+ *      화면과 보고서는 둘 다 calculateInstances 를 지나므로 같은 정수를 본다.
+ *
+ * 3번을 골랐다. 덧붙여, 아홉 칸을 먼저 정수로 맞추고 나면 그 뒤가 전부 정수 연산이라
+ * 행 합계·전월 대비 증감·공동 배분이 저절로 맞는다. 계산 결과를 행마다 따로
+ * 반올림하면 합계가 어긋난다 — 10월 값이 그 예로, 여섯 행의 합은 1627 인데
+ * 총합(1626.4)을 따로 반올림하면 1626 이 된다.
+ *
+ * 파이썬(scripts/build_report.py)에는 이미 정수로 찍은 문자열만 넘어간다.
+ * 파이썬 round() 는 은행가 반올림이라 round(136.5) == 136 이다 — 그 경로를
+ * 아예 만들지 않는 것이 이 함수가 여기 있는 또 하나의 이유다.
+ *
+ * 경계(API·MCP)에서 숫자인지 이미 검사하지만, 그래도 unknown 으로 받는다.
+ * 표에 NaN 이나 -0 이 찍히는 것보다는 0 이 낫다.
+ */
+export function roundCount(value: unknown): number {
+  // 문자열·null·NaN·Infinity. 여기까지 왔으면 경계 검사가 새어난 것이니 0 으로 막는다.
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  // 음수도 0 이다. 인스턴스가 음수인 달은 없고, Math.round(-0.5) 는 -0 을 낸다.
+  if (value <= 0) return 0;
+  // 양수에서 Math.round 는 0.5 를 올린다 — 요구사항이 바로 그 규칙이다(사사오입 아님).
+  return Math.round(value);
+}
+
+function roundEnv(env: EnvCount): EnvCount {
+  return { dev: roundCount(env.dev), prod: roundCount(env.prod), dr: roundCount(env.dr) };
+}
+
+/** 전월값도 같은 규칙으로 맞춘다. 안 그러면 증감만 소수로 남는다. */
+function roundPrevious(previous: PreviousMonth): PreviousMonth {
+  return {
+    bankProd: roundCount(previous.bankProd),
+    bankProdShared: roundCount(previous.bankProdShared),
+    bankDev: roundCount(previous.bankDev),
+    bankDevShared: roundCount(previous.bankDevShared),
+    centralProd: roundCount(previous.centralProd),
+    centralDev: roundCount(previous.centralDev),
+  };
+}
+
 /** 공동 인스턴스 배분: 은행이 올림, 중앙회가 내림. */
 function splitShared(shared: number): { bank: number; central: number } {
   return { bank: Math.ceil(shared / 2), central: Math.floor(shared / 2) };
@@ -115,10 +171,19 @@ function withNote(value: number, note: string): string {
 }
 
 export function calculateInstances(
-  input: InstanceInput,
-  previous: PreviousMonth,
+  rawInput: InstanceInput,
+  rawPrevious: PreviousMonth,
   infra: Infra = DEFAULT_INFRA,
 ): InstanceResult {
+  // 아홉 칸을 먼저 정수로 맞춘다. 이 아래는 전부 정수 연산이므로 행 합계와 증감,
+  // 공동 배분이 따로 반올림할 것 없이 맞아떨어진다.
+  const input: InstanceInput = {
+    bank: roundEnv(rawInput.bank),
+    central: roundEnv(rawInput.central),
+    shared: roundEnv(rawInput.shared),
+  };
+  const previous = roundPrevious(rawPrevious);
+
   const bankProd = input.bank.prod + input.bank.dr - (input.shared.prod + input.shared.dr);
   const bankProdShared = input.shared.prod + input.shared.dr;
   const bankDev = input.bank.dev - input.shared.dev;
