@@ -9,6 +9,11 @@
  * 그래서 브라우저가 있는 수집기 VM 에 일을 맡긴다(attachment_jobs). 여기서는 일을
  * 넣고 기다렸다가 받아온 내용을 흘려보낸다. 처음 한 번은 수십 초가 걸린다 —
  * 수집기가 집어가는 데 최대 15초, 브라우저 진입에 10초.
+ *
+ * **다만 우리가 올린 첨부는 우리 사본으로 바로 준다.** 올린 파일은 supportftp 에 남지
+ * 않으므로(files_from_customer 는 투입구다 — lib/attachmentJobs.ts 머리말) 수집기에
+ * 맡겨도 404 만 돌아온다. 우리가 올릴 때 남겨 둔 payload 가 유일한 사본이고, 그건 이
+ * 자리에서 DB 로 꺼낼 수 있다 — 브라우저도 세션도 필요 없고 기다릴 이유도 없다.
  */
 import { NextResponse } from "next/server";
 import { API_ORIGIN } from "../../../../lib/config.ts";
@@ -19,6 +24,7 @@ import { hydrateTeamSessionFromDb } from "../../../../lib/sessionStore.ts";
 import { openDb } from "../../../../lib/db.ts";
 import {
   enqueueDownload,
+  findKeptUpload,
   getJobPayload,
   getJobStatus,
 } from "../../../../lib/attachmentJobs.ts";
@@ -38,7 +44,57 @@ const WAIT_MS = 120_000;
 /** 얼마나 자주 확인할지. */
 const POLL_MS = 1_500;
 
+/**
+ * 어디서 받은 것인지 화면에 알려주는 헤더.
+ *
+ * 같은 원본(fetch)으로 내려가므로 본문만 보면 구분이 안 된다. 사람에게는 차이가 있다 —
+ * 우리 사본은 우리가 보낸 파일이고 supportftp 에는 이미 없다. AttachmentLink 가 이 값을
+ * 읽어 한 줄로 알려준다.
+ */
+const SOURCE_HEADER = "X-Attachment-Source";
 
+/**
+ * 우리가 올려 둔 사본을 그 자리에서 꺼낸다. 없으면 null.
+ *
+ * 짝은 케이스 번호 + 파일 이름으로 맞춘다(findKeptUpload 주석에 같은 이름이 여러 번
+ * 올라간 경우의 규칙이 있다).
+ */
+async function readOurCopy(requestId: number, fileName: string): Promise<string | null> {
+  const db = await openDb();
+  try {
+    const kept = await findKeptUpload(db, { requestId, fileName });
+    return kept === null ? null : kept.payload;
+  } finally {
+    await db.close();
+  }
+}
+
+/**
+ * 받아 온 바이트를 파일로 흘려보낸다.
+ *
+ * 저장된 content_type 을 우선한다. 여기 닿은 것은 이미 파일이므로 로그인 화면인지 가릴
+ * 필요가 없다 — 그 판정은 받아오는 쪽(수집기)에서 이미 했고, 우리 사본은 애초에 우리가
+ * 올린 바이트다.
+ */
+function fileResponse(
+  // Buffer<ArrayBuffer> 로 좁힌다. 그냥 Buffer 는 ArrayBufferLike 라 Response 본문으로
+  // 받아 주지 않는다(SharedArrayBuffer 일 수 있어서다).
+  bytes: Buffer<ArrayBuffer>,
+  doc: { doc_name: string; content_type: string },
+  documentId: number,
+  source: "ours" | "portal",
+): Response {
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      "Content-Type": doc.content_type !== "" ? doc.content_type : "application/octet-stream",
+      "Content-Disposition": contentDisposition(doc.doc_name || `attachment-${documentId}`),
+      "Content-Length": String(bytes.byteLength),
+      "Cache-Control": "private, no-store",
+      [SOURCE_HEADER]: source,
+    },
+  });
+}
 
 /**
  * 수집기에 일을 맡기고 결과를 기다린다. 받아온 내용(base64)을 돌려준다.
@@ -109,6 +165,16 @@ export async function GET(
     return NextResponse.json({ ok: false, message: "첨부를 찾을 수 없습니다." }, { status: 404 });
   }
 
+  // 우리가 올린 첨부라면 우리 사본으로 그 자리에서 내려준다.
+  //
+  // 수집기에 맡겨도 받을 수 없는 파일이다 — files_from_customer 는 투입구라 Broadcom 이
+  // 가져가면 비워지고, 그다음부터는 404 다(lib/attachmentJobs.ts 머리말). 원본 경로도
+  // 세션도 쓰지 않으므로 아래 두 판정보다 **앞에서** 처리한다. 수십 초를 기다릴 이유도 없다.
+  const ours = await readOurCopy(doc.request_id, doc.doc_name);
+  if (ours !== null) {
+    return fileResponse(Buffer.from(ours, "base64"), doc, documentId, "ours");
+  }
+
   const source = resolveAttachmentUrl(doc.doc_path, API_ORIGIN);
   if (source === null) {
     return NextResponse.json(
@@ -140,19 +206,6 @@ export async function GET(
     // 예전처럼 Broadcom 으로 튕겨 보내지 않는다 — 자동으로 받아오는 것이 이 기능의 목적이다.
     return NextResponse.json({ ok: false, message }, { status: 502 });
   }
-  const bytes = Buffer.from(payload, "base64");
 
-
-  // 저장된 content_type 을 우선한다. 수집기가 받아온 것은 이미 파일이므로
-  // 로그인 화면인지 가릴 필요가 없다 — 그 판정은 받아오는 쪽에서 이미 했다.
-  const contentType = doc.content_type !== "" ? doc.content_type : "application/octet-stream";
-  return new Response(bytes, {
-    status: 200,
-    headers: {
-      "Content-Type": contentType,
-      "Content-Disposition": contentDisposition(doc.doc_name || `attachment-${documentId}`),
-      "Content-Length": String(bytes.byteLength),
-      "Cache-Control": "private, no-store",
-    },
-  });
+  return fileResponse(Buffer.from(payload, "base64"), doc, documentId, "portal");
 }

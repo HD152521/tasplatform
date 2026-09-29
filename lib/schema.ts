@@ -354,14 +354,19 @@ CREATE TABLE IF NOT EXISTS app_state (
 -- 대신 처리한다. 웹이 여기에 행을 넣고 worker 가 집어간다.
 --
 -- payload 는 base64 다. SQLite 의 BLOB 과 Postgres 의 BYTEA 를 가르지 않으려고 문자열로
--- 둔다(용량은 33% 늘지만 상한이 작다). 일이 끝나면 비운다 — 케이스 첨부가 DB 에 쌓이면 안 된다.
+-- 둔다(용량은 33% 늘지만 상한이 작다).
+--
+-- 업로드는 올린 뒤에도 남긴다(14일). supportftp 의 files_from_customer 는 보관소가 아니라
+-- 투입구라 Broadcom 이 가져가면 비워지고, 그러면 우리가 올린 파일을 우리가 다시 받을 길이
+-- 없다 — 이 행이 유일한 사본이다. 다운로드는 받아 둔 임시본이라 24시간만 두고 치운다.
+-- 자세한 근거는 lib/attachmentJobs.ts 머리말과 UPLOAD_KEEP_MS 주석에 있다.
 CREATE TABLE IF NOT EXISTS attachment_jobs (
   job_id      INTEGER PRIMARY KEY AUTOINCREMENT,
   kind        TEXT    NOT NULL,                     -- upload | download
   request_id  INTEGER NOT NULL,
   document_id INTEGER NOT NULL DEFAULT 0,           -- 다운로드일 때 attachments.document_id
   file_name   TEXT    NOT NULL DEFAULT '',
-  payload     TEXT    NOT NULL DEFAULT '',          -- base64. 끝나면 비운다
+  payload     TEXT    NOT NULL DEFAULT '',          -- base64. 업로드는 남기고 다운로드는 비운다
   state       TEXT    NOT NULL DEFAULT 'pending',   -- pending | running | done | failed
   error       TEXT    NOT NULL DEFAULT '',
   actor       TEXT    NOT NULL DEFAULT '',
