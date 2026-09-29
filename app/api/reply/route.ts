@@ -5,7 +5,11 @@ import { fetchClient } from "../../../collector/httpClient.ts";
 import { sessionFileForTeam } from "../../../lib/config.ts";
 import { refreshCaseThreads } from "../../../lib/refreshCase.ts";
 import { hasTeamSession, recordWriteAudit, resolveActorTeam, runSideEffect } from "../../../lib/requestAudit.ts";
-import { hydrateTeamSessionFromDb, persistTeamSessionToDb } from "../../../lib/sessionStore.ts";
+import {
+  hydrateTeamSessionFromDb,
+  persistTeamSessionToDb,
+  refreshTeamSessionFromDb,
+} from "../../../lib/sessionStore.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,7 +66,16 @@ export async function POST(request: Request) {
   // 답변 전송은 사람이 화면 앞에서 기다리는 구간이다.
   try {
     const client = fetchClient(sessionFileForTeam(teamId));
-    const result = await postReply(client, requestId, text);
+    let result = await postReply(client, requestId, text);
+
+    // 세션이 **만료 시각 전에도 죽는다.** 수집기가 재로그인하면 앞선 세션이 서버 쪽에서
+    // 무효가 되는데 쿠키의 만료 시각은 여전히 미래라, hydrate 는 "살아 있다" 고 보고
+    // DB 를 쳐다보지 않는다. Broadcom 이 401 을 주는 이 순간이 진실이다 —
+    // 최신본을 끌어와 **한 번만** 다시 보낸다. 사람이 앞에서 기다리는 구간이라
+    // 여러 번 되풀이하지 않는다.
+    if (!result.ok && result.code === "session" && await refreshTeamSessionFromDb(teamId)) {
+      result = await postReply(fetchClient(sessionFileForTeam(teamId)), requestId, text);
+    }
 
     // 쓰기(postReply) 결과가 이미 응답을 결정한다. 아래 부수효과(쿠키 저장·새로고침)가
     // 실패해도 성공을 실패로 뒤집으면 안 된다 — 안 그러면 사용자가 재시도해서

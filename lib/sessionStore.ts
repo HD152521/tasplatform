@@ -119,3 +119,38 @@ export async function clearTeamSessionInDb(teamId: string, existing?: Db): Promi
     if (!existing) await db.close();
   }
 }
+
+/**
+ * DB 의 세션을 **조건 없이** 로컬 파일로 덮어쓴다. 바뀌었으면 true.
+ *
+ * hydrate 는 로컬 파일의 쿠키 만료 시각만 본다. 그런데 **세션은 만료 시각이 오기 전에도
+ * 죽는다** — 수집기가 재로그인하면 서버 쪽에서 앞선 세션이 무효가 되는데, 그 쿠키의
+ * 만료 시각은 여전히 미래다. 그러면 웹은 "살아 있다" 고 보고 DB 를 쳐다보지 않은 채
+ * 죽은 세션으로 계속 요청을 보낸다. 사람은 "세션이 만료되었습니다" 만 반복해서 본다.
+ *
+ * Broadcom 이 401 을 주는 순간이 진실이다. 그때 이걸 불러 최신본을 끌어오고 한 번만
+ * 다시 시도한다. 평상시에는 부르지 않는다 — 조건 없이 덮어쓰므로, 방금 회전된 로컬
+ * 쿠키를 오래된 DB 로 되돌릴 수 있다.
+ */
+export async function refreshTeamSessionFromDb(teamId: string, existing?: Db): Promise<boolean> {
+  assertValidTeamId(teamId);
+  const sessionPath = resolve(sessionFileForTeam(teamId));
+  const devicePath = resolve(deviceFileForTeam(teamId));
+
+  const db = existing ?? (await openDb());
+  try {
+    const row = await db.get<SessionRow>(
+      "SELECT session_json, device_json FROM team_session_state WHERE team_id = ?",
+      [teamId],
+    );
+    if (!row || row.session_json === "") return false;
+    // 같은 내용이면 바꿀 것이 없다. 그대로 재시도해 봐야 또 401 이다.
+    if (readIfExists(sessionPath) === row.session_json) return false;
+
+    writeEnsured(sessionPath, row.session_json);
+    if (row.device_json && !existsSync(devicePath)) writeEnsured(devicePath, row.device_json);
+    return true;
+  } finally {
+    if (!existing) await db.close();
+  }
+}

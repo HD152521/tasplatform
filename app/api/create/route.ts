@@ -4,7 +4,11 @@ import { fetchClient } from "../../../collector/httpClient.ts";
 import { sessionFileForTeam } from "../../../lib/config.ts";
 import { refreshOpenCases } from "../../../lib/refreshCase.ts";
 import { hasTeamSession, recordWriteAudit, resolveActorTeam, runSideEffect } from "../../../lib/requestAudit.ts";
-import { hydrateTeamSessionFromDb, persistTeamSessionToDb } from "../../../lib/sessionStore.ts";
+import {
+  hydrateTeamSessionFromDb,
+  persistTeamSessionToDb,
+  refreshTeamSessionFromDb,
+} from "../../../lib/sessionStore.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -58,11 +62,21 @@ export async function POST(request: Request) {
     const client = fetchClient(sessionFileForTeam(teamId));
     const productId = Number(body.productId);
     const componentId = Number(body.componentId);
-    const result = await createCase(client, {
+    const draft = {
       subject, content, priorityId,
       productId: Number.isFinite(productId) ? productId : undefined,
       componentId: Number.isFinite(componentId) ? componentId : undefined,
-    });
+    };
+    let result = await createCase(client, draft);
+
+    // 세션이 **만료 시각 전에도 죽는다**(app/api/reply/route.ts 의 같은 자리 참고).
+    // 401 을 받은 이 순간이 진실이라, 최신본을 끌어와 한 번만 다시 보낸다.
+    //
+    // 재시도해도 케이스가 둘 생기지 않는다 — 앞선 시도는 401 로 거절당해 아무것도
+    // 만들지 않았다. 그게 아닌 실패(code 가 session 이 아닌 것)는 재시도하지 않는다.
+    if (!result.ok && result.code === "session" && await refreshTeamSessionFromDb(teamId)) {
+      result = await createCase(fetchClient(sessionFileForTeam(teamId)), draft);
+    }
 
     // 쓰기(createCase) 결과가 이미 응답을 결정한다. 아래 부수효과(쿠키 저장·목록
     // 새로고침)가 실패해도 성공을 실패로 뒤집으면 안 된다 — 안 그러면 사용자가
