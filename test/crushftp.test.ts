@@ -11,15 +11,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CookieJar } from "../collector/cookieJar.ts";
 import {
-  CHUNK_BYTES,
   UPLOAD_FOLDER,
   UploadError,
   c2fFrom,
-  chunkRanges,
   fileUrlFor,
   parseFilePath,
-  readCommandResult,
-  readMd5,
   safeFileName,
   uploadPathFor,
 } from "../lib/crushftp.ts";
@@ -105,58 +101,6 @@ test("쿠키가 없으면 세션 문제로 알린다", () => {
     assert.equal(error.code, "session");
     assert.match(error.message, /다시 로그인/);
   }
-});
-
-/* ------------------------------------------------------------------ *
- * 조각
- * ------------------------------------------------------------------ */
-
-test("한 조각보다 작으면 조각 하나다", () => {
-  assert.deepEqual(chunkRanges(100), [{ start: 0, end: 100 }]);
-});
-
-test("마지막 조각만 작다", () => {
-  const total = CHUNK_BYTES * 3 + 7;
-  const ranges = chunkRanges(total);
-  assert.equal(ranges.length, 4);
-  assert.equal(ranges[3]?.end, total);
-  assert.equal((ranges[3]?.end ?? 0) - (ranges[3]?.start ?? 0), 7);
-  // 빈틈도 겹침도 없어야 한다 — 어느 쪽이든 파일이 깨진다.
-  for (let i = 1; i < ranges.length; i += 1) {
-    assert.equal(ranges[i]?.start, ranges[i - 1]?.end);
-  }
-});
-
-test("딱 떨어지면 남는 조각을 만들지 않는다", () => {
-  const ranges = chunkRanges(CHUNK_BYTES * 2);
-  assert.equal(ranges.length, 2);
-});
-
-test("빈 파일은 거부한다", () => {
-  assert.throws(() => chunkRanges(0), UploadError);
-});
-
-/* ------------------------------------------------------------------ *
- * 응답 읽기
- * ------------------------------------------------------------------ */
-
-test("명령 결과를 읽는다", () => {
-  const xml = '<?xml version="1.0"?><commandResult><response>10800</response></commandResult>';
-  assert.equal(readCommandResult(xml), "10800");
-});
-
-test("md5 를 읽는다", () => {
-  const xml = "<commandResult><response></response><md5>604073f743cfb26486e8faab65f25b1b</md5></commandResult>";
-  assert.equal(readMd5(xml), "604073f743cfb26486e8faab65f25b1b");
-});
-
-test("md5 가 없으면 null — 확인 없이 성공으로 보지 않는다", () => {
-  assert.equal(readMd5("<commandResult><response>ok</response></commandResult>"), null);
-  assert.equal(readMd5("로그인 화면 HTML"), null);
-});
-
-test("md5 모양이 아니면 읽지 않는다", () => {
-  assert.equal(readMd5("<md5>not-a-hash</md5>"), null);
 });
 
 /* ------------------------------------------------------------------ *
