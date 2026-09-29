@@ -1,4 +1,5 @@
 import { listCves, type CveViewRow } from "../../lib/queries.ts";
+import { CollectButton } from "../CollectButton.tsx";
 import { COLOR, Card, Notice } from "../ui.tsx";
 import { CveList } from "./CveList.tsx";
 
@@ -20,9 +21,16 @@ export default async function CvesPage() {
   return (
     <>
       <header style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
-          보안 공지
-        </h1>
+        {/* 제목과 버튼을 한 줄에 둔다. 좁은 화면에서는 버튼이 아래로 내려간다. */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 12, flexWrap: "wrap",
+        }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
+            보안 공지
+          </h1>
+          <CollectButton kind="cves" />
+        </div>
         <p style={{ margin: "7px 0 0", fontSize: 13 }}>
           <span style={{
             color: critical > 0 ? COLOR.waitUs : COLOR.muted,

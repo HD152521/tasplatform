@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { openDb } from "../../../lib/db.ts";
-import { isCollectHandled, pendingCollectRequest, requestCollect } from "../../../lib/collectRequest.ts";
+import { parseCollectKind, type CollectKind } from "../../../lib/collectKind.ts";
+import {
+  collectOutcome, isCollectHandled, pendingCollectRequest, requestCollect,
+} from "../../../lib/collectRequest.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +18,16 @@ export const dynamic = "force-dynamic";
  * 진행 판정에 **시각을 쓰지 않는다.** 웹과 수집기는 다른 기계라 시계가 어긋날 수 있고,
  * 같은 밀리초에 일이 몰리면 비교가 뒤집힌다(lib/collectRequest.ts 머리말 참고).
  * 대신 요청 번호(seq)와 회차 번호(run_id)로 본다 — 둘 다 단조 증가한다.
+ *
+ * ## 종류(kind)
+ *
+ * `?kind=cases|cves|kb`. **없으면 cases 다** — 진행중 케이스 화면이 이미 배포돼 종류를
+ * 보내지 않는 채로 돌고 있고, 그 호출이 그대로 동작해야 한다. 모르는 이름은 400 으로
+ * 거절한다(lib/collectKind.ts 참고).
+ *
+ * 끝났는지 보는 방법이 종류마다 다르다. 케이스 수집은 runs 에 회차를 남기므로 그 행을
+ * 보고 "새 답변 N건" 까지 말할 수 있다. 보안 공지·기술 문서 수집기는 runs 에 아무것도
+ * 남기지 않으므로(표준출력에만 적는다) worker 가 찍어 주는 완료 표시를 본다.
  */
 
 interface RunRow {
@@ -31,19 +44,40 @@ interface RunRow {
 const RUN_COLUMNS =
   "run_id, started_at, finished_at, status, cases_seen, cases_changed, new_threads, error";
 
-export async function POST() {
+/** 종류를 읽는다. 모르는 이름이면 400 응답을, 아니면 종류를 돌려준다. */
+function readKind(request: Request): { kind: CollectKind } | { error: NextResponse } {
+  const raw = new URL(request.url).searchParams.get("kind");
+  const kind = parseCollectKind(raw);
+  if (kind === null) {
+    return {
+      error: NextResponse.json(
+        { ok: false, message: `알 수 없는 수집 종류입니다: ${raw ?? ""}` },
+        { status: 400 },
+      ),
+    };
+  }
+  return { kind };
+}
+
+export async function POST(request: Request) {
+  const parsed = readKind(request);
+  if ("error" in parsed) return parsed.error;
+  const { kind } = parsed;
+
   try {
     const db = await openDb();
     try {
-      const request = await requestCollect(db);
+      const created = await requestCollect(db, kind);
       // 이 시점의 마지막 회차 번호. 이후 "이보다 큰 회차" 만 내 요청의 결과로 본다.
-      const latest = await db.get<{ run_id: number }>(
-        "SELECT run_id FROM runs ORDER BY run_id DESC LIMIT 1",
-      );
+      // 케이스만 runs 를 쓰므로 다른 종류에서는 읽지 않는다.
+      const latest = kind === "cases"
+        ? await db.get<{ run_id: number }>("SELECT run_id FROM runs ORDER BY run_id DESC LIMIT 1")
+        : undefined;
       return NextResponse.json({
         ok: true,
-        seq: request.seq,
-        at: request.at,
+        kind,
+        seq: created.seq,
+        at: created.at,
         afterRunId: latest?.run_id ?? 0,
       });
     } finally {
@@ -67,6 +101,10 @@ export async function POST() {
  *   idle     seq 가 없을 때(단순 조회)
  */
 export async function GET(request: Request) {
+  const parsed = readKind(request);
+  if ("error" in parsed) return parsed.error;
+  const { kind } = parsed;
+
   const params = new URL(request.url).searchParams;
   const seq = Number(params.get("seq") ?? "");
   const after = Number(params.get("after") ?? "");
@@ -75,17 +113,29 @@ export async function GET(request: Request) {
     const db = await openDb();
     try {
       if (!Number.isSafeInteger(seq) || seq <= 0) {
-        const pending = await pendingCollectRequest(db);
-        const run = await db.get<RunRow>(
-          `SELECT ${RUN_COLUMNS} FROM runs ORDER BY run_id DESC LIMIT 1`,
-        );
+        const pending = await pendingCollectRequest(db, kind);
+        const run = kind === "cases"
+          ? await db.get<RunRow>(`SELECT ${RUN_COLUMNS} FROM runs ORDER BY run_id DESC LIMIT 1`)
+          : undefined;
         return NextResponse.json({
-          ok: true, state: "idle", pending: pending !== null, run: run ?? null,
+          ok: true, kind, state: "idle", pending: pending !== null, run: run ?? null,
         });
       }
 
-      if (!(await isCollectHandled(db, seq))) {
-        return NextResponse.json({ ok: true, state: "queued", run: null });
+      if (!(await isCollectHandled(db, kind, seq))) {
+        return NextResponse.json({ ok: true, kind, state: "queued", run: null });
+      }
+
+      // 보안 공지·기술 문서: runs 에 흔적이 없으니 worker 의 완료 표시만 본다.
+      // 실패한 회차를 "완료" 라고 말하지 않도록 성공 여부도 함께 넘긴다.
+      if (kind !== "cases") {
+        const outcome = await collectOutcome(db, kind);
+        if (outcome.seq < seq) {
+          return NextResponse.json({ ok: true, kind, state: "running", run: null });
+        }
+        return NextResponse.json({
+          ok: true, kind, state: "done", run: null, succeeded: outcome.ok,
+        });
       }
 
       // 집어간 뒤다. 내 요청 이후에 시작된 회차만 본다 — 그 앞의 회차 결과를 내 것으로
@@ -97,10 +147,11 @@ export async function GET(request: Request) {
       );
       // 집어갔지만 아직 회차 행이 없다 — 자식 프로세스가 뜨는 중이다.
       if (run === undefined) {
-        return NextResponse.json({ ok: true, state: "running", run: null });
+        return NextResponse.json({ ok: true, kind, state: "running", run: null });
       }
       return NextResponse.json({
         ok: true,
+        kind,
         state: run.finished_at === null ? "running" : "done",
         run,
       });

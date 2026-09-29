@@ -26,18 +26,44 @@
  * 요청들을 전부 만족시킨다. 큐를 두면 눌린 횟수만큼 수집이 돌아 Broadcom 에 쓸데없는
  * 요청을 보낸다.
  *
+ * ## 왜 종류마다 번호를 따로 세는가
+ *
+ * 수집기가 셋이다(케이스·보안 공지·기술 문서). 번호를 하나로 공유하면 CVE 를 누른
+ * 요청이 케이스 회차로 지워지고, 사람은 "완료" 를 보지만 CVE 는 하나도 안 받는다.
+ * 겉으로 아무 표시가 없어 알아챌 방법도 없다. 그래서 종류마다 칸을 따로 둔다.
+ *
  * server-only 를 붙이지 않는다. 수집기(Node)에서도 부른다.
  */
 import { getAppState, setAppState } from "./appState.ts";
+import { DEFAULT_COLLECT_KIND, type CollectKind } from "./collectKind.ts";
 import { isoNow } from "./dates.ts";
 import type { Db } from "./db.ts";
 
-/** 사람이 누른 횟수(1씩 증가). 판정은 전적으로 이 값으로 한다. */
-const REQUESTED_SEQ = "collect_requested_seq";
-/** worker 가 마지막으로 집어간 번호. */
-const HANDLED_SEQ = "collect_handled_seq";
-/** 마지막 요청 시각. 판정에 쓰지 않는다 — 사람이 보기 위한 기록이다. */
-const REQUESTED_AT = "collect_requested_at";
+/**
+ * 종류별 app_state 키.
+ *
+ * 케이스만 접두사가 없다. 옛 이름을 그대로 쓴다 — 이미 배포돼 돌고 있고, 웹과 수집기가
+ * 따로 재시작된다. 이름을 바꾸면 한쪽은 새 키에 쓰고 다른 쪽은 옛 키를 보게 되어,
+ * 버튼을 눌러도 아무 일도 일어나지 않는 구간이 생긴다(그동안 화면은 조용하다).
+ */
+function keysFor(kind: CollectKind): {
+  requested: string; handled: string; requestedAt: string;
+  finished: string; finishedOk: string;
+} {
+  const prefix = kind === DEFAULT_COLLECT_KIND ? "collect" : `collect_${kind}`;
+  return {
+    /** 사람이 누른 횟수(1씩 증가). 판정은 전적으로 이 값으로 한다. */
+    requested: `${prefix}_requested_seq`,
+    /** worker 가 마지막으로 집어간 번호. */
+    handled: `${prefix}_handled_seq`,
+    /** 마지막 요청 시각. 판정에 쓰지 않는다 — 사람이 보기 위한 기록이다. */
+    requestedAt: `${prefix}_requested_at`,
+    /** worker 가 자식 프로세스까지 끝낸 번호. */
+    finished: `${prefix}_finished_seq`,
+    /** 그 회차가 성공으로 끝났는지("1"/"0"). */
+    finishedOk: `${prefix}_finished_ok`,
+  };
+}
 
 async function readSeq(db: Db, key: string): Promise<number> {
   const raw = await getAppState(db, key);
@@ -54,25 +80,27 @@ export interface CollectRequest {
 }
 
 /** 요청을 남기고 번호를 돌려준다. */
-export async function requestCollect(db: Db): Promise<CollectRequest> {
-  const seq = (await readSeq(db, REQUESTED_SEQ)) + 1;
+export async function requestCollect(db: Db, kind: CollectKind): Promise<CollectRequest> {
+  const keys = keysFor(kind);
+  const seq = (await readSeq(db, keys.requested)) + 1;
   const at = isoNow();
-  await setAppState(db, REQUESTED_SEQ, String(seq));
-  await setAppState(db, REQUESTED_AT, at);
+  await setAppState(db, keys.requested, String(seq));
+  await setAppState(db, keys.requestedAt, at);
   return { seq, at };
 }
 
 /** 아직 처리되지 않은 요청이 있으면 그 번호를, 없으면 null. */
-export async function pendingCollectRequest(db: Db): Promise<number | null> {
-  const requested = await readSeq(db, REQUESTED_SEQ);
+export async function pendingCollectRequest(db: Db, kind: CollectKind): Promise<number | null> {
+  const keys = keysFor(kind);
+  const requested = await readSeq(db, keys.requested);
   if (requested === 0) return null;
-  const handled = await readSeq(db, HANDLED_SEQ);
+  const handled = await readSeq(db, keys.handled);
   return requested > handled ? requested : null;
 }
 
 /** worker 가 그 번호까지 집어갔는지. 화면이 "집어갔나" 를 묻는 데 쓴다. */
-export async function isCollectHandled(db: Db, seq: number): Promise<boolean> {
-  return (await readSeq(db, HANDLED_SEQ)) >= seq;
+export async function isCollectHandled(db: Db, kind: CollectKind, seq: number): Promise<boolean> {
+  return (await readSeq(db, keysFor(kind).handled)) >= seq;
 }
 
 /**
@@ -83,7 +111,43 @@ export async function isCollectHandled(db: Db, seq: number): Promise<boolean> {
  *
  * 이미 더 큰 번호가 찍혀 있으면 되돌리지 않는다. 되돌리면 처리한 요청이 되살아난다.
  */
-export async function markCollectHandled(db: Db, seq: number): Promise<void> {
-  if (seq <= (await readSeq(db, HANDLED_SEQ))) return;
-  await setAppState(db, HANDLED_SEQ, String(seq));
+export async function markCollectHandled(db: Db, kind: CollectKind, seq: number): Promise<void> {
+  const keys = keysFor(kind);
+  if (seq <= (await readSeq(db, keys.handled))) return;
+  await setAppState(db, keys.handled, String(seq));
+}
+
+export interface CollectOutcome {
+  /** 끝난 요청 번호. 아직 아무것도 끝나지 않았으면 0. */
+  readonly seq: number;
+  /** 그 회차가 성공으로 끝났는지. */
+  readonly ok: boolean;
+}
+
+/**
+ * 그 번호의 회차가 끝났다고 표시한다. 자식 프로세스가 **끝난 뒤에** 부른다.
+ *
+ * 집어갔다는 표시(handled)와 나눠 둔 이유: handled 는 "중복 실행 금지" 를 위해 돌리기
+ * 전에 찍어야 하고, 화면은 그것만으로 끝났는지 알 수 없다. 케이스 수집은 runs 에 회차를
+ * 남겨 화면이 그걸 보지만, 보안 공지·기술 문서 수집기는 runs 에 아무것도 남기지 않는다
+ * (collector/collect-cves.ts, collect-kb.ts — 표준출력에만 적는다). 그 둘은 이 표시가
+ * 없으면 영원히 "수집 중" 으로 보인다.
+ *
+ * 성공 여부를 함께 남긴다. 없으면 실패한 회차도 "수집 완료" 로 보이는데, 그건 거짓말이다.
+ */
+export async function markCollectFinished(
+  db: Db, kind: CollectKind, seq: number, ok: boolean,
+): Promise<void> {
+  const keys = keysFor(kind);
+  if (seq <= (await readSeq(db, keys.finished))) return;
+  await setAppState(db, keys.finished, String(seq));
+  await setAppState(db, keys.finishedOk, ok ? "1" : "0");
+}
+
+/** 마지막으로 끝난 회차. 화면이 "내 번호까지 끝났나" 를 묻는 데 쓴다. */
+export async function collectOutcome(db: Db, kind: CollectKind): Promise<CollectOutcome> {
+  const keys = keysFor(kind);
+  const seq = await readSeq(db, keys.finished);
+  // 값이 없으면 실패로 보지 않는다 — 옛 배포가 남긴 상태일 수 있다. 성공으로 본다.
+  return { seq, ok: (await getAppState(db, keys.finishedOk)) !== "0" };
 }
