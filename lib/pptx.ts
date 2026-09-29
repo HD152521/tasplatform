@@ -145,6 +145,10 @@ export async function buildMonthlyReport(
   const payload = {
     template: TEMPLATE,
     monthLabel: `${month.slice(5)}월`,
+    // 인스턴스 수는 calculateInstances 가 이미 정수로 낸다(lib/instanceCount.ts).
+    // 파이썬은 여기서 받은 문자열을 칸에 그대로 넣을 뿐 반올림하지 않는다 —
+    // 파이썬 round() 는 은행가 반올림이라 round(136.5) == 136 이다. 그 경로를
+    // 만들지 않으려고 반올림을 전부 TS 쪽에 둔다.
     cloud: {
       rows: instances.rows.map((r) => ({
         container: num(r.container),

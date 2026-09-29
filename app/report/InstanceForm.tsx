@@ -3,6 +3,7 @@
 import { Fragment, useMemo, useState } from "react";
 import {
   calculateInstances,
+  roundCount,
   type InstanceInput,
   type PreviousMonth,
 } from "../../lib/instanceCount.ts";
@@ -63,6 +64,15 @@ export function InstanceForm({
   const [input, setInput] = useState<InstanceInput>(savedInput ?? EMPTY);
   // 앞선 달이 저장돼 있으면(previousMonth !== null) 이 값은 읽기 전용이다.
   const [prev, setPrev] = useState<PreviousMonth>(previous);
+  /*
+    입력 중인 칸의 원문.
+
+    값을 숫자로만 들고 있으면 소수를 적을 수 없다. "133.4" 를 치는 도중 "133." 이
+    되는 순간 Number("133.") === 133 이라 칸이 "133" 으로 되돌아가고 소수점이
+    지워진다. 그래서 타이핑 중에는 원문을 그대로 보여주고, 칸을 떠날 때 지운다
+    (그때부터는 저장된 숫자를 보여준다).
+  */
+  const [draft, setDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -74,14 +84,31 @@ export function InstanceForm({
     [input],
   );
 
+  /** 칸에 보일 글자. 입력 중이면 원문, 아니면 저장된 숫자(0 은 빈칸). */
+  function shown(key: string, value: number): string {
+    return draft[key] ?? (value === 0 ? "" : String(value));
+  }
+
+  function clearDraft(key: string): void {
+    setDraft((cur) => {
+      if (cur[key] === undefined) return cur;
+      const next = { ...cur };
+      delete next[key];
+      return next;
+    });
+  }
+
   function set(group: Group, env: Env, raw: string): void {
+    setDraft((cur) => ({ ...cur, [`${group}.${env}`]: raw }));
     const value = raw.trim() === "" ? 0 : Number(raw);
+    // 숫자가 아니거나 음수면 값은 그대로 두고 원문만 보여준다 — 지우는 중일 수 있다.
     if (!Number.isFinite(value) || value < 0) return;
     setInput((cur) => ({ ...cur, [group]: { ...cur[group], [env]: value } }));
     setSavedAt(null);
   }
 
   function setPrevField(key: keyof PreviousMonth, raw: string): void {
+    setDraft((cur) => ({ ...cur, [`prev.${key}`]: raw }));
     const value = raw.trim() === "" ? 0 : Number(raw);
     if (!Number.isFinite(value) || value < 0) return;
     setPrev((cur) => ({ ...cur, [key]: value }));
@@ -165,9 +192,15 @@ export function InstanceForm({
                   <input
                     key={e.key}
                     className="sr-count"
-                    type="number" min={0} inputMode="numeric"
-                    value={input[g.key][e.key] === 0 ? "" : input[g.key][e.key]}
+                    /*
+                      step 을 안 주면 1 이 기본이라 브라우저가 133.4 를 "잘못된 값"
+                      으로 표시한다. App Count 는 소수로 나오니 any 로 연다.
+                      inputMode 도 numeric 이면 휴대폰 자판에 소수점이 없다.
+                    */
+                    type="number" min={0} step="any" inputMode="decimal"
+                    value={shown(`${g.key}.${e.key}`, input[g.key][e.key])}
                     onChange={(ev) => set(g.key, e.key, ev.target.value)}
+                    onBlur={() => clearDraft(`${g.key}.${e.key}`)}
                     placeholder="0"
                     style={{
                       // 아래 전월 입력칸과 같은 여백이어야 두 표의 숫자 끝선이 맞는다.
@@ -179,8 +212,12 @@ export function InstanceForm({
               </Fragment>
             ))}
           </div>
-          <p style={{ margin: "9px 0 0", fontSize: 11, color: COLOR.faint }}>
+          <p style={{ margin: "9px 0 0", fontSize: 11, color: COLOR.faint, lineHeight: 1.6 }}>
             공동 ORG 는 은행·중앙회가 나눠 씁니다.
+            <br />
+            {/* 적은 값과 오른쪽 표의 숫자가 다를 수 있어 먼저 알려 둔다. */}
+            소수를 적어도 됩니다. 오른쪽 표와 보고서에는 소수점 첫째 자리에서
+            반올림한 정수가 들어갑니다(136.5 → 137).
           </p>
         </Card>
 
@@ -207,9 +244,11 @@ export function InstanceForm({
                     </span>
                     <input
                       className="sr-count"
-                      type="number" min={0} inputMode="numeric"
-                      value={prev[f.key] === 0 ? "" : prev[f.key]}
+                      // 위 아홉 칸과 같은 이유로 소수를 받는다(step·inputMode).
+                      type="number" min={0} step="any" inputMode="decimal"
+                      value={shown(`prev.${f.key}`, prev[f.key])}
                       onChange={(ev) => setPrevField(f.key, ev.target.value)}
+                      onBlur={() => clearDraft(`prev.${f.key}`)}
                       placeholder="0"
                       style={{
                         ...controlStyle, width: "100%", padding: "7px 10px",
@@ -233,7 +272,12 @@ export function InstanceForm({
                   <div key={f.key} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                     <span style={{ fontSize: 11.5, color: COLOR.faint }}>{f.label}</span>
                     <span style={{ fontFamily: MONO_STACK, fontSize: 12, color: COLOR.body }}>
-                      {num(prev[f.key])}
+                      {/*
+                        계산에 쓰는 값과 같은 것을 보여준다. 이 고침 전에 저장된 달에는
+                        소수가 남아 있는데, 증감은 반올림한 값으로 내므로 여기에
+                        206.5 를 띄우면 증감이 1 틀린 것처럼 보인다.
+                      */}
+                      {num(roundCount(prev[f.key]))}
                     </span>
                   </div>
                 ))}
