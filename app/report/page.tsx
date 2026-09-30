@@ -2,10 +2,12 @@ import { COLOR } from "../ui.tsx";
 import { listCasesInMonth } from "../../lib/queries.ts";
 import { listMonths, loadMonth, previousMonthOf, resolvePrevious } from "../../lib/instanceStore.ts";
 import { countPicks, loadPicks } from "../../lib/reportPicks.ts";
+import { loadPhotoStep } from "../../lib/reportPhotos.ts";
 import { InstanceForm } from "./InstanceForm.tsx";
 import MonthPicker from "./MonthPicker.tsx";
 import { BuildStep } from "./BuildStep.tsx";
 import { JiraWork } from "./JiraWork.tsx";
+import { PhotoStep } from "./PhotoStep.tsx";
 import { SrPicker } from "./SrPicker.tsx";
 import { STEPS, StepNav, Stepper } from "./Stepper.tsx";
 
@@ -33,7 +35,9 @@ export default async function ReportPage({
   const counts = await countPicks(month);
   const label = `${month.replace("-", "년 ")}월`;
   const jiraInitial = step === 3 ? await loadPicks(month, "jira") : [];
-  const hasInstances = step === 4 ? (await loadMonth(month)) !== null : false;
+  const hasInstances = step === 5 ? (await loadMonth(month)) !== null : false;
+  // 사진 상태는 단계 표시에도 쓰이므로 어느 단계에서든 읽는다. 사진 바이트는 빼고 온다.
+  const photoStep = await loadPhotoStep(month);
   // 월 선택은 머리말에 둔다 — 예전엔 1단계 안에만 있어서 다른 단계에서 못 바꿨다.
   const savedMonths = (await listMonths()).map((m) => m.month);
 
@@ -54,17 +58,27 @@ export default async function ReportPage({
         <MonthPicker month={month} step={step} savedMonths={savedMonths} />
       </header>
 
-      <Stepper month={month} step={step} counts={counts} />
+      <Stepper
+        month={month}
+        step={step}
+        counts={counts}
+        photos={{ count: photoStep.photos.length, skipped: photoStep.skipped }}
+      />
 
       {step === 1 && <StepInstances month={month} />}
       {step === 2 && <StepSr month={month} />}
       {step === 3 && <JiraWork month={month} initial={jiraInitial} />}
       {step === 4 && (
+        <PhotoStep month={month} photos={photoStep.photos} skipped={photoStep.skipped} />
+      )}
+      {step === 5 && (
         <BuildStep
           month={month}
           srCount={counts.sr}
           workCount={counts.jira}
           hasInstances={hasInstances}
+          photoCount={photoStep.photos.length}
+          photosSkipped={photoStep.skipped}
         />
       )}
 

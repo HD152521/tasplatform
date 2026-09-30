@@ -43,6 +43,7 @@ export async function GET(request: Request) {
           + `filename*=UTF-8''${encodeURIComponent(built.fileName)}`,
         "X-Sr-Count": String(built.srCount),
         "X-Work-Count": String(built.workCount),
+        "X-Photo-Count": String(built.photoCount),
       },
     });
   } catch (error) {

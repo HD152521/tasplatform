@@ -19,6 +19,8 @@ import { loadMonth, resolvePrevious } from "./instanceStore.ts";
 import { fetchMonthlyWork } from "./jira.ts";
 import { listCasesInMonth, isClosedStatus } from "./queries.ts";
 import { loadPicks } from "./reportPicks.ts";
+import { PHOTO_CHIP, PHOTO_TITLE, layoutPhotoSlides } from "./reportPhotoLayout.ts";
+import { loadPhotos } from "./reportPhotos.ts";
 import { getSrReport } from "./srReport.ts";
 import { normalizeAnalysis, severityDigit, statusLabel } from "./srReportFormat.ts";
 
@@ -76,7 +78,13 @@ export interface BuildProgress {
 export async function buildMonthlyReport(
   month: string,
   onProgress?: (p: BuildProgress) => void,
-): Promise<{ bytes: Buffer; fileName: string; srCount: number; workCount: number }> {
+): Promise<{
+  bytes: Buffer;
+  fileName: string;
+  srCount: number;
+  workCount: number;
+  photoCount: number;
+}> {
   if (!existsSync(TEMPLATE)) {
     throw new ReportBuildError(`양식 파일이 없습니다: ${TEMPLATE}`);
   }
@@ -142,6 +150,28 @@ export async function buildMonthlyReport(
     }));
   }
 
+  // 4) 정기점검 사진 — 넣은 만큼만
+  //
+  // 배치(몇 장이 생기고 어디에 놓이나)는 lib/reportPhotoLayout.ts 가 정한다.
+  // 반올림을 전부 TS 에 두는 것과 같은 이유다 — 파이썬은 받은 좌표에 놓을 뿐이고,
+  // 규칙은 여기서 단위테스트로 잠긴다.
+  //
+  // **0장이면 photos 가 빈 배열이고, 파이썬은 사진 슬라이드를 아예 붙이지 않는다.**
+  // 빈 사진틀이 남은 보고서를 고객에게 보내는 것이 가장 나쁘다.
+  const photoFiles = await loadPhotos(month);
+  const photos = layoutPhotoSlides(photoFiles.length).map((slide) => ({
+    chip: PHOTO_CHIP,
+    title: `${PHOTO_TITLE} (${slide.page}/${slide.total})`,
+    items: slide.items.map((item) => ({
+      left: item.left,
+      top: item.top,
+      width: item.width,
+      height: item.height,
+      // base64. 파이썬이 그대로 풀어 add_picture 에 넘긴다.
+      data: photoFiles[item.index]?.data ?? "",
+    })),
+  }));
+
   const payload = {
     template: TEMPLATE,
     monthLabel: `${month.slice(5)}월`,
@@ -171,9 +201,10 @@ export async function buildMonthlyReport(
     },
     srs,
     work,
+    photos,
   };
 
-  // 4) 파이썬으로 넘긴다
+  // 5) 파이썬으로 넘긴다
   const dir = await mkdtemp(join(tmpdir(), "sr-report-"));
   const inPath = join(dir, "payload.json");
   const outPath = join(dir, "report.pptx");
@@ -186,6 +217,7 @@ export async function buildMonthlyReport(
       fileName: `${month.replace("-", "년_")}월_정기점검_보고서.pptx`,
       srCount: srs.length,
       workCount: work.length,
+      photoCount: photoFiles.length,
     };
   } finally {
     await rm(dir, { recursive: true, force: true });
