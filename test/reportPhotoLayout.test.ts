@@ -72,18 +72,18 @@ test("모든 자리가 같은 top·폭·높이를 쓴다", () => {
   }
 });
 
-// 실제 고객 보고서에서 잰 값. 바꾸려면 다시 재야 한다.
 /*
- * 좌표는 **우리 템플릿의 본문 영역**에서 온다 — 12장 전부 표가 left 1.86 / top 1.78 /
- * 폭 9.61 이고 좌우 여백이 1.86 으로 대칭이다.
+ * 좌표는 **우리 템플릿의 본문 영역**에서 온다 — 12장 전부 표가 left 0.613 / top 1.78 /
+ * 폭 9.607 이고 좌우 여백이 0.613 으로 대칭이다(4:3, 10.833in 슬라이드).
  *
- * 한때 실제 고객 보고서에서 잰 값(좌 1.45 / 우 5.42)을 그대로 썼는데, 그 문서는
- * 슬라이드 폭이 10.83in 이고 우리 템플릿은 13.33in 이다. 사진이 왼쪽으로 몰리고
- * 오른쪽에 2인치 가까운 빈자리가 남았다. 다른 문서의 좌표를 옮겨 오면 안 된다.
+ * 다른 문서의 좌표를 옮겨 오면 안 된다. 한때 고객 보고서에서 잰 값을 그대로 썼는데
+ * 그때 우리 템플릿은 16:9(13.33in) 였고 그 문서는 4:3(10.83in) 이라 사진이 왼쪽으로
+ * 몰렸다. 지금은 템플릿 자체가 4:3 이다(scripts/retarget_template_4x3.py).
  */
 test("사진 자리가 본문 영역과 줄이 맞는다", () => {
-  const CONTENT_LEFT = 1.86;
-  const CONTENT_RIGHT = 1.86 + 9.61;
+  const CONTENT_LEFT = 0.613;
+  const CONTENT_RIGHT = 0.613 + 9.607;
+  const SLIDE_WIDTH = 10.833;
 
   assert.equal(PHOTO_LEFT[0], CONTENT_LEFT, "왼쪽 사진이 본문 왼쪽에서 시작해야");
   assert.ok(
@@ -96,16 +96,16 @@ test("사진 자리가 본문 영역과 줄이 맞는다", () => {
   // 틈을 두면 "두 장을 억지로 넣었구나" 가 먼저 보인다. 겹치지만 않으면 된다.
   assert.equal((PHOTO_LEFT[0] ?? 0) + PHOTO_WIDTH, PHOTO_LEFT[1], "가운데가 벌어지면 안 된다");
   // 좌우 여백이 대칭이어야 가운데로 보인다.
-  assert.ok(Math.abs((PHOTO_LEFT[0] ?? 0) - (13.33 - CONTENT_RIGHT)) < 0.01);
+  assert.ok(Math.abs((PHOTO_LEFT[0] ?? 0) - (SLIDE_WIDTH - CONTENT_RIGHT)) < 0.01);
 
   assert.equal(PHOTOS_PER_SLIDE, 2);
   assert.equal(PHOTO_SLOT_COUNT, 4);
 });
 
-// 사진이 슬라이드 아래로 넘치면 잘려 나간다. 슬라이드 높이는 7.5인치다.
+// 사진이 슬라이드 밖으로 넘치면 잘려 나간다. 슬라이드는 10.833 x 7.5인치(4:3)다.
 test("사진 자리가 슬라이드 안에 들어간다", () => {
   assert.ok(PHOTO_TOP + PHOTO_HEIGHT <= 7.5);
-  assert.ok((PHOTO_LEFT[1] ?? 0) + PHOTO_WIDTH <= 13.34);
+  assert.ok((PHOTO_LEFT[1] ?? 0) + PHOTO_WIDTH <= 10.834);
   // 좌·우가 겹치지 않는다(맞붙는 것은 허용).
   assert.ok((PHOTO_LEFT[0] ?? 0) + PHOTO_WIDTH <= (PHOTO_LEFT[1] ?? 0));
 });
