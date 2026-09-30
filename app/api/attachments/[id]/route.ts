@@ -19,8 +19,7 @@ import { NextResponse } from "next/server";
 import { API_ORIGIN } from "../../../../lib/config.ts";
 import { getAttachment } from "../../../../lib/queries.ts";
 import { resolveAttachmentUrl } from "../../../../lib/attachmentSource.ts";
-import { hasTeamSession, resolveActorTeam } from "../../../../lib/requestAudit.ts";
-import { hydrateTeamSessionFromDb } from "../../../../lib/sessionStore.ts";
+import { ensureTeamSession, resolveActorTeam } from "../../../../lib/requestAudit.ts";
 import { openDb } from "../../../../lib/db.ts";
 import {
   enqueueDownload,
@@ -184,13 +183,8 @@ export async function GET(
   }
 
   // 재시작으로 로컬 세션 파일이 없을 수 있으니 DB 백업에서 먼저 복원한다.
-  await hydrateTeamSessionFromDb(teamId);
-  if (!hasTeamSession(teamId)) {
-    return NextResponse.json(
-      { ok: false, code: "session", message: "세션이 없습니다. SR 페이지에서 로그인하세요." },
-      { status: 401 },
-    );
-  }
+  const noSession = await ensureTeamSession(teamId);
+  if (noSession !== null) return noSession;
 
   // 첨부는 수집기(브라우저가 있는 기계)가 받아 온다.
   //

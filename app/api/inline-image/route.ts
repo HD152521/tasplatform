@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 import { CookieJar } from "../../../collector/cookieJar.ts";
 import { API_HEADERS, API_ORIGIN, sessionFileForTeam } from "../../../lib/config.ts";
 import { isFileId } from "../../../lib/inlineImages.ts";
-import { hasTeamSession, resolveActorTeam } from "../../../lib/requestAudit.ts";
-import { hydrateTeamSessionFromDb } from "../../../lib/sessionStore.ts";
+import { ensureTeamSession, resolveActorTeam } from "../../../lib/requestAudit.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,14 +37,8 @@ export async function GET(request: Request) {
   }
   const { teamId } = actorTeam;
 
-  // 재시작으로 로컬 세션 파일이 없을 수 있으니 DB 백업에서 먼저 복원한다.
-  await hydrateTeamSessionFromDb(teamId);
-  if (!hasTeamSession(teamId)) {
-    return NextResponse.json(
-      { ok: false, code: "session", message: "세션이 없습니다. SR 페이지에서 로그인하세요." },
-      { status: 401 },
-    );
-  }
+  const noSession = await ensureTeamSession(teamId);
+  if (noSession !== null) return noSession;
 
   const target = new URL(`${API_ORIGIN}/attachment/get_attachment_content`);
   target.searchParams.set("uniqueFileId", id);

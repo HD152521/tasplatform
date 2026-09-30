@@ -223,7 +223,10 @@ async function main(): Promise<void> {
 
   try {
     // TAS 재시작으로 로컬 세션/기기 파일이 날아갔을 수 있다 — DB 백업에서 먼저 복원한다.
-    // (파일이 있으면 최신으로 덮어써 DB 를 정본으로 삼는다.)
+    //
+    // 파일이 있고 아직 쓸 수 있으면 건드리지 않는다. 예전 주석은 "파일이 있으면 최신으로
+    // 덮어쓴다" 였는데 그건 refreshTeamSessionFromDb 의 동작이고 이 함수의 것이 아니다.
+    // 그 오해로 "DB 가 항상 이긴다" 고 믿고 고치면 방금 회전된 세션을 되돌리게 된다.
     await hydrateTeamSessionFromDb(DEFAULT_TEAM_ID, db);
     session = await acquireSession();
     // 접속하는 순간 서버가 세션 쿠키를 회전시킨다.

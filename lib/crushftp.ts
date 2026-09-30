@@ -23,7 +23,9 @@
  * ## 세션은 케이스 단위로 묶인다
  *
  * getUsername 응답이 `…,^<site>^<case>^` 를 돌려준다. 쿠키만 있다고 올릴 수 있는 것이
- * 아니라 반드시 redirect.html 을 먼저 거쳐야 한다.
+ * 아니라 반드시 redirect.html 을 먼저 거쳐야 한다. 그 이동은 자바스크립트가 하므로
+ * **브라우저가 있어야 한다** — 그래서 케이스 진입은 여기가 아니라 수집기가 맡는다
+ * (collector/attachments.ts 의 enterCase). 여기 남은 것은 진입이 끝난 뒤 쓰는 것들이다.
  */
 import { CookieJar } from "../collector/cookieJar.ts";
 import { API_HEADERS } from "./config.ts";
@@ -33,7 +35,6 @@ export const FTP_ORIGIN = "https://supportftp.broadcom.com";
 /** 고객이 올리는 파일이 들어가는 폴더. 루트에는 쓰기 권한이 없다. */
 export const UPLOAD_FOLDER = "files_from_customer";
 /** 리다이렉트를 따라갈 최대 횟수. OAuth 왕복이 서너 번이라 넉넉히 둔다. */
-const MAX_HOPS = 8;
 
 export class UploadError extends Error {
   readonly code: "session" | "rejected" | "mismatch";
@@ -87,39 +88,6 @@ export function c2fFrom(jar: CookieJar): string {
   return value.slice(-4);
 }
 
-/** CrushFTP 가 돌려주는 XML 한 겹을 벗긴다. 실패면 null. */
-export function readCommandResult(xml: string): string | null {
-  const m = /<response>([\s\S]*?)<\/response>/i.exec(xml);
-  return m === null ? null : (m[1] ?? "").trim();
-}
-
-/**
- * 리다이렉트를 쿠키 단지를 들고 따라간다.
- *
- * fetch 의 redirect:"follow" 는 단지를 모른다. supportftp 는 세션이 없으면 OAuth 로
- * 튕기고, 그 왕복에서 받은 쿠키를 다음 홉에 실어야 돌아올 수 있다.
- */
-async function followWithJar(jar: CookieJar, start: string): Promise<Response> {
-  let url = start;
-  for (let hop = 0; hop < MAX_HOPS; hop += 1) {
-    const at = new URL(url);
-    if (!isAllowedHost(at.hostname)) {
-      throw new UploadError("rejected", `허용하지 않는 호스트입니다: ${at.hostname}`);
-    }
-    const cookie = jar.header(at);
-    const response = await fetch(url, {
-      headers: { ...API_HEADERS, ...(cookie === "" ? {} : { Cookie: cookie }) },
-      redirect: "manual",
-    });
-    jar.apply(response.headers.getSetCookie(), at);
-
-    const location = response.headers.get("location");
-    if (response.status < 300 || response.status >= 400 || location === null) return response;
-    url = new URL(location, at).toString();
-  }
-  throw new UploadError("session", "첨부 서버 로그인이 끝나지 않았습니다.");
-}
-
 /** /WebInterface/function/ 에 명령 하나. 실측 트래픽과 같은 multipart 로 보낸다. */
 async function command(
   jar: CookieJar,
@@ -161,71 +129,6 @@ export function boundCaseOf(xml: string): number | null {
   const m = /\^\d+\^(\d+)\^/.exec(decoded);
   return m === null ? null : Number(m[1]);
 }
-
-/** CrushFTP 세션을 끊는다. 다른 케이스로 다시 묶으려면 먼저 나가야 한다. */
-async function logout(jar: CookieJar): Promise<void> {
-  const url = new URL(`${FTP_ORIGIN}/WebInterface/function/`);
-  url.searchParams.set("command", "logout");
-  url.searchParams.set("random", String(Math.random()));
-  try {
-    url.searchParams.set("c2f", c2fFrom(jar));
-  } catch {
-    return; // 애초에 세션이 없으면 나갈 것도 없다
-  }
-  const cookie = jar.header(url);
-  const response = await fetch(url, {
-    headers: { ...API_HEADERS, ...(cookie === "" ? {} : { Cookie: cookie }) },
-    redirect: "manual",
-  });
-  jar.apply(response.headers.getSetCookie(), url);
-}
-
-/**
- * 그 케이스로 세션을 묶는다. 올리기 전에 반드시 거쳐야 한다.
- *
- * **CrushFTP 세션은 한 번에 케이스 하나에만 묶인다.** getUsername 이
- * `<계정>,^<site>^<case>^` 를 돌려주는데, 이미 다른 케이스로 묶여 있으면
- * redirect.html 을 다시 불러도 302 없이 200 만 돌아오고 묶임이 바뀌지 않는다.
- * 실측으로 확인했다 — 캡처에 logout 호출이 있었던 이유가 이것이다.
- * 그래서 어긋나면 한 번 나갔다가 다시 묶는다.
- *
- * 로그인 화면이 200 으로 돌아오는 경우가 있어 상태 코드만으로는 모자라다.
- * 반드시 getUsername 으로 확인한다.
- */
-export async function openCaseSession(
-  jar: CookieJar,
-  site: string,
-  caseId: number,
-): Promise<void> {
-  if (!/^\d+$/.test(site)) {
-    throw new UploadError("rejected", `고객사 번호가 올바르지 않습니다: ${site}`);
-  }
-  const enter = `${FTP_ORIGIN}/WebInterface/redirect.html?site=${site}&case=${caseId}`;
-
-  await followWithJar(jar, enter);
-  let xml = await command(jar, { command: "getUsername", c2f: c2fFrom(jar) });
-
-  // 다른 케이스로 묶여 있으면 나갔다가 다시 들어온다.
-  if (boundCaseOf(xml) !== caseId) {
-    await logout(jar);
-    await followWithJar(jar, enter);
-    xml = await command(jar, { command: "getUsername", c2f: c2fFrom(jar) });
-  }
-
-  if (!/<response>\s*success\s*<\/response>/i.test(xml)) {
-    throw new UploadError("session", "첨부 서버에 로그인되어 있지 않습니다. 다시 로그인하세요.");
-  }
-  const bound = boundCaseOf(xml);
-  if (bound !== caseId) {
-    throw new UploadError(
-      "rejected",
-      bound === null
-        ? `첨부 서버가 케이스를 알려주지 않았습니다. 다시 로그인하세요.`
-        : `세션이 다른 케이스(${bound})에 묶여 있습니다. 다시 로그인하세요.`,
-    );
-  }
-}
-
 export interface UploadResult {
   /** 올라간 전체 경로. */
   readonly path: string;
