@@ -162,13 +162,14 @@ export async function buildMonthlyReport(
   const photos = layoutPhotoSlides(photoFiles.length).map((slide) => ({
     chip: PHOTO_CHIP,
     title: `${PHOTO_TITLE} (${slide.page}/${slide.total})`,
-    items: slide.items.map((item) => ({
-      left: item.left,
-      top: item.top,
-      width: item.width,
-      height: item.height,
+    // **자리 값을 하나씩 옮겨 적지 않는다.** 한때 left/top/width/height 만 적고
+    // align 을 빠뜨렸고, 파이썬은 기본값(왼쪽 붙임)으로 놓아 두 장이 가운데에서
+    // 1인치 벌어진 보고서가 그대로 배포됐다. 타입은 통과했다 — 받는 쪽에 필드를
+    // 덜 주는 것은 타입 오류가 아니기 때문이다. index 만 빼고 통째로 넘긴다.
+    items: slide.items.map(({ index, ...box }) => ({
+      ...box,
       // base64. 파이썬이 그대로 풀어 add_picture 에 넘긴다.
-      data: photoFiles[item.index]?.data ?? "",
+      data: photoFiles[index]?.data ?? "",
     })),
   }));
 

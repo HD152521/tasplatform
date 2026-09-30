@@ -135,3 +135,18 @@ test("자리 이름이 사람이 읽는 위치와 맞는다", () => {
   assert.equal(photoSeatLabel(2), "슬라이드 2 · 왼쪽");
   assert.equal(photoSeatLabel(3), "슬라이드 2 · 오른쪽");
 });
+
+/*
+ * 붙이는 방향. 비율을 지키면 상자 안에 남는 자리가 생기는데, 왼쪽 사진이 오른쪽 끝에
+ * 오른쪽 사진이 왼쪽 끝에 붙어야 가운데 솔기가 사라진다.
+ *
+ * 이 값이 파이썬까지 **가지 않아서** 실제로 사고가 났다 — lib/pptx.ts 가 자리 값을
+ * 하나씩 옮겨 적으며 align 만 빠뜨렸고, 파이썬은 기본값으로 왼쪽에 붙여 두 장이
+ * 1인치 벌어진 보고서가 배포됐다. 그래서 pptx.ts 는 이제 통째로 넘긴다.
+ */
+test("왼쪽 사진은 오른쪽에, 오른쪽 사진은 왼쪽에 붙는다", () => {
+  const items = layoutPhotoSlides(4).flatMap((s) => s.items);
+  assert.deepEqual(items.map((i) => i.align), ["right", "left", "right", "left"]);
+  // 한 장뿐일 때도 왼쪽 자리이므로 오른쪽에 붙는다(솔기 상대가 없어도 규칙은 같다).
+  assert.equal(layoutPhotoSlides(1)[0]?.items[0]?.align, "right");
+});
