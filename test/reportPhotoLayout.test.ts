@@ -92,8 +92,9 @@ test("사진 자리가 본문 영역과 줄이 맞는다", () => {
   );
   assert.equal(PHOTO_TOP, 1.78, "표와 같은 높이에서 시작해야");
 
-  // 두 자리가 겹치면 사진이 서로를 덮는다.
-  assert.ok((PHOTO_LEFT[0] ?? 0) + PHOTO_WIDTH < (PHOTO_LEFT[1] ?? 0));
+  // 두 자리는 **가운데서 맞붙는다.** 실제 고객 보고서의 사진 장이 큰 그림 한 장이라,
+  // 틈을 두면 "두 장을 억지로 넣었구나" 가 먼저 보인다. 겹치지만 않으면 된다.
+  assert.equal((PHOTO_LEFT[0] ?? 0) + PHOTO_WIDTH, PHOTO_LEFT[1], "가운데가 벌어지면 안 된다");
   // 좌우 여백이 대칭이어야 가운데로 보인다.
   assert.ok(Math.abs((PHOTO_LEFT[0] ?? 0) - (13.33 - CONTENT_RIGHT)) < 0.01);
 
@@ -105,7 +106,7 @@ test("사진 자리가 본문 영역과 줄이 맞는다", () => {
 test("사진 자리가 슬라이드 안에 들어간다", () => {
   assert.ok(PHOTO_TOP + PHOTO_HEIGHT <= 7.5);
   assert.ok((PHOTO_LEFT[1] ?? 0) + PHOTO_WIDTH <= 13.34);
-  // 좌·우가 겹치지 않는다.
+  // 좌·우가 겹치지 않는다(맞붙는 것은 허용).
   assert.ok((PHOTO_LEFT[0] ?? 0) + PHOTO_WIDTH <= (PHOTO_LEFT[1] ?? 0));
 });
 

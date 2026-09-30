@@ -41,8 +41,17 @@ export const PHOTOS_PER_SLIDE = 2;
 /** 템플릿 본문 영역. 12장 전부 이 자리에 표가 있다. */
 const CONTENT_LEFT = 1.86;
 const CONTENT_WIDTH = 9.61;
-/** 두 장 사이 틈. 서로 붙어 보이지 않을 만큼만 둔다. */
-const GAP = 0.16;
+/**
+ * 두 장 사이 틈은 **없다.**
+ *
+ * 실제 고객 보고서의 사진 장은 큰 그림 한 장이 본문 폭을 거의 채운다(8.07×5.43in).
+ * 두 장을 나란히 놓되 가운데를 맞붙이면 그 한 장처럼 보인다 — 틈이 있으면 "두 장을
+ * 억지로 넣었구나" 가 먼저 보인다.
+ *
+ * 비율을 지키느라 남는 자리는 **바깥쪽**으로 민다(왼쪽 사진은 오른쪽 끝에, 오른쪽
+ * 사진은 왼쪽 끝에 붙인다). 가운데로 밀면 둘 사이가 벌어져 붙인 뜻이 없어진다.
+ */
+const GAP = 0;
 
 /** 왼쪽·오른쪽 사진의 left (인치). */
 export const PHOTO_LEFT = [
@@ -64,6 +73,11 @@ export interface PhotoPlacement {
   readonly index: number;
   /** 인치. 파이썬이 Inches() 로 감싸 add_picture 에 넘긴다. */
   readonly left: number;
+  /**
+   * 상자 안에서 어느 쪽에 붙일 것인가. 비율을 지키면 남는 자리가 생기는데,
+   * 가운데 솔기를 없애려면 왼쪽 사진은 오른쪽에, 오른쪽 사진은 왼쪽에 붙어야 한다.
+   */
+  readonly align: "left" | "right";
   readonly top: number;
   readonly width: number;
   readonly height: number;
@@ -98,6 +112,7 @@ export function layoutPhotoSlides(count: number): PhotoSlideLayout[] {
       items.push({
         index,
         left: PHOTO_LEFT[seat] ?? PHOTO_LEFT[0],
+        align: seat === 0 ? "right" : "left",
         top: PHOTO_TOP,
         width: PHOTO_WIDTH,
         height: PHOTO_HEIGHT,
