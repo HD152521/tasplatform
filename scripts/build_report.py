@@ -462,11 +462,34 @@ def fill_photos(slide, chip, title, items):
             # 그래도 닿았다면 조용히 넘기지 않고 알린다 — 빈 자리가 남은 보고서가
             # 나가는 것보다 실패하는 편이 낫다.
             raise ValueError("사진 데이터가 비어 있습니다")
-        slide.shapes.add_picture(
-            io.BytesIO(raw),
-            Inches(item["left"]), Inches(item["top"]),
-            Inches(item["width"]), Inches(item["height"]),
-        )
+        fit_picture(slide, raw, item)
+
+
+def fit_picture(slide, raw, box):
+    """사진을 상자 안에 **비율 그대로** 넣는다. 가운데 정렬.
+
+    처음에는 폭·높이를 둘 다 지정해 넣었다. 그러면 가로로 긴 사진이 세로 상자에
+    맞춰 늘어나 사람이 찌그러져 보인다 — 보고서에 그대로 나갔다.
+
+    python-pptx 는 폭만 주면 원본 비율로 높이를 계산한다. 그렇게 넣어 보고 높이가
+    상자를 넘으면 높이 기준으로 다시 넣는다. 둘 중 **작은 쪽에 맞추는** 것이
+    상자 밖으로 안 나가면서 비율을 지키는 유일한 방법이다.
+
+    남는 자리는 가운데로 민다. 두 장이 나란히 설 때 위아래 기준선이 맞아야
+    한쪽만 떠 보이지 않는다.
+    """
+    left, top = box["left"], box["top"]
+    max_w, max_h = box["width"], box["height"]
+
+    picture = slide.shapes.add_picture(io.BytesIO(raw), Inches(left), Inches(top), Inches(max_w))
+    if picture.height > Inches(max_h):
+        # 넘친다 — 높이 기준으로 다시 넣는다. 지우고 다시 넣는 편이 크기를 직접
+        # 계산하는 것보다 확실하다(python-pptx 가 원본 비율을 알고 있다).
+        picture._element.getparent().remove(picture._element)
+        picture = slide.shapes.add_picture(io.BytesIO(raw), Inches(left), Inches(top), None, Inches(max_h))
+
+    picture.left = Inches(left) + int((Inches(max_w) - picture.width) / 2)
+    picture.top = Inches(top) + int((Inches(max_h) - picture.height) / 2)
 
 
 def fill_work(slide, rows):
