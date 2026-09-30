@@ -111,6 +111,45 @@ async function shrink(file: File): Promise<File> {
   }
 }
 
+/**
+ * 사진을 시계방향 90도 돌린 새 파일을 만든다.
+ *
+ * 돌려서 **저장까지** 한다. 슬라이드에 넣을 때 각도만 주는 방법도 있지만, 그러면
+ * 그림이 제 자리에서 회전할 뿐 차지하는 칸은 그대로라 가로로 긴 사진이 상자 밖으로
+ * 삐져나간다. 파일 자체를 돌려 두면 그 뒤로는 평범한 세로 사진과 똑같이 다뤄진다.
+ *
+ * 줄이기(shrink)를 이미 거친 파일이라 다시 줄이지 않는다 — 긴 변은 그대로고
+ * 가로세로만 바뀐다.
+ */
+async function rotate90(file: File): Promise<File> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(url);
+    const width = img.naturalWidth;
+    const height = img.naturalHeight;
+    if (width === 0 || height === 0) throw new Error("사진 크기를 알 수 없습니다.");
+
+    // 돌리면 가로세로가 바뀐다.
+    const canvas = document.createElement("canvas");
+    canvas.width = height;
+    canvas.height = width;
+    const ctx = canvas.getContext("2d");
+    if (ctx === null) throw new Error("이 브라우저에서는 사진을 돌릴 수 없습니다.");
+    // 새 캔버스의 오른쪽 위를 원점으로 삼아 90도 돌린 뒤 그린다.
+    ctx.translate(height, 0);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(img, 0, 0);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/jpeg", PHOTO_JPEG_QUALITY);
+    });
+    if (blob === null) throw new Error("사진을 돌리지 못했습니다.");
+    return new File([blob], file.name, { type: "image/jpeg" });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export function PhotoStep({
   month, photos, skipped,
 }: {
@@ -160,6 +199,77 @@ export function PhotoStep({
     setSeats((cur) => cur.map((s) => (s.slot === slot ? change(s) : s)));
   }
 
+  /**
+   * 이미 줄여 둔 파일을 그 자리에 저장한다. 고르기와 돌리기가 함께 쓴다.
+   *
+   * 돌리기는 화면에 있는 사진을 다시 올리는 일이라 고르기와 저장 경로가 같아야 한다.
+   * 따로 두면 한쪽만 고쳤을 때 조용히 갈라진다.
+   */
+  async function save(slot: number, small: File): Promise<boolean> {
+    if (small.size > MAX_PHOTO_BYTES) {
+      setError(PHOTO_TOO_LARGE_MESSAGE);
+      return false;
+    }
+
+    // 사진은 본문에 그대로 싣고 이름·자리는 주소에 둔다 — 라우트가 본문을 스트림으로
+    // 읽으며 상한에서 끊기 때문이다(app/api/report/photos/route.ts 머리말).
+    const query = new URLSearchParams({ month, slot: String(slot), name: small.name });
+    const response = await fetch(`/api/report/photos?${query.toString()}`, {
+      method: "POST",
+      headers: { "Content-Type": small.type },
+      body: small,
+    });
+    const body = (await response.json().catch(() => ({}))) as {
+      ok?: boolean; message?: string; fileName?: string; bytes?: number; mime?: string;
+    };
+    if (!response.ok || body.ok !== true) {
+      setError(body.message ?? `사진을 넣지 못했습니다 (HTTP ${response.status}).`);
+      return false;
+    }
+
+    const url = URL.createObjectURL(small);
+    releaseUrl(slot);
+    urls.current[slot] = url;
+    update(slot, (seat) => ({
+      ...seat,
+      localUrl: url,
+      meta: {
+        slot,
+        fileName: body.fileName ?? small.name,
+        mime: body.mime ?? "image/jpeg",
+        bytes: body.bytes ?? small.size,
+        savedAt: new Date().toISOString(),
+      },
+    }));
+    // 사진을 넣었으면 건너뜀은 없어진다(서버도 같이 지운다).
+    setSkip(false);
+    // 위쪽 단계 표시가 서버에서 그려지므로 새로 받아야 체크가 바뀐다.
+    router.refresh();
+    return true;
+  }
+
+  /** 그 자리 사진을 시계방향 90도 돌려 다시 저장한다. */
+  async function turn(slot: number): Promise<void> {
+    const seat = seats[seatIndex(slot)];
+    const current = seat?.localUrl;
+    setError("");
+    setNote("");
+    setBusySlot(slot);
+    try {
+      // 화면에 보이는 그 사진을 그대로 돌린다. 서버에서 다시 받지 않는다 —
+      // 미리보기와 저장본이 어긋나면 사람이 무엇을 돌렸는지 알 수 없다.
+      const source = current ?? `/api/report/photos?month=${encodeURIComponent(month)}&slot=${slot}`;
+      const blob = await (await fetch(source)).blob();
+      const name = seat?.meta?.fileName ?? `photo-${slot}.jpg`;
+      const turned = await rotate90(new File([blob], name, { type: blob.type || "image/jpeg" }));
+      if (await save(slot, turned)) setNote("90도 돌렸습니다.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "사진을 돌리지 못했습니다.");
+    } finally {
+      setBusySlot(null);
+    }
+  }
+
   async function pick(slot: number, file: File): Promise<void> {
     setError("");
     setNote("");
@@ -173,55 +283,7 @@ export function PhotoStep({
     setBusySlot(slot);
     try {
       const small = await shrink(file);
-      // 줄인 뒤에도 상한을 넘는 것은 사실상 없다. 그래도 여기서 걸러 주면
-      // 사람은 업로드를 기다리지 않고 바로 이유를 듣는다.
-      if (small.size > MAX_PHOTO_BYTES) {
-        setError(PHOTO_TOO_LARGE_MESSAGE);
-        return;
-      }
-
-      // 사진은 본문에 그대로 싣고 이름·자리는 주소에 둔다 — 라우트가 본문을 스트림으로
-      // 읽으며 상한에서 끊기 때문이다(app/api/report/photos/route.ts 머리말).
-      const query = new URLSearchParams({
-        month, slot: String(slot), name: small.name,
-      });
-      const response = await fetch(`/api/report/photos?${query.toString()}`, {
-        method: "POST",
-        headers: { "Content-Type": small.type },
-        body: small,
-      });
-      const body = (await response.json().catch(() => ({}))) as {
-        ok?: boolean; message?: string; fileName?: string; bytes?: number; mime?: string;
-      };
-      if (!response.ok || body.ok !== true) {
-        setError(body.message ?? `사진을 넣지 못했습니다 (HTTP ${response.status}).`);
-        return;
-      }
-
-      // 미리보기 주소를 새로 만들고 그 자리에 있던 것은 놓아준다.
-      // 되돌려주는 일을 setSeats 의 갱신 함수 안에서 하지 않는다 — 갱신 함수는
-      // React 가 여러 번 부를 수 있어서 부작용을 넣을 자리가 아니다.
-      const url = URL.createObjectURL(small);
-      releaseUrl(slot);
-      urls.current[slot] = url;
-      update(slot, (seat) => {
-        return {
-          ...seat,
-          localUrl: url,
-          meta: {
-            slot,
-            fileName: body.fileName ?? small.name,
-            mime: body.mime ?? "image/jpeg",
-            bytes: body.bytes ?? small.size,
-            savedAt: new Date().toISOString(),
-          },
-        };
-      });
-      // 사진을 넣었으면 건너뜀은 없어진다(서버도 같이 지운다).
-      setSkip(false);
-      setNote(`${small.name} 을 넣었습니다.`);
-      // 위쪽 단계 표시가 서버에서 그려지므로 새로 받아야 체크가 바뀐다.
-      router.refresh();
+      if (await save(slot, small)) setNote(`${small.name} 을 넣었습니다.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "사진을 넣는 중 오류가 발생했습니다.");
     } finally {
@@ -435,12 +497,25 @@ export function PhotoStep({
                     />
                   </label>
                   {on && (
-                    <button
-                      type="button" onClick={() => void clear(seat.slot)} disabled={busy}
-                      style={{ ...ghost, cursor: busy ? "default" : "pointer" }}
-                    >
-                      지우기
-                    </button>
+                    <>
+                      {/*
+                        가로로 긴 사진을 세로 자리에 넣으면 남는 여백이 크다. 파일을
+                        실제로 돌려 저장하므로, 돌린 뒤에는 평범한 세로 사진처럼 다뤄진다.
+                      */}
+                      <button
+                        type="button" onClick={() => void turn(seat.slot)} disabled={busy}
+                        title="시계방향으로 90도 돌립니다"
+                        style={{ ...ghost, cursor: busy ? "default" : "pointer" }}
+                      >
+                        90도 회전
+                      </button>
+                      <button
+                        type="button" onClick={() => void clear(seat.slot)} disabled={busy}
+                        style={{ ...ghost, cursor: busy ? "default" : "pointer" }}
+                      >
+                        지우기
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
