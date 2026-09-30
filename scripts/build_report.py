@@ -298,43 +298,93 @@ def walk_shapes(shapes):
 # 바뀌는데, 글자로 찾으면 그 순간 조용히 안 바뀐다.
 AS_OF_PATTERN = re.compile(r"\d{4}\.\d{2}\.\d{2}\s*기준")
 
+# 바닥글의 연·월. "2026년 05월 NH …" 의 앞부분만 걸린다.
+#
+# 기준일과 같은 이유로 **모양으로** 찾는다. 뒤에 붙는 문구는 건드리지 않으므로
+# 양식의 문장이 바뀌어도 이 치환은 계속 동작한다.
+#
+# `^` 로 **문단 맨 앞**에 묶어 둔다. "2026년 05월" 만 놓고 보면 개정 이력("2024년
+# 1월 개정") 같은 다른 문구에도 걸릴 수 있는데, 바닥글은 연·월로 시작한다.
+FOOTER_MONTH_PATTERN = re.compile(r"^\d{4}\s*년\s*\d{1,2}\s*월")
 
-def set_as_of(slide, label):
-    """기준일 문구를 보고월 말일로 바꾼다.
 
-    run 단위로 바꾸면 안 된다 — PowerPoint 는 한 문장을 여러 run 으로 쪼개 두는 일이
+def sub_in_paragraphs(shapes, pattern, repl, stop_after_first=False, recurse_groups=True):
+    """도형 안의 문단을 훑어 pattern 에 걸리는 곳을 repl 로 바꾼다. 바꾼 수를 돌려준다.
+
+    **run 단위로 바꾸면 안 된다.** PowerPoint 는 한 문장을 여러 run 으로 쪼개 두는 일이
     흔해서, "2026.08.31" 과 " 기준" 이 따로 있으면 정규식이 어느 쪽에도 안 걸린다.
-    실제로 그래서 한 군데도 안 바뀌었다. replace_in_texts 와 같은 방식으로 합쳐서 본다.
+    실제로 그래서 한 군데도 안 바뀌었다. 문단의 run 을 **합쳐서 본 뒤** 첫 run 에 결과를
+    넣고 나머지 run 을 지운다(서식은 첫 run 것을 따른다).
+
+    `recurse_groups` 는 **부르는 쪽이 정한다.** 기준일은 그룹 안에도 하나 더 있어서
+    열어야 하고(walk_shapes 주석), 쪽 번호는 제목 한 군데뿐이라 열지 않는다. 이 함수를
+    두 곳에서 뽑아낼 때 한쪽 범위를 넓혀 버린 적이 있다 — 그러면 그룹 안에 "(1/2)"
+    모양이 하나 생기는 날 엉뚱한 글자가 조용히 바뀐다.
     """
-    for shape in walk_shapes(slide.shapes):
+    changed = 0
+    for shape in (walk_shapes(shapes) if recurse_groups else shapes):
         if not shape.has_text_frame:
             continue
         for paragraph in shape.text_frame.paragraphs:
-            joined = "".join(r.text for r in paragraph.runs)
-            if not AS_OF_PATTERN.search(joined):
-                continue
             runs = list(paragraph.runs)
-            if runs:
-                runs[0].text = AS_OF_PATTERN.sub(label, joined)
-                for run in runs[1:]:
-                    run._r.getparent().remove(run._r)
+            if not runs:
+                continue
+            joined = "".join(r.text for r in runs)
+            if not pattern.search(joined):
+                continue
+            runs[0].text = pattern.sub(repl, joined)
+            for run in runs[1:]:
+                run._r.getparent().remove(run._r)
+            changed += 1
+            if stop_after_first:
+                return changed
+    return changed
+
+
+def set_as_of(slide, label):
+    """기준일 문구를 보고월 말일로 바꾼다."""
+    return sub_in_paragraphs(slide.shapes, AS_OF_PATTERN, label)
+
+
+def set_footer_month(prs, label):
+    """바닥글의 "2026년 05월" 을 보고월로 바꾼다. 바꾼 수를 돌려준다.
+
+    **이 문구는 슬라이드가 아니라 레이아웃에 있다.** 그래서 한 장씩 들여다봐도 안
+    보이고, 12장이 **한꺼번에** 틀린다. 실제로 09월 보고서가 바닥에 "2026년 05월" 을
+    달고 나갔다. 레이아웃 '1_본문' 과 '2_본문' 이 각각 05월·06월로 서로 다른 달을
+    들고 있어, 한 문서 안에서 장마다 달이 달랐다.
+
+    문장 전체가 아니라 **연·월 부분만** 갈아끼운다. 나머지 문구는 양식에 그대로 두어
+    고객 문장을 우리 코드로 옮겨 오지 않는다(lib/reportLabels.ts 주석에 근거).
+
+    레이아웃은 여러 슬라이드가 공유하므로 한 번 고치면 전부 따라온다.
+    """
+    changed = 0
+    for master in prs.slide_masters:
+        changed += sub_in_paragraphs(master.shapes, FOOTER_MONTH_PATTERN, label)
+        for layout in master.slide_layouts:
+            changed += sub_in_paragraphs(layout.shapes, FOOTER_MONTH_PATTERN, label)
+    return changed
+
+
+PAGE_NO_PATTERN = re.compile(r"\(\s*\d+\s*/\s*\d+\s*\)")
 
 
 def set_page_no(slide, current, total):
-    """제목의 "(1/6)" 같은 쪽 번호를 갱신한다."""
-    import re
-    for shape in slide.shapes:
-        if not shape.has_text_frame:
-            continue
-        for paragraph in shape.text_frame.paragraphs:
-            joined = "".join(r.text for r in paragraph.runs)
-            if re.search(r"\(\s*\d+\s*/\s*\d+\s*\)", joined):
-                fixed = re.sub(r"\(\s*\d+\s*/\s*\d+\s*\)", f"({current}/{total})", joined)
-                runs = list(paragraph.runs)
-                runs[0].text = fixed
-                for run in runs[1:]:
-                    run._r.getparent().remove(run._r)
-                return
+    """제목의 "(1/6)" 같은 쪽 번호를 갱신한다.
+
+    제목 한 군데뿐이라 첫 곳만 바꾸고 **그룹은 열지 않는다.** 그룹까지 열면 순서가
+    앞인 그룹 안의 "(n/m)" 을 먼저 집고 끝나 제목은 그대로 남는다.
+
+    못 찾으면 알린다 — 쪽 번호가 전부 "(1/3)" 으로 남은 보고서가 나가는 것보다
+    로그에 한 줄 남는 편이 낫다.
+    """
+    changed = sub_in_paragraphs(
+        slide.shapes, PAGE_NO_PATTERN, f"({current}/{total})",
+        stop_after_first=True, recurse_groups=False)
+    if changed == 0:
+        print(f"경고: 제목에서 쪽 번호를 찾지 못했습니다 ({current}/{total}).", file=sys.stderr)
+    return changed
 
 
 # --------------------------------------------------------------------------
@@ -481,15 +531,15 @@ def fill_photos(slide, chip, title, items):
     lib/reportPhotoLayout.ts 가 정해 payload 로 넘긴다(반올림을 전부 TS 에 두는 것과
     같은 이유다. 규칙이 한 곳에 있고 그쪽에서 단위테스트로 잠긴다).
 
-    폭·높이를 둘 다 주므로 사진은 상자에 맞춰 늘어난다. 종횡비를 지키지 않는 근거는
-    lib/reportPhotoLayout.ts 머리말에 적었다 — 나란한 두 장의 크기가 달라지면 줄이
-    안 맞아 한쪽이 떠 보인다. 실제 고객 보고서도 같은 상자에 맞춰 놓았다.
+    받은 폭·높이는 **상자**이고 사진을 늘릴 크기가 아니다. 비율을 지켜 그 안에 넣는
+    일은 fit_picture 가 한다(근거는 그쪽 주석에 있다 — 상자에 맞춰 늘렸더니 가로로
+    긴 사진 속 사람이 찌그러져 보고서에 그대로 나갔다).
     """
     # 본문(표)을 걷어내 머리말만 남긴다. 복제 원본이 작업 슬라이드이기 때문이다.
     #
-    # 머리말 아래의 작은 그룹(`• PaaS`)은 일부러 남겨 둔다. 사진이 top 1.5 에서
-    # 시작해 그 줄(1.54~1.77)을 덮으므로 화면에는 보이지 않고, 그룹의 내용이 전부
-    # 왼쪽에 몰려 있어 사진 밖으로 삐져나오는 조각도 없다(실제로 만들어 확인함).
+    # 머리말 아래의 작은 그룹(`• PaaS`)은 일부러 남겨 둔다. 그 줄은 1.536~1.767 에
+    # 있고 사진은 표와 같은 1.781 에서 시작하므로 서로 겹치지 않는다 — 앞뒤 장의
+    # 표 위에 있는 그 줄과 같은 자리에 그대로 선다.
     # 양식에서 덜 걷어낼수록 나중에 양식이 바뀔 때 어긋날 곳이 적다.
     for shape in list(slide.shapes):
         if shape.has_table:
@@ -570,6 +620,16 @@ def build(payload, template_path, out_path):
     if as_of:
         for slide in prs.slides:
             set_as_of(slide, as_of)
+
+    # 바닥글의 연·월. 레이아웃에 있어 12장이 한꺼번에 바뀐다(set_footer_month 주석).
+    #
+    # 한 군데도 못 바꿨으면 **알린다.** 조용히 넘기면 지난달 라벨을 달고 나간다 —
+    # 실제로 그렇게 나갔다. 보고서 자체는 쓸 수 있으니 실패시키지는 않는다.
+    footer_month = payload.get("footerMonthLabel")
+    if footer_month:
+        if set_footer_month(prs, footer_month) == 0:
+            print("경고: 바닥글의 연·월을 찾지 못했습니다. 양식을 확인하세요.",
+                  file=sys.stderr)
 
     sr_items = payload["srs"]
     work_pages = chunk(payload["work"], WORK_ROWS_PER_SLIDE)
