@@ -14,8 +14,7 @@
  */
 import { NextResponse } from "next/server";
 import { getCase, isClosedStatus } from "../../../../lib/queries.ts";
-import { hasTeamSession, recordWriteAudit, resolveActorTeam } from "../../../../lib/requestAudit.ts";
-import { hydrateTeamSessionFromDb } from "../../../../lib/sessionStore.ts";
+import { ensureTeamSession, recordWriteAudit, resolveActorTeam } from "../../../../lib/requestAudit.ts";
 import { openDb } from "../../../../lib/db.ts";
 import { enqueueUpload, getJobStatus } from "../../../../lib/attachmentJobs.ts";
 import {
@@ -141,7 +140,8 @@ export async function POST(request: Request): Promise<Response> {
   const { requestId, fileName } = check;
 
   // 재시작으로 로컬 세션 파일이 없을 수 있으니 DB 백업에서 먼저 복원한다(hasTeamSession 전).
-  await hydrateTeamSessionFromDb(teamId);
+  const noSession = await ensureTeamSession(teamId, { actor, action: "upload", requestId });
+  if (noSession !== null) return noSession;
 
   // 종료된 케이스에는 올리지 않는다. 답변과 같은 판정을 쓴다.
   const detail = await getCase(requestId);
@@ -154,15 +154,6 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json(
       { ok: false, message: "종료된 케이스에는 첨부를 올릴 수 없습니다." },
       { status: 400 },
-    );
-  }
-
-  // 세션이 없으면 큐에 넣지도 않는다. 넣으면 수집기가 브라우저를 띄우고 나서야 실패한다.
-  if (!hasTeamSession(teamId)) {
-    await recordWriteAudit({ actor, teamId, action: "upload", requestId, result: "failed:session" });
-    return NextResponse.json(
-      { ok: false, code: "session", message: "세션이 없습니다. SR 페이지에서 로그인하세요." },
-      { status: 401 },
     );
   }
 

@@ -3,9 +3,8 @@ import { PRIORITIES, createCase } from "../../../lib/createCase.ts";
 import { fetchClient } from "../../../collector/httpClient.ts";
 import { sessionFileForTeam } from "../../../lib/config.ts";
 import { refreshOpenCases } from "../../../lib/refreshCase.ts";
-import { hasTeamSession, recordWriteAudit, resolveActorTeam, runSideEffect } from "../../../lib/requestAudit.ts";
+import { ensureTeamSession, recordWriteAudit, resolveActorTeam, runSideEffect } from "../../../lib/requestAudit.ts";
 import {
-  hydrateTeamSessionFromDb,
   persistTeamSessionToDb,
   refreshTeamSessionFromDb,
 } from "../../../lib/sessionStore.ts";
@@ -43,19 +42,11 @@ export async function POST(request: Request) {
   }
   const { actor, teamId } = actorTeam;
 
-  // 재시작으로 로컬 세션 파일이 없을 수 있으니 DB 백업에서 먼저 복원한다(hasTeamSession 전).
-  await hydrateTeamSessionFromDb(teamId);
-
-  // 쓰기 시도 전에 세션 파일부터 확인한다. 없으면 브로드컴에 요청조차 보내지 않는다.
-  // fetchClient 는 SessionExpiredError/SessionMissingError 를 던지지 않으므로
-  // (그건 브라우저 로그인 경로 전용), 세션 없음은 반드시 여기서 걸러야 한다.
-  if (!hasTeamSession(teamId)) {
-    await recordWriteAudit({ actor, teamId, action: "create_sr", requestId: null, result: "failed:session" });
-    return NextResponse.json(
-      { ok: false, code: "session", message: "세션이 없습니다. SR 페이지에서 로그인하세요." },
-      { status: 401 },
-    );
-  }
+  // 쓰기 전에 세션을 확보한다. 없으면 브로드컴에 요청조차 보내지 않는다.
+  // fetchClient 는 SessionExpiredError 를 던지지 않으므로(브라우저 로그인 경로 전용)
+  // 세션 없음은 반드시 여기서 걸러야 한다.
+  const noSession = await ensureTeamSession(teamId, { actor, action: "create_sr", requestId: null });
+  if (noSession !== null) return noSession;
 
   // 브라우저를 띄우지 않는다. 쓰기 경로는 사람이 앞에서 기다리는 구간이다.
   try {

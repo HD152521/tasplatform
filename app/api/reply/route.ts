@@ -4,9 +4,8 @@ import { postReply } from "../../../lib/reply.ts";
 import { fetchClient } from "../../../collector/httpClient.ts";
 import { sessionFileForTeam } from "../../../lib/config.ts";
 import { refreshCaseThreads } from "../../../lib/refreshCase.ts";
-import { hasTeamSession, recordWriteAudit, resolveActorTeam, runSideEffect } from "../../../lib/requestAudit.ts";
+import { ensureTeamSession, recordWriteAudit, resolveActorTeam, runSideEffect } from "../../../lib/requestAudit.ts";
 import {
-  hydrateTeamSessionFromDb,
   persistTeamSessionToDb,
   refreshTeamSessionFromDb,
 } from "../../../lib/sessionStore.ts";
@@ -36,8 +35,8 @@ export async function POST(request: Request) {
   }
   const { actor, teamId } = actorTeam;
 
-  // 재시작으로 로컬 세션 파일이 없을 수 있으니 DB 백업에서 먼저 복원한다(hasTeamSession 전).
-  await hydrateTeamSessionFromDb(teamId);
+  const noSession = await ensureTeamSession(teamId, { actor, action: "reply", requestId });
+  if (noSession !== null) return noSession;
 
   // 종료된 케이스에는 보내지 않는다.
   const detail = await getCase(requestId);
@@ -50,15 +49,6 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { ok: false, message: "종료된 케이스에는 답변할 수 없습니다." },
       { status: 400 },
-    );
-  }
-
-  // 쓰기 시도 전에 세션 파일부터 확인한다. 없으면 브로드컴에 요청조차 보내지 않는다.
-  if (!hasTeamSession(teamId)) {
-    await recordWriteAudit({ actor, teamId, action: "reply", requestId, result: "failed:session" });
-    return NextResponse.json(
-      { ok: false, code: "session", message: "세션이 없습니다. SR 페이지에서 로그인하세요." },
-      { status: 401 },
     );
   }
 

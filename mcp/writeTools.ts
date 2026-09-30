@@ -44,6 +44,14 @@ export interface WriteDeps {
   hydrateSession?: (teamId: string) => Promise<void>;
   /** 회전된 세션을 DB 로 백업(쓰기 후). */
   persistSession?: (teamId: string) => Promise<void>;
+  /**
+   * 401 을 받은 뒤 DB 의 최신 세션을 강제로 끌어온다. 바뀌었으면 true.
+   *
+   * 웹 라우트에는 있는데 여기에는 없어서, 수집기가 방금 재로그인한 순간 웹으로는
+   * 되는 답변이 MCP 로는 "세션이 만료되었습니다" 로 실패했다. 같은 일을 하는 두 경로가
+   * 다르게 동작하면 사람은 도구를 의심한다.
+   */
+  refreshSession?: (teamId: string) => Promise<boolean>;
   /** 테스트에서 임시 DB 를 가리키기 위한 것. 실제 서버 호출부는 생략한다. */
   dbFile?: string;
 }
@@ -101,13 +109,22 @@ export async function createSrHandler(
   const componentId = Number(args.componentId);
 
   const client = deps.fetchClient(deps.sessionFileForTeam(teamId));
-  const result = await deps.createCase(client, {
+  const draft = {
     subject,
     content,
     priorityId,
     productId: Number.isFinite(productId) ? productId : undefined,
     componentId: Number.isFinite(componentId) ? componentId : undefined,
-  });
+  };
+  let result = await deps.createCase(client, draft);
+
+  // 세션은 만료 시각이 오기 전에도 죽는다(수집기가 재로그인하면 앞선 세션이 무효가 된다).
+  // Broadcom 이 401 을 주는 이 순간이 진실이라, 최신본을 끌어와 한 번만 다시 보낸다.
+  // 401 로 거절당한 시도는 아무것도 만들지 않았으므로 케이스가 둘 생기지 않는다.
+  if (!result.ok && result.code === "session" && deps.refreshSession
+      && await deps.refreshSession(teamId)) {
+    result = await deps.createCase(deps.fetchClient(deps.sessionFileForTeam(teamId)), draft);
+  }
 
   // 쓰기 성공/실패를 부수효과가 뒤집지 않도록 runSideEffect 로만 건드린다.
   await runSideEffect("mcp create persist", () => client.persist());
@@ -186,7 +203,13 @@ export async function replyHandler(
   }
 
   const client = deps.fetchClient(deps.sessionFileForTeam(teamId));
-  const result = await deps.postReply(client, requestId, text);
+  let result = await deps.postReply(client, requestId, text);
+
+  // createSrHandler 의 같은 자리 참고. 401 이면 최신 세션으로 한 번만 다시 보낸다.
+  if (!result.ok && result.code === "session" && deps.refreshSession
+      && await deps.refreshSession(teamId)) {
+    result = await deps.postReply(deps.fetchClient(deps.sessionFileForTeam(teamId)), requestId, text);
+  }
 
   await runSideEffect("mcp reply persist", () => client.persist());
   if (deps.persistSession) {

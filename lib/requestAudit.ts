@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 import { DEFAULT_TEAM_ID, assertValidTeamId, sessionFileForTeam } from "./config.ts";
 import { openDb, recordAudit } from "./db.ts";
 import type { AuditEntry } from "./db.ts";
+import { hydrateTeamSessionFromDb } from "./sessionStore.ts";
 
 export type ActorTeamResult =
   | { ok: true; actor: string; teamId: string }
@@ -90,4 +91,42 @@ export async function runSideEffect(label: string, fn: () => unknown | Promise<u
   } catch (error) {
     console.error(`[audit] 부수효과 실패 (쓰기 자체는 이미 성공): ${label}`, error);
   }
+}
+
+/**
+ * 쓰기·읽기 전에 세션을 확보한다. 못 하면 돌려줄 응답을, 됐으면 null.
+ *
+ * 다섯 라우트가 이 세 줄을 각자 복사해 갖고 있었다.
+ *
+ *     await hydrateTeamSessionFromDb(teamId);
+ *     if (!hasTeamSession(teamId)) return 401 ...;
+ *
+ * 지금은 문구와 순서가 같지만, 한 곳만 hydrate 를 빼먹거나 메시지를 고치면 그
+ * 라우트만 조용히 어긋난다. 실제로 답변 라우트의 catch 블록이 그렇게 갈라져,
+ * 망 오류까지 "세션이 만료되었습니다" 로 보이던 적이 있다.
+ *
+ * audit 을 주면 실패를 감사 로그에 남긴다. 읽기 경로(첨부·본문 이미지)는 남기지 않는다 —
+ * 조회는 기록할 일이 아니고, 남기면 로그가 조회로 덮인다.
+ */
+export async function ensureTeamSession(
+  teamId: string,
+  audit?: { actor: string; action: string; requestId: number | null },
+): Promise<Response | null> {
+  // 재시작으로 로컬 파일이 없을 수 있다. DB 백업에서 먼저 복원한다.
+  await hydrateTeamSessionFromDb(teamId);
+  if (hasTeamSession(teamId)) return null;
+
+  if (audit !== undefined) {
+    await recordWriteAudit({
+      actor: audit.actor,
+      teamId,
+      action: audit.action,
+      requestId: audit.requestId,
+      result: "failed:session",
+    });
+  }
+  return Response.json(
+    { ok: false, code: "session", message: "세션이 없습니다. SR 페이지에서 로그인하세요." },
+    { status: 401 },
+  );
 }

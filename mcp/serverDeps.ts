@@ -20,7 +20,11 @@ import { createCase } from "../lib/createCase.ts";
 import { hasTeamSession } from "../lib/requestAudit.ts";
 import { refreshCaseThreads, refreshOpenCases } from "../lib/refreshCase.ts";
 import { postReply } from "../lib/reply.ts";
-import { hydrateTeamSessionFromDb, persistTeamSessionToDb } from "../lib/sessionStore.ts";
+import {
+  hydrateTeamSessionFromDb,
+  persistTeamSessionToDb,
+  refreshTeamSessionFromDb,
+} from "../lib/sessionStore.ts";
 import { getSummary } from "../lib/summary.ts";
 import type { GetSummaryDeps } from "./readTools.ts";
 import type { ReportDeps } from "./reportTools.ts";
@@ -36,6 +40,7 @@ export const writeDeps: WriteDeps = {
   refreshOpenCases,
   hydrateSession: hydrateTeamSessionFromDb,
   persistSession: persistTeamSessionToDb,
+  refreshSession: refreshTeamSessionFromDb,
 };
 
 export const summaryDeps: GetSummaryDeps = {
