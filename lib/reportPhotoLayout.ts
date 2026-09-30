@@ -9,15 +9,23 @@
  *
  * ## 좌표의 출처
  *
- * 실제 고객 보고서의 사진 페이지를 python-pptx 로 열어 잰 값이다. 그 양식에는 두 배치가
- * 있었다 — 전면 1장(8.5×5.43in)과 나란히 2장(3.9×5.5in, 좌 1.45 / 우 5.42). 우리는
- * 4장을 받으므로 **나란히 2장** 쪽을 쓴다.
+ * 처음에는 실제 고객 보고서에서 잰 값(좌 1.45 / 우 5.42, 3.9×5.5in)을 그대로 썼다.
+ * **그 문서는 슬라이드 폭이 10.83in 이고 우리 템플릿은 13.33in 이다.** 그래서 사진이
+ * 왼쪽으로 몰리고 오른쪽에 2인치 가까운 빈자리가 남았다.
  *
- * ## 왜 종횡비를 지키지 않고 상자를 고정하나
+ * 다른 문서의 좌표를 옮겨 오는 것이 애초에 틀렸다. **우리 템플릿 자신의 본문 영역**에
+ * 맞춘다 — 12장 전부 표가 left 1.86 / top 1.78 / 폭 9.61 로 통일돼 있고, 좌우 여백이
+ * 1.86 으로 대칭이다. 사진도 같은 자리에 서야 앞뒤 장과 줄이 맞는다.
  *
- * 한 슬라이드에 두 장이 나란히 선다. 각 사진의 비율에 맞춰 상자를 줄이면 두 사진의
- * 크기가 서로 달라져 한쪽이 떠 보이고 아래 여백이 들쭉날쭉해진다. 실제 고객 보고서도
- * 두 장을 같은 상자에 맞춰 놓았다 — 줄을 맞추는 쪽을 택한다.
+ * 높이 5.04 는 이 템플릿에서 가장 큰 표의 높이다(top 1.78 → bottom 6.82). 그보다 크면
+ * 다른 장보다 아래로 삐져나온다.
+ *
+ * ## 상자는 꽉 채울 크기가 아니라 테두리다
+ *
+ * 한때 폭·높이를 그대로 넣어 사진을 상자에 맞춰 늘렸다. 두 장의 줄을 맞추려던 것인데,
+ * 가로로 긴 사진이 세로로 늘어나 사람이 찌그러졌다. 지금은 파이썬이 **비율을 지켜**
+ * 상자 안에 넣고 남는 자리를 가운데로 민다(scripts/build_report.py 의 fit_picture).
+ * 줄은 가운데 정렬로 맞춘다.
  *
  * ## 빈 자리는 만들지 않는다
  *
@@ -30,13 +38,22 @@ import { PHOTO_SLOT_COUNT } from "./reportPhotoLimits.ts";
 /** 한 슬라이드에 나란히 놓는 장수. */
 export const PHOTOS_PER_SLIDE = 2;
 
+/** 템플릿 본문 영역. 12장 전부 이 자리에 표가 있다. */
+const CONTENT_LEFT = 1.86;
+const CONTENT_WIDTH = 9.61;
+/** 두 장 사이 틈. 서로 붙어 보이지 않을 만큼만 둔다. */
+const GAP = 0.16;
+
 /** 왼쪽·오른쪽 사진의 left (인치). */
-export const PHOTO_LEFT = [1.45, 5.42] as const;
+export const PHOTO_LEFT = [
+  CONTENT_LEFT,
+  CONTENT_LEFT + (CONTENT_WIDTH + GAP) / 2,
+] as const;
 
 /** 두 자리가 공유하는 top·폭·높이 (인치). */
-export const PHOTO_TOP = 1.5;
-export const PHOTO_WIDTH = 3.9;
-export const PHOTO_HEIGHT = 5.5;
+export const PHOTO_TOP = 1.78;
+export const PHOTO_WIDTH = (CONTENT_WIDTH - GAP) / 2;
+export const PHOTO_HEIGHT = 5.04;
 
 /** 사진 슬라이드의 구획 번호와 제목. 실제 고객 보고서가 "04" / "PaaS (1/2)" 였다. */
 export const PHOTO_CHIP = "04";

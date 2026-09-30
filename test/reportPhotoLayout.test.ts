@@ -4,7 +4,7 @@
  * 이 규칙이 틀리면 **파일을 열어 보기 전까지 아무도 모른다.** 사진이 겹쳐 놓이거나
  * 빈 사진틀이 남은 보고서가 그대로 고객에게 나간다. 그래서 0·1·2·3·4 전부를 잠근다.
  *
- * 좌표는 실제 고객 보고서에서 잰 값이다. 숫자를 바꾸려면 다시 재고 이 시험을 고쳐야 한다.
+ * 좌표는 **우리 템플릿의 본문 영역**에서 온다. 숫자를 바꾸려면 다시 재고 이 시험을 고쳐야 한다.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -73,11 +73,30 @@ test("모든 자리가 같은 top·폭·높이를 쓴다", () => {
 });
 
 // 실제 고객 보고서에서 잰 값. 바꾸려면 다시 재야 한다.
-test("좌표는 실측값 그대로다", () => {
-  assert.deepEqual([...PHOTO_LEFT], [1.45, 5.42]);
-  assert.equal(PHOTO_TOP, 1.5);
-  assert.equal(PHOTO_WIDTH, 3.9);
-  assert.equal(PHOTO_HEIGHT, 5.5);
+/*
+ * 좌표는 **우리 템플릿의 본문 영역**에서 온다 — 12장 전부 표가 left 1.86 / top 1.78 /
+ * 폭 9.61 이고 좌우 여백이 1.86 으로 대칭이다.
+ *
+ * 한때 실제 고객 보고서에서 잰 값(좌 1.45 / 우 5.42)을 그대로 썼는데, 그 문서는
+ * 슬라이드 폭이 10.83in 이고 우리 템플릿은 13.33in 이다. 사진이 왼쪽으로 몰리고
+ * 오른쪽에 2인치 가까운 빈자리가 남았다. 다른 문서의 좌표를 옮겨 오면 안 된다.
+ */
+test("사진 자리가 본문 영역과 줄이 맞는다", () => {
+  const CONTENT_LEFT = 1.86;
+  const CONTENT_RIGHT = 1.86 + 9.61;
+
+  assert.equal(PHOTO_LEFT[0], CONTENT_LEFT, "왼쪽 사진이 본문 왼쪽에서 시작해야");
+  assert.ok(
+    Math.abs((PHOTO_LEFT[1] ?? 0) + PHOTO_WIDTH - CONTENT_RIGHT) < 0.001,
+    "오른쪽 사진이 본문 오른쪽에서 끝나야",
+  );
+  assert.equal(PHOTO_TOP, 1.78, "표와 같은 높이에서 시작해야");
+
+  // 두 자리가 겹치면 사진이 서로를 덮는다.
+  assert.ok((PHOTO_LEFT[0] ?? 0) + PHOTO_WIDTH < (PHOTO_LEFT[1] ?? 0));
+  // 좌우 여백이 대칭이어야 가운데로 보인다.
+  assert.ok(Math.abs((PHOTO_LEFT[0] ?? 0) - (13.33 - CONTENT_RIGHT)) < 0.01);
+
   assert.equal(PHOTOS_PER_SLIDE, 2);
   assert.equal(PHOTO_SLOT_COUNT, 4);
 });
