@@ -78,9 +78,9 @@ function toMeta(row: PhotoRow): ReportPhotoMeta {
  * 건너뜀도 같이 치우는 이유: 사진은 없는데 "건너뜀" 만 남으면, 몇 달 뒤 그 달을 열었을 때
  * 아무것도 안 했는데 이미 정한 것처럼 보인다.
  */
-async function keepOnlyMonth(db: Db, month: string): Promise<void> {
-  await db.run("DELETE FROM report_photos WHERE month <> ?", [month]);
-  await db.run(
+async function keepOnlyMonth(tx: Db, month: string): Promise<void> {
+  await tx.run("DELETE FROM report_photos WHERE month <> ?", [month]);
+  await tx.run(
     "DELETE FROM app_state WHERE key LIKE 'report:photos:skipped:%' AND key <> ?",
     [skipKey(month)],
   );
@@ -166,6 +166,10 @@ export interface SavePhoto {
  *
  * 사진을 넣었으면 건너뜀 표시는 없어져야 한다 — 넣어 놓고 "건너뜀" 으로 보이면
  * 보고서를 만들 때 사진을 빼고 만든다.
+ *
+ * 그래서 넣기·건너뜀 지우기·다른 달 치우기를 **한 트랜잭션**에 묶는다. 나눠 두면
+ * 중간에 실패했을 때 "사진은 저장됐는데 건너뜀 표시가 남은" 상태가 되고, 화면은
+ * 실패(500)라고 말한다. 화면과 결과물이 어긋나는 바로 그 상태다.
  */
 export async function savePhoto(photo: SavePhoto): Promise<void> {
   const db = await openDb();
@@ -179,9 +183,9 @@ export async function savePhoto(photo: SavePhoto): Promise<void> {
          VALUES (?,?,?,?,?,?,?)`,
         [photo.month, photo.slot, photo.fileName, photo.mime, photo.data, photo.bytes, isoNow()],
       );
+      await tx.run("DELETE FROM app_state WHERE key = ?", [skipKey(photo.month)]);
+      await keepOnlyMonth(tx, photo.month);
     });
-    await db.run("DELETE FROM app_state WHERE key = ?", [skipKey(photo.month)]);
-    await keepOnlyMonth(db, photo.month);
   } finally {
     await db.close();
   }
@@ -211,9 +215,13 @@ export async function setPhotosSkipped(month: string, skipped: boolean): Promise
       await db.run("DELETE FROM app_state WHERE key = ?", [skipKey(month)]);
       return;
     }
-    await db.run("DELETE FROM report_photos WHERE month = ?", [month]);
-    await setAppState(db, skipKey(month), "1");
-    await keepOnlyMonth(db, month);
+    // savePhoto 와 같은 이유로 한 트랜잭션에 묶는다 — 사진만 지워지고 표시는 안 남거나
+    // 그 반대가 되면 화면과 보고서가 어긋난다.
+    await db.tx(async (tx) => {
+      await tx.run("DELETE FROM report_photos WHERE month = ?", [month]);
+      await setAppState(tx, skipKey(month), "1");
+      await keepOnlyMonth(tx, month);
+    });
   } finally {
     await db.close();
   }

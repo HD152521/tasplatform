@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { COLOR, Card, MONO_STACK, Notice, RADIUS } from "../ui.tsx";
 import {
@@ -11,6 +11,8 @@ import {
   PHOTO_SLOT_COUNT,
   PHOTO_TOO_LARGE_MESSAGE,
   MAX_PHOTO_BYTES,
+  MAX_ORIGINAL_BYTES,
+  ORIGINAL_TOO_LARGE_MESSAGE,
   type ReportPhotoMeta,
 } from "../../lib/reportPhotoLimits.ts";
 import {
@@ -124,6 +126,26 @@ export function PhotoStep({
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const inputs = useRef<Record<number, HTMLInputElement | null>>({});
+  /**
+   * 만들어 둔 미리보기 주소.
+   *
+   * 화면에 그리는 값은 seats 에 있지만, 되돌려줄(revoke) 때는 **가장 최신 값**을 알아야
+   * 하는데 비동기 처리 중의 seats 는 옛 값으로 닫혀 있을 수 있다. 그래서 따로 들고 있는다.
+   */
+  const urls = useRef<Record<number, string>>({});
+
+  function releaseUrl(slot: number): void {
+    const url = urls.current[slot];
+    if (url === undefined) return;
+    URL.revokeObjectURL(url);
+    delete urls.current[slot];
+  }
+
+  // 화면을 떠날 때 남은 미리보기 주소를 놓아준다. 안 놓으면 탭을 닫을 때까지 메모리에 남는다.
+  useEffect(() => () => {
+    for (const url of Object.values(urls.current)) URL.revokeObjectURL(url);
+    urls.current = {};
+  }, []);
 
   const filled = seats.filter((s) => s.meta !== null);
   const slides = layoutPhotoSlides(filled.length).length;
@@ -141,20 +163,33 @@ export function PhotoStep({
   async function pick(slot: number, file: File): Promise<void> {
     setError("");
     setNote("");
-    if (file.size > MAX_PHOTO_BYTES) {
-      setError(PHOTO_TOO_LARGE_MESSAGE);
+    // 여기서 재는 것은 **원본**이고, 상한도 원본용(MAX_ORIGINAL_BYTES)이다.
+    // 저장 상한(4MB)으로 재면 휴대폰 사진은 줄여 보기도 전에 전부 거부당한다.
+    if (file.size > MAX_ORIGINAL_BYTES) {
+      setError(ORIGINAL_TOO_LARGE_MESSAGE);
       return;
     }
 
     setBusySlot(slot);
     try {
       const small = await shrink(file);
-      const form = new FormData();
-      form.set("month", month);
-      form.set("slot", String(slot));
-      form.set("file", small);
+      // 줄인 뒤에도 상한을 넘는 것은 사실상 없다. 그래도 여기서 걸러 주면
+      // 사람은 업로드를 기다리지 않고 바로 이유를 듣는다.
+      if (small.size > MAX_PHOTO_BYTES) {
+        setError(PHOTO_TOO_LARGE_MESSAGE);
+        return;
+      }
 
-      const response = await fetch("/api/report/photos", { method: "POST", body: form });
+      // 사진은 본문에 그대로 싣고 이름·자리는 주소에 둔다 — 라우트가 본문을 스트림으로
+      // 읽으며 상한에서 끊기 때문이다(app/api/report/photos/route.ts 머리말).
+      const query = new URLSearchParams({
+        month, slot: String(slot), name: small.name,
+      });
+      const response = await fetch(`/api/report/photos?${query.toString()}`, {
+        method: "POST",
+        headers: { "Content-Type": small.type },
+        body: small,
+      });
       const body = (await response.json().catch(() => ({}))) as {
         ok?: boolean; message?: string; fileName?: string; bytes?: number; mime?: string;
       };
@@ -163,9 +198,13 @@ export function PhotoStep({
         return;
       }
 
+      // 미리보기 주소를 새로 만들고 그 자리에 있던 것은 놓아준다.
+      // 되돌려주는 일을 setSeats 의 갱신 함수 안에서 하지 않는다 — 갱신 함수는
+      // React 가 여러 번 부를 수 있어서 부작용을 넣을 자리가 아니다.
       const url = URL.createObjectURL(small);
+      releaseUrl(slot);
+      urls.current[slot] = url;
       update(slot, (seat) => {
-        if (seat.localUrl !== null) URL.revokeObjectURL(seat.localUrl);
         return {
           ...seat,
           localUrl: url,
@@ -206,10 +245,8 @@ export function PhotoStep({
         setError(body.message ?? `사진을 지우지 못했습니다 (HTTP ${response.status}).`);
         return;
       }
-      update(slot, (seat) => {
-        if (seat.localUrl !== null) URL.revokeObjectURL(seat.localUrl);
-        return { ...seat, meta: null, localUrl: null };
-      });
+      releaseUrl(slot);
+      update(slot, (seat) => ({ ...seat, meta: null, localUrl: null }));
       setNote("사진을 지웠습니다.");
       router.refresh();
     } catch (e) {
@@ -237,10 +274,8 @@ export function PhotoStep({
       }
       setSkip(next);
       if (next) {
-        setSeats((cur) => cur.map((s) => {
-          if (s.localUrl !== null) URL.revokeObjectURL(s.localUrl);
-          return { ...s, meta: null, localUrl: null };
-        }));
+        for (const seat of seats) releaseUrl(seat.slot);
+        setSeats((cur) => cur.map((s) => ({ ...s, meta: null, localUrl: null })));
         setNote("사진 없이 보고서를 만듭니다.");
       } else {
         setNote("건너뛰기를 되돌렸습니다.");

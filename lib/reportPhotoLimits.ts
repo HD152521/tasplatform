@@ -40,7 +40,14 @@ export interface ReportPhotoMeta {
   readonly savedAt: string;
 }
 
-/** 장당 최대 크기. base64 로 부풀어 DB 행이 되므로 작게 잡는다. */
+/**
+ * **저장하는** 사진 한 장의 최대 크기. base64 로 부풀어 DB 행이 되므로 작게 잡는다.
+ *
+ * 이 상한은 **줄인 뒤**의 크기에 건다. 고른 원본에 걸면 안 된다 — 요즘 휴대폰 사진은
+ * 한 장이 3~15MB 라, 원본으로 재면 현장에서 찍은 사진은 거의 다 거부당한다. 정작
+ * 긴 변 1600px 로 줄이면 몇백 KB 가 된다(실측: 2400×3200 → 34KB). 줄이려고 만든
+ * 기능이 줄이기도 전에 막아서는 안 된다.
+ */
 export const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
 
 /** 상한을 사람에게 보여줄 때 쓰는 표기. 숫자와 문구가 따로 놀지 않게 여기서 만든다. */
@@ -50,8 +57,32 @@ export const MAX_PHOTO_LABEL = `${MAX_PHOTO_BYTES / (1024 * 1024)}MB`;
 export const PHOTO_TOO_LARGE_MESSAGE =
   `${MAX_PHOTO_LABEL} 보다 큰 사진은 넣을 수 없습니다. 더 작게 저장해 다시 올려주세요.`;
 
+/**
+ * **고를 수 있는** 원본의 최대 크기.
+ *
+ * 저장 상한보다 훨씬 크다. 원본은 줄여서 보낼 것이므로 크기 자체는 문제가 아니고,
+ * 이 값은 "브라우저가 이걸 펼치다 탭이 죽는다" 를 막는 선일 뿐이다. 1억 화소 휴대폰
+ * 사진도 20MB 안쪽이라 40MB 면 현장에서 찍은 사진은 전부 들어온다.
+ */
+export const MAX_ORIGINAL_BYTES = 40 * 1024 * 1024;
+
+export const ORIGINAL_TOO_LARGE_MESSAGE =
+  `${MAX_ORIGINAL_BYTES / (1024 * 1024)}MB 보다 큰 파일은 열 수 없습니다.`
+  + " 사진이 아니라 다른 파일을 고르지 않았는지 확인해 주세요.";
+
 /** 저장할 때 줄일 긴 변 길이(px). */
 export const PHOTO_LONG_EDGE = 1600;
+
+/**
+ * 받아들이는 긴 변의 상한(px).
+ *
+ * 화면은 PHOTO_LONG_EDGE 로 줄여 보내므로 평소에는 근처도 못 간다. 이 값은 **라우트를
+ * 직접 부르는 경우**를 막는 방어선이다. 4MB 안에 드는 작은 파일이라도 픽셀 수는 얼마든지
+ * 키울 수 있다(압축 폭탄). 그런 사진은 보고서에 박혀 나가서, 파일을 여는 고객의
+ * PowerPoint 가 그 픽셀을 전부 펼친다. 3.9×5.5인치 자리에 들어가므로 300dpi 로 쳐도
+ * 1650px 이면 충분하고, 여유를 두어 4000px 로 막는다.
+ */
+export const MAX_PHOTO_EDGE = 4000;
 
 /** 줄일 때 쓰는 JPEG 품질. 현장 사진·스크린샷에서 눈에 띄는 열화 없이 용량이 확 준다. */
 export const PHOTO_JPEG_QUALITY = 0.85;
@@ -69,26 +100,88 @@ export type PhotoMime = (typeof PHOTO_MIMES)[number];
 /** 파일 고르기 창에 걸 accept 값. */
 export const PHOTO_ACCEPT = PHOTO_MIMES.join(",");
 
-/**
- * base64 문자열이 담고 있는 실제 바이트 수.
- *
- * 디코드하지 않고 센다 — 크기를 재려고 4MB 를 메모리에 펼칠 이유가 없다.
- */
-export function base64Bytes(base64: string): number {
-  const body = base64.replace(/=+$/, "");
-  return Math.floor((body.length * 3) / 4);
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+
+/** 두 바이트를 빅엔디안 정수로. 이미지 헤더의 길이·크기는 전부 이 꼴이다. */
+function be16(bytes: Uint8Array, at: number): number {
+  return ((bytes[at] ?? 0) << 8) | (bytes[at + 1] ?? 0);
 }
 
 /**
- * base64 앞머리로 형식을 알아낸다. 확장자나 Content-Type 을 믿지 않는다.
+ * 앞머리 바이트로 형식을 알아낸다. 확장자나 Content-Type 을 믿지 않는다.
  *
- * 바이트로 풀지 않고 문자열 앞부분만 본다 — base64 는 3바이트가 4글자로 고정 대응하므로
- * 앞 몇 글자가 곧 앞 몇 바이트다. JPEG 의 FF D8 FF 가 "/9j/", PNG 의 89 50 4E 47…이
- * "iVBORw0KGgo" 다. 이 파일은 클라이언트에서도 쓰이므로 Buffer 를 쓸 수 없다.
+ * Buffer 가 아니라 Uint8Array 를 받는다 — 이 파일은 클라이언트에서도 쓰인다.
  */
-export function sniffPhotoMime(base64: string): PhotoMime | null {
-  if (base64.startsWith("/9j/")) return "image/jpeg";
-  if (base64.startsWith("iVBORw0KGgo")) return "image/png";
+export function sniffPhotoMime(bytes: Uint8Array): PhotoMime | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (bytes.length >= 8 && PNG_SIGNATURE.every((b, i) => bytes[i] === b)) {
+    return "image/png";
+  }
+  return null;
+}
+
+/** PNG 의 가로·세로. IHDR 이 반드시 첫 청크라 자리가 고정이다(16~23바이트). */
+function pngSize(bytes: Uint8Array): { width: number; height: number } | null {
+  // 8(서명) + 4(길이) + 4("IHDR") = 16 부터 가로 4바이트, 세로 4바이트.
+  if (bytes.length < 24) return null;
+  if (String.fromCharCode(...bytes.subarray(12, 16)) !== "IHDR") return null;
+  const width = (be16(bytes, 16) << 16) | be16(bytes, 18);
+  const height = (be16(bytes, 20) << 16) | be16(bytes, 22);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+/** SOF(Start Of Frame) 마커. 여기에 가로·세로가 들어 있다. */
+function isJpegFrameMarker(marker: number): boolean {
+  if (marker < 0xc0 || marker > 0xcf) return false;
+  // C4(허프만 표)·C8(JPG 확장)·CC(산술 부호 표)는 프레임이 아니다.
+  return marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+}
+
+/**
+ * JPEG 의 가로·세로.
+ *
+ * PNG 와 달리 자리가 고정이 아니라 마커를 하나씩 건너뛰며 SOF 를 찾아야 한다.
+ * 전부 헤더만 읽는다 — 픽셀을 펼치지 않으므로 큰 사진이어도 비용이 일정하다.
+ */
+function jpegSize(bytes: Uint8Array): { width: number; height: number } | null {
+  let at = 2; // SOI(FF D8) 다음부터
+  while (at + 3 < bytes.length) {
+    if (bytes[at] !== 0xff) return null; // 마커가 아니면 우리가 읽을 수 있는 파일이 아니다
+    let marker = bytes[at + 1] ?? 0;
+    // FF 가 채움(padding)으로 여러 개 붙기도 한다.
+    while (marker === 0xff && at + 2 < bytes.length) {
+      at += 1;
+      marker = bytes[at + 1] ?? 0;
+    }
+    if (isJpegFrameMarker(marker)) {
+      // 세그먼트: [길이 2][정밀도 1][세로 2][가로 2]
+      const height = be16(bytes, at + 5);
+      const width = be16(bytes, at + 7);
+      return width > 0 && height > 0 ? { width, height } : null;
+    }
+    if (marker === 0xd8 || marker === 0xd9 || marker === 0x01
+      || (marker >= 0xd0 && marker <= 0xd7)) {
+      at += 2; // 길이가 없는 마커
+      continue;
+    }
+    const length = be16(bytes, at + 2);
+    if (length < 2) return null; // 길이가 이상하면 더 못 읽는다
+    at += 2 + length;
+  }
+  return null;
+}
+
+/**
+ * 사진의 픽셀 크기. 읽지 못하면 null.
+ *
+ * 헤더만 본다 — 픽셀을 펼치면 압축 폭탄에 그대로 당한다(MAX_PHOTO_EDGE 주석).
+ */
+export function readImageSize(bytes: Uint8Array): { width: number; height: number } | null {
+  const mime = sniffPhotoMime(bytes);
+  if (mime === "image/png") return pngSize(bytes);
+  if (mime === "image/jpeg") return jpegSize(bytes);
   return null;
 }
 
@@ -99,33 +192,37 @@ export function isPhotoSlot(value: unknown): value is number {
 }
 
 export type PhotoCheck =
-  | { ok: true; slot: number; mime: PhotoMime; bytes: number }
-  | { ok: false; code: "invalid" | "too_large" | "unsupported"; message: string };
+  | { ok: true; slot: number; mime: PhotoMime; bytes: number; width: number; height: number }
+  | {
+    ok: false;
+    code: "invalid" | "too_large" | "unsupported" | "too_many_pixels";
+    message: string;
+  };
 
 /**
- * 사진 한 장을 받아도 되는지 판정한다.
+ * 사진 한 장을 받아도 되는지 판정한다. 실제 바이트로 본다.
  *
  * 크기 0 을 거절하는 이유: 빈 사진은 보고서 생성 단계(python add_picture)에서야 터진다.
  * 사람 앞에서 즉시 말해 주는 편이 낫다.
+ *
+ * 픽셀 크기까지 보는 이유는 MAX_PHOTO_EDGE 주석에 적었다 — 바이트 상한만으로는
+ * 압축 폭탄을 막지 못한다.
  */
-export function checkPhoto(input: { slot: unknown; base64: unknown }): PhotoCheck {
+export function checkPhoto(input: { slot: unknown; bytes: Uint8Array }): PhotoCheck {
   if (!isPhotoSlot(input.slot)) {
     return { ok: false, code: "invalid", message: "사진 자리가 올바르지 않습니다." };
   }
   const slot = Number(input.slot);
 
-  if (typeof input.base64 !== "string" || input.base64 === "") {
+  const bytes = input.bytes;
+  if (bytes.length === 0) {
     return { ok: false, code: "invalid", message: "빈 사진은 넣을 수 없습니다." };
   }
-  const bytes = base64Bytes(input.base64);
-  if (bytes <= 0) {
-    return { ok: false, code: "invalid", message: "빈 사진은 넣을 수 없습니다." };
-  }
-  if (bytes > MAX_PHOTO_BYTES) {
+  if (bytes.length > MAX_PHOTO_BYTES) {
     return { ok: false, code: "too_large", message: PHOTO_TOO_LARGE_MESSAGE };
   }
 
-  const mime = sniffPhotoMime(input.base64);
+  const mime = sniffPhotoMime(bytes);
   if (mime === null) {
     return {
       ok: false,
@@ -134,5 +231,23 @@ export function checkPhoto(input: { slot: unknown; base64: unknown }): PhotoChec
     };
   }
 
-  return { ok: true, slot, mime, bytes };
+  const size = readImageSize(bytes);
+  if (size === null) {
+    // 앞머리는 JPEG·PNG 인데 크기를 못 읽었다 = 헤더가 깨졌거나 우리가 모르는 변형이다.
+    // 통과시키면 보고서를 만드는 단계에서 터진다.
+    return {
+      ok: false,
+      code: "unsupported",
+      message: "사진의 크기를 읽을 수 없습니다. 다시 저장해 올려주세요.",
+    };
+  }
+  if (Math.max(size.width, size.height) > MAX_PHOTO_EDGE) {
+    return {
+      ok: false,
+      code: "too_many_pixels",
+      message: `긴 변이 ${MAX_PHOTO_EDGE}px 보다 큰 사진은 넣을 수 없습니다.`,
+    };
+  }
+
+  return { ok: true, slot, mime, bytes: bytes.length, width: size.width, height: size.height };
 }
