@@ -323,8 +323,13 @@ export function InstanceForm({
                 </tr>
               </thead>
               <tbody>
+                {/*
+                  키를 법인·구분으로 만들면 겹친다 — 이어지는 행은 법인이 빈 문자열이라
+                  "은행 개발" 과 "중앙회 개발" 이 둘 다 `-개발` 이 된다(React 경고 실측).
+                  이 표는 순서가 곧 의미이고 행이 더해지거나 섞이지 않으므로 자리를 키로 쓴다.
+                */}
                 {result.rows.map((row, i) => (
-                  <tr key={`${row.entity}-${row.kind}`}>
+                  <tr key={i}>
                     <td style={{ ...td, fontWeight: row.entity === "" ? 400 : 600 }}>{row.entity}</td>
                     <td style={td}>{row.kind}</td>
                     <td style={tdNum}>{row.cluster}</td>
