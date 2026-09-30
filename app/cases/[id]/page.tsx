@@ -3,7 +3,10 @@ import { AttachmentLink } from "./AttachmentLink.tsx";
 import { InlineImages } from "./InlineImages.tsx";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
-import { needsTranslation } from "../../../lib/caseTranslate.ts";
+import {
+  caseTranslateTargets, translationKey, untranslated,
+} from "../../../lib/caseTranslate.ts";
+import { CaseBody } from "./CaseBody.tsx";
 import {
   getCase, isClosedStatus, listAttachments, listThreadInlineImages, listThreads,
   loadCaseTranslations, markCaseRead,
@@ -46,20 +49,29 @@ export default async function CaseDetailPage({
     byThread.set(key, [...(byThread.get(key) ?? []), doc]);
   }
 
-  // 한국어로 볼 때만 저장된 번역을 싣는다. 없는 것은 원문 그대로 보인다.
+  // 저장된 번역은 **원문 보기에서도** 싣는다. 글마다의 번역 버튼이 "이 글에 번역이
+  // 있는지" 를 알아야 "번역" 과 "한국어 보기" 를 가려 낼 수 있다.
   const refs = [
     { scope: "case_desc", refId: requestId },
     ...threads.map((t) => ({ scope: "thread", refId: t.thread_id })),
   ];
-  const translated = lang === "ko" ? await loadCaseTranslations(refs) : new Map<string, string>();
-  /** 한국어 화면에서 보여줄 글. 번역이 없으면 원문 그대로다. */
-  const shown = (scope: string, refId: number, original: string): string =>
-    translated.get(scope + ":" + refId) ?? original;
-  /** 아직 번역이 없어 원문으로 보이는 건수. */
-  const pending = lang !== "ko" ? 0 : refs.filter((r, i) => {
-    const original = i === 0 ? detail.description_text : (threads[i - 1]?.body_text ?? "");
-    return needsTranslation(original) && !translated.has(r.scope + ":" + r.refId);
-  }).length;
+  const translated = await loadCaseTranslations(refs);
+  /** 번역할 수 있는 글(영문). 한국어 원문과 빈 글은 빠져 있다. */
+  const targets = caseTranslateTargets({
+    requestId,
+    descriptionText: detail.description_text,
+    threads: threads.map((t) => ({ threadId: t.thread_id, bodyText: t.body_text })),
+  });
+  /** 아직 번역이 없어 원문으로 보이는 건수. 위쪽 "전체 번역" 이 이 수만큼 부른다. */
+  const pending = untranslated(targets, translated).length;
+  /**
+   * 이 글에 번역 버튼을 낼지. 판정을 다시 하지 않고 targets 에서 되읽는다 —
+   * 라우트가 번역할 목록과 화면이 버튼을 내는 목록이 한 글자도 어긋나지 않게 한다.
+   */
+  const translatableKeys = new Set(targets.map((t) => translationKey(t.scope, t.refId)));
+  /** 저장된 번역. 없으면 null — 화면은 원문을 쓴다. */
+  const translationOf = (scope: string, refId: number): string | null =>
+    translated.get(translationKey(scope, refId)) ?? null;
 
   const lastThread = threads[threads.length - 1];
   const waitingOnUs = lastThread !== undefined && lastThread.is_ours === 0;
@@ -112,7 +124,16 @@ export default async function CaseDetailPage({
           {detail.description_text !== "" && (
             <Card style={{ padding: "18px 20px", marginBottom: 14 }}>
               <SpeakerRow ours label="최초 등록 내용" at={formatStamp(detail.created_on_ms)} />
-              <Body text={shown("case_desc", requestId, detail.description_text)} />
+              {/* 최초 등록 글도 같은 저장소(scope=case_desc)를 쓰므로 버튼을 함께 붙인다. */}
+              <CaseBody
+                requestId={requestId}
+                scope="case_desc"
+                refId={requestId}
+                text={detail.description_text}
+                translation={translationOf("case_desc", requestId)}
+                translatable={translatableKeys.has(translationKey("case_desc", requestId))}
+                defaultKorean={lang === "ko"}
+              />
             </Card>
           )}
 
@@ -139,7 +160,15 @@ export default async function CaseDetailPage({
                   at={formatStamp(thread.res_date_ms)}
                   latest={latest}
                 />
-                <Body text={shown("thread", thread.thread_id, thread.body_text)} />
+                <CaseBody
+                  requestId={requestId}
+                  scope="thread"
+                  refId={thread.thread_id}
+                  text={thread.body_text}
+                  translation={translationOf("thread", thread.thread_id)}
+                  translatable={translatableKeys.has(translationKey("thread", thread.thread_id))}
+                  defaultKorean={lang === "ko"}
+                />
                 {/* Broadcom 이 본문에 박아 보낸 화면 캡처. 첨부와 달리 글 안에 있다. */}
                 <InlineImages ids={inlineImages.get(thread.thread_id) ?? []} />
                 {docs.length > 0 && <Files docs={docs} />}
@@ -209,17 +238,6 @@ function SpeakerRow({
       {latest === true && <Badge fg={COLOR.waitUs} bg={COLOR.waitUsBg} strong>최신</Badge>}
       <span style={{ marginLeft: "auto", fontSize: 12, color: COLOR.faint, flexShrink: 0 }}>{at}</span>
     </div>
-  );
-}
-
-function Body({ text }: { text: string }) {
-  return (
-    <p style={{
-      margin: 0, fontSize: 14, lineHeight: 1.75, color: COLOR.body,
-      whiteSpace: "pre-wrap", wordBreak: "break-word",
-    }}>
-      {text === "" ? "(본문 없음)" : text}
-    </p>
   );
 }
 
