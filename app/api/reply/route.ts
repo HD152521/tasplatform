@@ -98,12 +98,18 @@ export async function POST(request: Request) {
     return NextResponse.json(result, { status: result.ok ? 200 : 409 });
   } catch (error) {
     // 여기 닿는 것은 postReply 자체(또는 fetchClient 생성)가 던진, 진짜 예상 못한
-    // 오류뿐이다 — 세션 없음은 위에서 이미 걸렀다.
+    // 오류뿐이다 — 세션 만료는 값(code:"session")으로 돌아오지 예외로 오지 않는다.
+    //
+    // 예전에는 이걸 전부 code:"session" + 401 로 돌려줬다. 그래서 망 오류나 타임아웃
+    // 같은 세션과 무관한 실패까지 "세션이 만료되었습니다" 로 보였고, 담당자는 재로그인만
+    // 되풀이하며 엉뚱한 곳을 팠다. 감사 로그에도 failed:session 으로 남아 원인 분석을
+    // 막았다. 옆의 create 라우트는 처음부터 이렇게 나눠 처리하고 있었다.
     const message = error instanceof Error ? error.message : String(error);
-    await recordWriteAudit({ actor, teamId, action: "reply", requestId, result: "failed:session" });
+    console.error("[api/reply]", error);
+    await recordWriteAudit({ actor, teamId, action: "reply", requestId, result: "failed:error" });
     return NextResponse.json(
-      { ok: false, code: "session", message },
-      { status: 401 },
+      { ok: false, code: "failed", message },
+      { status: 500 },
     );
   }
 }
