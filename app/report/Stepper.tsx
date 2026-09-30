@@ -2,7 +2,7 @@ import Link from "next/link";
 import { COLOR, MONO_STACK, RADIUS } from "../ui.tsx";
 
 /**
- * 정기점검 보고서 3단계 진행 표시.
+ * 정기점검 보고서 진행 표시.
  *
  * 단계를 URL(`?step=`)로 두는 이유는, 새로고침하거나 링크를 주고받아도
  * 같은 자리로 돌아오기 때문이다. 각 단계의 선택은 DB 에 저장된다.
@@ -11,22 +11,57 @@ export const STEPS: ReadonlyArray<{ n: number; label: string; note: string }> = 
   { n: 1, label: "인스턴스 수", note: "클라우드 운영 현황" },
   { n: 2, label: "SR 선택", note: "SR 요약 · 상세" },
   { n: 3, label: "작업 내역", note: "Jira 작업 진행 현황" },
-  { n: 4, label: "보고서 생성", note: "PPT 파일 내려받기" },
+  { n: 4, label: "사진", note: "현장 사진 (건너뛰기 가능)" },
+  { n: 5, label: "보고서 생성", note: "PPT 파일 내려받기" },
 ];
 
+/** 사진 단계의 번호. 여기만 "지나갔다" 가 아니라 실제 상태로 표시를 정한다. */
+export const PHOTO_STEP = 4;
+
+export interface PhotoStepMark {
+  /** 넣은 장수. */
+  readonly count: number;
+  /** 건너뛰기를 **명시적으로** 눌렀는가. */
+  readonly skipped: boolean;
+}
+
+/**
+ * 사진 단계는 지나갔다는 것만으로 ✓ 를 칠하지 않는다.
+ *
+ * 건너뛸 수 있는 단계라, 지나간 것을 전부 ✓ 로 칠하면 "건너뛴 것" 과 "한 것" 이
+ * 똑같이 보인다. 그러면 보고서를 만들 때 사진을 잊은 사람에게 아무것도 묻지 못한다.
+ *
+ *   사진을 넣었다     ✓ (초록)
+ *   건너뛰기를 눌렀다 — (회색) + "건너뜀"
+ *   아직 안 정했다    숫자
+ */
+function photoMark(photos: PhotoStepMark): { glyph: string; tone: "done" | "skipped" | "todo" } {
+  if (photos.count > 0) return { glyph: "✓", tone: "done" };
+  if (photos.skipped) return { glyph: "—", tone: "skipped" };
+  return { glyph: String(PHOTO_STEP), tone: "todo" };
+}
+
 export function Stepper({
-  month, step, counts,
+  month, step, counts, photos,
 }: {
   month: string;
   step: number;
   counts: { sr: number; jira: number };
+  photos: PhotoStepMark;
 }) {
+  const photo = photoMark(photos);
+
   return (
     <nav style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
       {STEPS.map((s) => {
         const active = s.n === step;
-        const done = s.n < step;
-        const picked = s.n === 2 ? counts.sr : s.n === 3 ? counts.jira : 0;
+        const isPhoto = s.n === PHOTO_STEP;
+        const done = isPhoto ? photo.tone === "done" : s.n < step;
+        const skipped = isPhoto && photo.tone === "skipped";
+        const glyph = isPhoto ? photo.glyph : done ? "✓" : String(s.n);
+        const picked = s.n === 2 ? counts.sr : s.n === 3 ? counts.jira
+          : isPhoto ? photos.count : 0;
+        const note = skipped ? "건너뜀" : s.note;
         return (
           <Link
             key={s.n}
@@ -47,7 +82,7 @@ export function Stepper({
               background: active ? "rgba(255,255,255,.22)" : done ? COLOR.okBg : COLOR.ground,
               color: active ? "#ffffff" : done ? COLOR.ok : COLOR.faint,
             }}>
-              {done ? "✓" : s.n}
+              {glyph}
             </span>
             <span style={{ minWidth: 0 }}>
               <span style={{
@@ -69,7 +104,7 @@ export function Stepper({
                 color: active ? "rgba(255,255,255,.7)" : COLOR.faint,
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
               }}>
-                {s.note}
+                {note}
               </span>
             </span>
           </Link>

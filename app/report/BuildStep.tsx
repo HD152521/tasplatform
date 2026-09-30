@@ -2,28 +2,40 @@
 
 import { useState } from "react";
 import { COLOR, Card, MONO_STACK, Notice, RADIUS } from "../ui.tsx";
+import { layoutPhotoSlides } from "../../lib/reportPhotoLayout.ts";
 
 /**
- * 4단계 · 보고서 생성.
+ * 5단계 · 보고서 생성.
  *
  * 회사 양식(templates/monthly-report.pptx)을 그대로 열어 값만 채운다.
  * SR 정리는 건수만큼 AI 를 부르므로 몇 분 걸린다 — 그 사실을 미리 알린다.
  */
 export function BuildStep({
-  month, srCount, workCount, hasInstances,
+  month, srCount, workCount, hasInstances, photoCount, photosSkipped,
 }: {
   month: string;
   srCount: number;
   workCount: number;
   hasInstances: boolean;
+  photoCount: number;
+  /** 4단계에서 건너뛰기를 **명시적으로** 눌렀는가. */
+  photosSkipped: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
+  /** 사진 없이 만들겠다고 여기서 확인했는가. */
+  const [agreeNoPhoto, setAgreeNoPhoto] = useState(false);
+
+  const photoSlides = layoutPhotoSlides(photoCount).length;
+  // 사진을 넣지도 않았고 건너뛰기를 누르지도 않았다 = 잊은 것일 수 있다.
+  // 이때만 확인을 받는다. 건너뛰기를 눌렀으면 이미 정한 것이라 묻지 않는다.
+  const photoUndecided = photoCount === 0 && !photosSkipped;
 
   const blockers: string[] = [];
   if (!hasInstances) blockers.push("1단계 인스턴스 수가 저장되지 않았습니다.");
   if (srCount === 0) blockers.push("2단계에서 고른 SR 이 없습니다.");
+  const locked = blockers.length > 0 || (photoUndecided && !agreeNoPhoto);
 
   async function build(): Promise<void> {
     setBusy(true);
@@ -80,11 +92,41 @@ export function BuildStep({
           <Line label="3-3 작업 진행 현황"
                 value={workCount > 0 ? `${workCount}건` : "선택 없음 — 전체가 들어갑니다"}
                 ok />
+          <Line label="04 정기점검 사진"
+                value={photoCount > 0
+                  ? `${photoCount}장 · 슬라이드 ${photoSlides}장`
+                  : photosSkipped
+                    ? "건너뜀 — 사진 슬라이드를 붙이지 않습니다"
+                    : "아직 정하지 않음"}
+                ok={photoCount > 0 || photosSkipped} />
         </div>
 
         {blockers.length > 0 ? (
           <Notice tone="warn">
             {blockers.map((b) => <div key={b}>{b}</div>)}
+          </Notice>
+        ) : photoUndecided ? (
+          // 빈 사진틀이 남은 보고서를 보내는 것이 가장 나쁘므로, 사진 없이 만드는 것
+          // 자체는 막지 않고 **한 번 확인만** 받는다. 4단계에서 건너뛰기를 눌렀다면
+          // 이미 정한 것이라 여기까지 오지 않는다.
+          <Notice tone="warn">
+            4단계에서 사진을 넣지 않았고 건너뛰기도 누르지 않았습니다.
+            <b> 사진 슬라이드 없이</b> 만들까요?
+            <label style={{
+              display: "flex", alignItems: "center", gap: 8,
+              marginTop: 10, fontSize: 13, cursor: "pointer",
+            }}>
+              <input
+                type="checkbox" checked={agreeNoPhoto}
+                onChange={(e) => setAgreeNoPhoto(e.target.checked)}
+              />
+              사진 없이 만들겠습니다
+            </label>
+            <div style={{ marginTop: 8, fontSize: 12 }}>
+              <a href={`/report?month=${month}&step=4`} style={{ color: COLOR.warn }}>
+                4단계로 돌아가 사진 넣기 →
+              </a>
+            </div>
           </Notice>
         ) : (
           <p style={{
@@ -101,14 +143,14 @@ export function BuildStep({
         )}
 
         <button
-          type="button" onClick={() => void build()} disabled={busy || blockers.length > 0}
+          type="button" onClick={() => void build()} disabled={busy || locked}
           style={{
             width: "100%", padding: "13px 0", fontSize: 14, fontWeight: 600,
             borderRadius: RADIUS.control, fontFamily: "inherit",
-            color: blockers.length > 0 ? COLOR.faint : "#ffffff",
-            background: blockers.length > 0 ? COLOR.ground : COLOR.accent,
-            border: `1px solid ${blockers.length > 0 ? COLOR.field : COLOR.accent}`,
-            cursor: busy || blockers.length > 0 ? "default" : "pointer",
+            color: locked ? COLOR.faint : "#ffffff",
+            background: locked ? COLOR.ground : COLOR.accent,
+            border: `1px solid ${locked ? COLOR.field : COLOR.accent}`,
+            cursor: busy || locked ? "default" : "pointer",
           }}
         >
           {busy ? "만드는 중… (몇 분 걸립니다)" : "정기점검 보고서 만들기"}

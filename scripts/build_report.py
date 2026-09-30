@@ -12,13 +12,16 @@
   "분석 및 진행 상황" 칸 하나가 48조각이었다. 문자열 치환으로는 못 찾는다.
   python-pptx 는 그 구조를 다루므로 첫 run 의 서식을 지키면서 안전하게 바꿀 수 있다.
 """
+import base64
 import copy
+import io
 import json
 import sys
 from pathlib import Path
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.util import Inches
 
 RELS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
@@ -34,22 +37,74 @@ IDX_WORK = 9         # 3-3 작업 진행 현황 (원본 1장)
 
 WORK_ROWS_PER_SLIDE = 8   # 실제 양식이 한 장에 8행까지 담고 있다
 
+# 사진 슬라이드를 **어떻게 만들지** — 작업 슬라이드를 복제해 표만 걷어낸다.
+#
+# 우리 양식(templates/monthly-report.pptx)에는 사진 슬라이드가 없다. 만드는 길이 둘이었다.
+#
+#   (1) 레이아웃에서 새 슬라이드를 추가한다 → 머리말(구획 번호 칸·제목 칸·그 아래
+#       `• PaaS` 그룹)이 따라오지 않는다. 양식의 다른 장과 머리말이 다른 장이 끼어
+#       티가 난다. 마스터의 '그림 및 캡션' 레이아웃도 우리 양식의 머리말과 모양이 다르다.
+#   (2) 기존 장을 복제해 내용(표)만 걷어낸다 → 머리말·밑줄·글꼴이 그대로 남는다.
+#
+# 그래서 (2)를 쓴다. 복제 원본은 **작업 슬라이드**다. SR 상세 장에는 "2026.08.31 기준"
+# 같은 날짜 텍스트 상자가 따로 붙어 있어 걷어낼 것이 하나 더 늘고, 작업 장에는 그게 없다.
+IDX_PHOTO_PROTO = IDX_WORK
+
+# 구획 번호 칸을 제목 칸과 구별하는 기준.
+# 양식의 두 칸은 각각 0.56인치와 10.91인치라 폭 하나로 확실히 갈린다.
+# 텍스트("3-3")로 찾으면 양식에서 그 글자가 바뀌는 순간 조용히 어긋난다.
+CHIP_MAX_WIDTH = Inches(1)
+
 
 # --------------------------------------------------------------------------
 # 슬라이드 조작
 # --------------------------------------------------------------------------
 
+def rewire_rels(src, dst):
+    """복제한 도형이 가리키는 관계(그림 등)를 새 슬라이드에도 걸어 준다.
+
+    ## 왜 필요한가 — 실측으로 확인한 것
+
+    도형 XML 안의 그림은 `r:embed="rId2"` 처럼 **그 슬라이드의 관계 번호**로 그림을
+    가리킨다. XML 만 복사하면 번호는 따라오지만 관계는 안 따라온다. 새 슬라이드에는
+    rId1(레이아웃)뿐이라 rId2 가 허공을 가리킨다.
+
+    양식의 SR 상세·작업 슬라이드에는 "그림이 없다" 고 적혀 있었지만, 머리말의 작은
+    그룹(`• PaaS`) 안에 0.21인치짜리 아이콘 그림이 들어 있었다. 실제로 만든 파일을
+    풀어 보니 복제된 장마다 rId2 가 **없는 관계**를 가리키고 있었다.
+
+    사진 슬라이드에서는 이게 더 나빠진다. add_picture 가 rId2 를 새로 만들어 쓰므로,
+    아이콘 자리에 **사진 1번이 0.21인치로 쪼그라들어** 박힌다. 그래서 복제 직후,
+    사진을 붙이기 전에 관계를 옮겨 붙인다.
+    """
+    moved = {}
+    for element in dst.shapes._spTree.iter():
+        for attr in (RELS + "embed", RELS + "link", RELS + "id"):
+            old = element.get(attr)
+            if old is None:
+                continue
+            if old not in moved:
+                rel = src.part.rels[old]
+                moved[old] = (
+                    dst.part.relate_to(rel.target_ref, rel.reltype, is_external=True)
+                    if rel.is_external
+                    else dst.part.relate_to(rel.target_part, rel.reltype)
+                )
+            element.set(attr, moved[old])
+
+
 def clone_slide(prs, src):
     """슬라이드를 통째로 복제해 맨 뒤에 붙인다.
 
-    python-pptx 에 공식 복제 기능이 없어 도형 XML 을 그대로 옮긴다.
-    SR 상세·작업 슬라이드에는 그림이 없어(확인함) 관계(rel) 복사가 필요 없다.
+    python-pptx 에 공식 복제 기능이 없어 도형 XML 을 그대로 옮긴 뒤,
+    그 도형들이 가리키는 관계를 다시 걸어 준다(rewire_rels 주석에 근거).
     """
     dst = prs.slides.add_slide(src.slide_layout)
     for shape in list(dst.shapes):
         shape._element.getparent().remove(shape._element)
     for shape in src.shapes:
         dst.shapes._spTree.append(copy.deepcopy(shape._element))
+    rewire_rels(src, dst)
     return dst
 
 
@@ -353,6 +408,67 @@ def fill_sr_detail(slide, sr):
     cell_text(table, 5, 1, sr["result"])
 
 
+def set_section(slide, chip, title):
+    """머리말의 구획 번호 칸과 제목 칸을 갈아끼운다.
+
+    두 칸은 폭으로 가른다(CHIP_MAX_WIDTH 주석). 표를 이미 걷어낸 뒤에 부르므로
+    글자가 들어가는 도형은 이 둘뿐이다.
+
+    못 찾으면 **조용히 넘기지 않는다.** 제목을 못 바꾸면 사진 장에 "작업 진행 현황"
+    이라고 적힌 보고서가 나가고, 그건 파일을 열어 보기 전까지 아무도 모른다.
+    """
+    chips = []
+    titles = []
+    for shape in slide.shapes:
+        if not shape.has_text_frame or shape.width is None:
+            continue
+        (chips if shape.width <= CHIP_MAX_WIDTH else titles).append(shape)
+
+    if len(chips) != 1 or len(titles) != 1:
+        raise LookupError(
+            f"사진 장의 머리말을 찾지 못했습니다 (구획 {len(chips)}개 / 제목 {len(titles)}개)")
+
+    set_text(chips[0].text_frame, chip)
+    set_text(titles[0].text_frame, title)
+
+
+def fill_photos(slide, chip, title, items):
+    """정기점검 사진 한 장.
+
+    받은 좌표(인치)에 그대로 놓는다. **어디에 놓을지는 파이썬이 정하지 않는다** —
+    lib/reportPhotoLayout.ts 가 정해 payload 로 넘긴다(반올림을 전부 TS 에 두는 것과
+    같은 이유다. 규칙이 한 곳에 있고 그쪽에서 단위테스트로 잠긴다).
+
+    폭·높이를 둘 다 주므로 사진은 상자에 맞춰 늘어난다. 종횡비를 지키지 않는 근거는
+    lib/reportPhotoLayout.ts 머리말에 적었다 — 나란한 두 장의 크기가 달라지면 줄이
+    안 맞아 한쪽이 떠 보인다. 실제 고객 보고서도 같은 상자에 맞춰 놓았다.
+    """
+    # 본문(표)을 걷어내 머리말만 남긴다. 복제 원본이 작업 슬라이드이기 때문이다.
+    #
+    # 머리말 아래의 작은 그룹(`• PaaS`)은 일부러 남겨 둔다. 사진이 top 1.5 에서
+    # 시작해 그 줄(1.54~1.77)을 덮으므로 화면에는 보이지 않고, 그룹의 내용이 전부
+    # 왼쪽에 몰려 있어 사진 밖으로 삐져나오는 조각도 없다(실제로 만들어 확인함).
+    # 양식에서 덜 걷어낼수록 나중에 양식이 바뀔 때 어긋날 곳이 적다.
+    for shape in list(slide.shapes):
+        if shape.has_table:
+            shape._element.getparent().remove(shape._element)
+
+    set_section(slide, chip, title)
+
+    for item in items:
+        raw = base64.b64decode(item["data"])
+        if not raw:
+            # 빈 사진은 여기까지 오지 않는다(lib/reportPhotoLimits.ts 가 막는다).
+            # 그래도 닿았다면 조용히 넘기지 않고 알린다 — 빈 자리가 남은 보고서가
+            # 나가는 것보다 실패하는 편이 낫다.
+            raise ValueError("사진 데이터가 비어 있습니다")
+        slide.shapes.add_picture(
+            io.BytesIO(raw),
+            Inches(item["left"]), Inches(item["top"]),
+            Inches(item["width"]), Inches(item["height"]),
+        )
+
+
 def fill_work(slide, rows):
     """3-3 작업 진행 현황 한 장."""
     table = first_table(slide)
@@ -381,10 +497,14 @@ def build(payload, template_path, out_path):
 
     sr_items = payload["srs"]
     work_pages = chunk(payload["work"], WORK_ROWS_PER_SLIDE)
+    # 사진은 없을 수 있다. 빈 목록이면 사진 슬라이드를 **한 장도** 만들지 않는다 —
+    # 빈 사진틀이 남은 보고서를 고객에게 보내는 것이 가장 나쁘다.
+    photo_pages = payload.get("photos") or []
 
     # 원본으로 쓸 슬라이드
     sr_proto = slides[IDX_SR_DETAIL]
     work_proto = slides[IDX_WORK]
+    photo_proto = slides[IDX_PHOTO_PROTO]
 
     # 1) 고정 구획 채우기
     fill_cloud(slides[IDX_CLOUD], payload["cloud"], payload["monthLabel"])
@@ -408,17 +528,25 @@ def build(payload, template_path, out_path):
         set_page_no(slide, i, len(work_pages))
         made_work.append(slide)
 
+    # 사진은 구획 04 라 작업(3-3) 뒤에 온다. 실제 고객 보고서도 그 자리였다.
+    made_photo = []
+    for page in photo_pages:
+        slide = clone_slide(prs, photo_proto)
+        fill_photos(slide, page["chip"], page["title"], page["items"])
+        made_photo.append(slide)
+
     # 3) 원본 슬라이드들을 걷어내고 순서를 다시 잡는다
     new_ids = slide_ids(prs)
     made_ids = new_ids[len(ids):]
     keep_front = [ids[IDX_CLOUD], ids[IDX_LICENSE], ids[IDX_SR_SUMMARY]]
     made_sr_ids = made_ids[:len(made_sr)]
-    made_work_ids = made_ids[len(made_sr):]
+    made_work_ids = made_ids[len(made_sr):len(made_sr) + len(made_work)]
+    made_photo_ids = made_ids[len(made_sr) + len(made_work):]
 
     for element in ids[IDX_SR_DETAIL:]:
         drop_slide(prs, element)
 
-    reorder(prs, keep_front + made_sr_ids + made_work_ids)
+    reorder(prs, keep_front + made_sr_ids + made_work_ids + made_photo_ids)
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     prs.save(out_path)

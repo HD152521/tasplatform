@@ -239,6 +239,27 @@ CREATE TABLE IF NOT EXISTS report_picks (
   PRIMARY KEY (month, kind, ref)
 );
 
+-- 정기점검 보고서에 넣을 현장 사진.
+-- 슬라이드 2장에 2장씩, 넉 장까지. slot 1..4 가 그 순서다.
+--
+-- 사진 자체를 base64 TEXT 로 담는다. TAS 는 파일시스템이 ephemeral 이라 디스크에 두면
+-- 재시작마다 사라지고, base64 로 두면 SQLite 의 BLOB 과 Postgres 의 BYTEA 를 가르지
+-- 않는다(attachment_jobs.payload 와 같은 이유).
+--
+-- 보관은 **그 달 것만**이다. 장당 4MB 씩 넉 장이라 달마다 쌓이면 DB 가 사진 보관소가
+-- 된다. 새 사진을 저장할 때 다른 달 행을 치운다(lib/reportPhotos.ts 의 keepOnlyMonth) —
+-- 지난달 사진은 그 달 보고서 파일 안에 이미 들어 있다.
+CREATE TABLE IF NOT EXISTS report_photos (
+  month     TEXT    NOT NULL,
+  slot      INTEGER NOT NULL,
+  file_name TEXT    NOT NULL DEFAULT '',
+  mime      TEXT    NOT NULL DEFAULT '',
+  data      TEXT    NOT NULL DEFAULT '',
+  bytes     INTEGER NOT NULL DEFAULT 0,
+  saved_at  TEXT    NOT NULL,
+  PRIMARY KEY (month, slot)
+);
+
 -- 팀 = 공용 브로드컴 계정 단위.
 -- 한 팀이 계정 하나를 공유한다. 다른 팀이 들어오면 자기 팀 계정을 쓴다.
 -- 세션·기기신뢰는 계정에 묶이므로 팀마다 각각(팀 안에서는 하나를 공유).
