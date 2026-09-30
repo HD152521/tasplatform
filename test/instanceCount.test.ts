@@ -182,3 +182,84 @@ test("합계는 여섯 행의 합과 같다", () => {
   assert.equal(r.total.container, sum);
   assert.equal(r.actual.total, sum, "실 운영 현황 합계도 같아야 한다");
 });
+
+/* ------------------------------------------------------------------ *
+ * 반올림 시점 — 합친 뒤에 한다
+ *
+ * 원본 엑셀(정기점검인스턴스계산.xlsx)의 입력 칸에는 ROUND() 가 없다.
+ * 더하고 뺀 **결과**를 표에 넣을 때 반올림한다. 공동 배분만 예외로
+ * ROUNDUP/ROUNDDOWN 이 걸려 있다.
+ *
+ *     입구 반올림   round(133.4) + round(133.4) = 266
+ *     결과 반올림   round(133.4  +  133.4)      = 267   ← 이쪽이 맞다
+ * ------------------------------------------------------------------ */
+
+test("소수를 먼저 더하고 그다음에 반올림한다", () => {
+  const input: InstanceInput = {
+    bank: { dev: 0, prod: 133.4, dr: 133.4 },
+    central: { dev: 0, prod: 0, dr: 0 },
+    shared: { dev: 0, prod: 0, dr: 0 },
+  };
+  const r = calculateInstances(input, EMPTY_PREVIOUS);
+  // 각각 반올림하면 133+133=266 이 된다. 합친 뒤 반올림하면 266.8 → 267.
+  assert.equal(r.rows[0]!.container, 267);
+});
+
+test("빼기에서도 마찬가지다", () => {
+  const input: InstanceInput = {
+    bank: { dev: 100.5, prod: 0, dr: 0 },
+    central: { dev: 0, prod: 0, dr: 0 },
+    shared: { dev: 0.4, prod: 0, dr: 0 },
+  };
+  const r = calculateInstances(input, EMPTY_PREVIOUS);
+  // 100.5 − 0.4 = 100.1 → 100. 입구에서 반올림하면 101 − 0 = 101 이 됐다.
+  assert.equal(r.rows[2]!.container, 100);
+});
+
+test("공동 배분은 소수 상태에서 올림·내림한다", () => {
+  const input: InstanceInput = {
+    bank: { dev: 0, prod: 200, dr: 0 },
+    central: { dev: 0, prod: 0, dr: 0 },
+    shared: { dev: 0, prod: 133.4, dr: 0 },
+  };
+  const r = calculateInstances(input, EMPTY_PREVIOUS);
+  // 엑셀: ROUNDUP(133.4/2)=67, ROUNDDOWN(133.4/2)=66. 둘을 더하면 133 이다.
+  assert.match(r.rows[1]!.note, /은행 : 67/);
+  assert.match(r.rows[1]!.note, /중앙회 : 66/);
+});
+
+test("표의 열이 실제로 더해진다", () => {
+  const input: InstanceInput = {
+    bank: { dev: 244.5, prod: 463.5, dr: 392.5 },
+    central: { dev: 122.5, prod: 128.5, dr: 92.5 },
+    shared: { dev: 68.5, prod: 97.5, dr: 91.5 },
+  };
+  const r = calculateInstances(input, EMPTY_PREVIOUS);
+  const rowSum = r.rows.reduce((n, row) => n + row.container, 0);
+  // 총합을 따로 반올림하면 행 합계와 1 어긋나는 달이 생긴다. 사람이 검산하는 표다.
+  assert.equal(r.total.container, rowSum);
+});
+
+test("증감은 표에 적힌 값끼리 뺀 것과 같다", () => {
+  const input: InstanceInput = {
+    bank: { dev: 0, prod: 133.4, dr: 133.4 },
+    central: { dev: 0, prod: 0, dr: 0 },
+    shared: { dev: 0, prod: 0, dr: 0 },
+  };
+  const previous = { ...EMPTY_PREVIOUS, bankProd: 200.6 };
+  const r = calculateInstances(input, previous);
+  // 267 − 201 = 66. 원값으로 빼서 따로 반올림하면 66.2 → 66 으로 같지만,
+  // 달에 따라 1 어긋난다. 표에 적힌 값끼리 빼는 규칙을 잠근다.
+  assert.equal(r.rows[0]!.delta, r.rows[0]!.container - 201);
+});
+
+test("결과가 음수면 그대로 보여준다", () => {
+  // 공동을 은행보다 크게 적은 경우다. 0 으로 누르면 잘못 적은 것을 알 길이 없다.
+  const input: InstanceInput = {
+    bank: { dev: 10, prod: 0, dr: 0 },
+    central: { dev: 0, prod: 0, dr: 0 },
+    shared: { dev: 78.5, prod: 0, dr: 0 },
+  };
+  const r = calculateInstances(input, EMPTY_PREVIOUS);
+  assert.equal(r.rows[2]!.container, -69, "10 − 78.5 = −68.5 → 크기를 키우는 쪽으로 −69");
+});

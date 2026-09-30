@@ -17,7 +17,13 @@
  * 중앙회가 내림이다. 실 운영 현황은 그 배분을 반영한 값이다.
  *
  * 입력은 소수일 수 있다(App Count 를 그대로 옮겨 적으면 133.4 가 나온다).
- * 반올림은 roundCount 가 계산 입구에서 한 번만 한다 — 이유는 그 함수 주석에 적었다.
+ *
+ * **반올림은 계산이 끝난 뒤에 한다.** 처음에는 아홉 칸을 입구에서 먼저 반올림했는데,
+ * 원본 엑셀을 열어 보니 입력 칸에 ROUND() 가 없었다. 더하고 뺀 **결과**를 표에 넣을 때
+ * 반올림한다. 유일한 예외가 공동 배분인데, 거기만 ROUNDUP/ROUNDDOWN 이 걸려 있다.
+ *
+ *     입구 반올림   round(133.4) + round(133.4) = 266
+ *     결과 반올림   round(133.4  +  133.4)      = 267   ← 엑셀과 같다
  */
 
 /** 사람이 입력하는 9개 값. 소수를 넣어도 되고, 계산 입구에서 정수로 반올림된다. */
@@ -144,23 +150,50 @@ export function roundCount(value: unknown): number {
   return Math.round(value);
 }
 
-function roundEnv(env: EnvCount): EnvCount {
-  return { dev: roundCount(env.dev), prod: roundCount(env.prod), dr: roundCount(env.dr) };
+/**
+ * 계산 **결과**를 표에 넣을 정수로 만든다.
+ *
+ * roundCount 와 다른 점은 **음수를 그대로 둔다**는 것이다. 입력은 음수일 수 없지만,
+ * 결과는 음수가 나올 수 있다 — 공동 인스턴스를 은행 값보다 크게 적으면 "은행 개발"
+ * 이 음수가 된다. 그건 오류가 아니라 **덜 넣었다는 신호**라 표에 보여야 한다.
+ * 0 으로 눌러 버리면 사람이 잘못 적은 것을 알 길이 없다.
+ *
+ * 음수에서 Math.round 는 -66.5 를 -66 으로(0 쪽으로) 올린다. 부호를 떼고 반올림해
+ * 양수와 같은 규칙(0.5 는 크기를 키우는 쪽)으로 맞춘다. -0 도 만들지 않는다.
+ */
+export function roundResult(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  const rounded = Math.sign(value) * Math.round(Math.abs(value));
+  return rounded === 0 ? 0 : rounded;
 }
 
-/** 전월값도 같은 규칙으로 맞춘다. 안 그러면 증감만 소수로 남는다. */
-function roundPrevious(previous: PreviousMonth): PreviousMonth {
+/** 계산에 쓰기 전 숫자로만 다듬는다. 반올림은 하지 않는다 — 그건 표에 넣을 때 한다. */
+function num(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return value <= 0 ? 0 : value;
+}
+
+function cleanEnv(env: EnvCount): EnvCount {
+  return { dev: num(env.dev), prod: num(env.prod), dr: num(env.dr) };
+}
+
+function cleanPrevious(previous: PreviousMonth): PreviousMonth {
   return {
-    bankProd: roundCount(previous.bankProd),
-    bankProdShared: roundCount(previous.bankProdShared),
-    bankDev: roundCount(previous.bankDev),
-    bankDevShared: roundCount(previous.bankDevShared),
-    centralProd: roundCount(previous.centralProd),
-    centralDev: roundCount(previous.centralDev),
+    bankProd: num(previous.bankProd),
+    bankProdShared: num(previous.bankProdShared),
+    bankDev: num(previous.bankDev),
+    bankDevShared: num(previous.bankDevShared),
+    centralProd: num(previous.centralProd),
+    centralDev: num(previous.centralDev),
   };
 }
 
-/** 공동 인스턴스 배분: 은행이 올림, 중앙회가 내림. */
+/**
+ * 공동 인스턴스 배분: 은행이 올림, 중앙회가 내림.
+ *
+ * 엑셀이 여기서만 반올림을 한다 — ROUNDUP(M6/2,0) / ROUNDDOWN(M6/2,0).
+ * 소수가 들어와도 정수 두 개가 나오고, 둘을 더하면 공동 수의 반올림값이 된다.
+ */
 function splitShared(shared: number): { bank: number; central: number } {
   return { bank: Math.ceil(shared / 2), central: Math.floor(shared / 2) };
 }
@@ -175,14 +208,13 @@ export function calculateInstances(
   rawPrevious: PreviousMonth,
   infra: Infra = DEFAULT_INFRA,
 ): InstanceResult {
-  // 아홉 칸을 먼저 정수로 맞춘다. 이 아래는 전부 정수 연산이므로 행 합계와 증감,
-  // 공동 배분이 따로 반올림할 것 없이 맞아떨어진다.
+  // 소수 그대로 계산한다. 엑셀이 그렇게 한다 — 입력 칸에 ROUND() 가 없다.
   const input: InstanceInput = {
-    bank: roundEnv(rawInput.bank),
-    central: roundEnv(rawInput.central),
-    shared: roundEnv(rawInput.shared),
+    bank: cleanEnv(rawInput.bank),
+    central: cleanEnv(rawInput.central),
+    shared: cleanEnv(rawInput.shared),
   };
-  const previous = roundPrevious(rawPrevious);
+  const previous = cleanPrevious(rawPrevious);
 
   const bankProd = input.bank.prod + input.bank.dr - (input.shared.prod + input.shared.dr);
   const bankProdShared = input.shared.prod + input.shared.dr;
@@ -194,56 +226,79 @@ export function calculateInstances(
   const prodSplit = splitShared(bankProdShared);
   const devSplit = splitShared(bankDevShared);
 
+  // 여기서부터 표에 들어갈 값이다. 계산이 끝났으니 정수로 만든다.
+  //
+  // 증감은 **반올림한 값끼리** 뺀다. 원값으로 빼서 따로 반올림하면, 표에 적힌
+  // 이번 달 − 지난 달이 적힌 증감과 1 어긋나는 달이 생긴다. 사람이 읽고 검산하는
+  // 표라 그게 더 나쁘다.
+  const v = {
+    bankProd: roundResult(bankProd),
+    bankProdShared: roundResult(bankProdShared),
+    bankDev: roundResult(bankDev),
+    bankDevShared: roundResult(bankDevShared),
+    centralProd: roundResult(centralProd),
+    centralDev: roundResult(centralDev),
+  };
+  const prev = {
+    bankProd: roundResult(previous.bankProd),
+    bankProdShared: roundResult(previous.bankProdShared),
+    bankDev: roundResult(previous.bankDev),
+    bankDevShared: roundResult(previous.bankDevShared),
+    centralProd: roundResult(previous.centralProd),
+    centralDev: roundResult(previous.centralDev),
+  };
+
   const rows: ResultRow[] = [
     {
       entity: "은행", kind: "운영",
       cluster: withNote(infra.bankProd.cluster, infra.bankProd.clusterNote),
       host: withNote(infra.bankProd.host, infra.bankProd.hostNote),
-      container: bankProd, note: "", delta: bankProd - previous.bankProd,
+      container: v.bankProd, note: "", delta: v.bankProd - prev.bankProd,
     },
     {
       entity: "", kind: "운영(공통)",
       cluster: "", host: "",
-      container: bankProdShared,
+      container: v.bankProdShared,
       note: `은행 : ${prodSplit.bank}  중앙회 : ${prodSplit.central}`,
-      delta: bankProdShared - previous.bankProdShared,
+      delta: v.bankProdShared - prev.bankProdShared,
     },
     {
       entity: "", kind: "개발",
       cluster: withNote(infra.bankDev.cluster, infra.bankDev.clusterNote),
       host: withNote(infra.bankDev.host, infra.bankDev.hostNote),
-      container: bankDev, note: "", delta: bankDev - previous.bankDev,
+      container: v.bankDev, note: "", delta: v.bankDev - prev.bankDev,
     },
     {
       entity: "", kind: "개발(공통)",
       cluster: "", host: "",
-      container: bankDevShared,
+      container: v.bankDevShared,
       note: `은행 : ${devSplit.bank}  중앙회 : ${devSplit.central}`,
-      delta: bankDevShared - previous.bankDevShared,
+      delta: v.bankDevShared - prev.bankDevShared,
     },
     {
       entity: "중앙회", kind: "운영",
       cluster: withNote(infra.centralProd.cluster, infra.centralProd.clusterNote),
       host: withNote(infra.centralProd.host, infra.centralProd.hostNote),
-      container: centralProd, note: "", delta: centralProd - previous.centralProd,
+      container: v.centralProd, note: "", delta: v.centralProd - prev.centralProd,
     },
     {
       entity: "", kind: "개발",
       cluster: withNote(infra.centralDev.cluster, infra.centralDev.clusterNote),
       host: withNote(infra.centralDev.host, infra.centralDev.hostNote),
-      container: centralDev, note: "", delta: centralDev - previous.centralDev,
+      container: v.centralDev, note: "", delta: v.centralDev - prev.centralDev,
     },
   ];
 
-  const container = bankProd + bankProdShared + bankDev + bankDevShared + centralProd + centralDev;
+  // 열이 실제로 더해져야 한다. 행에 적힌 값을 그대로 합친다.
+  const container = v.bankProd + v.bankProdShared + v.bankDev + v.bankDevShared + v.centralProd + v.centralDev;
   const previousTotal =
-    previous.bankProd + previous.bankProdShared + previous.bankDev
-    + previous.bankDevShared + previous.centralProd + previous.centralDev;
+    prev.bankProd + prev.bankProdShared + prev.bankDev
+    + prev.bankDevShared + prev.centralProd + prev.centralDev;
 
   // 공통 인스턴스 중 중앙회 몫을 은행에서 떼어 중앙회로 옮긴다.
   const toCentral = prodSplit.central + devSplit.central;
-  const actualBank = bankProd + bankProdShared + bankDev + bankDevShared - toCentral;
-  const actualCentral = centralProd + centralDev + toCentral;
+  const actualBank = v.bankProd + v.bankProdShared + v.bankDev + v.bankDevShared - toCentral;
+  const actualCentral = v.centralProd + v.centralDev + toCentral;
 
   return {
     rows,
@@ -256,7 +311,8 @@ export function calculateInstances(
       delta: container - previousTotal,
     },
     actual: { bank: actualBank, central: actualCentral, total: actualBank + actualCentral },
-    carryOver: { bankProd, bankProdShared, bankDev, bankDevShared, centralProd, centralDev },
+    // 다음 달 "전월값" 이 된다. 표에 적힌 값과 같아야 사람이 대조할 수 있다.
+    carryOver: { ...v },
   };
 }
 

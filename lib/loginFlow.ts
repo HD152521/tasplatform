@@ -16,6 +16,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { DEFAULT_TEAM_ID, NAV_TIMEOUT_MS, PORTAL_HOME, deviceFileForTeam, sessionFileForTeam } from "./config.ts";
+import { persistTeamSessionToDb } from "./sessionStore.ts";
 import { loginContextOptions, saveDeviceState, type StorageState } from "./browserIdentity.ts";
 import { launchBrowser } from "../collector/session.ts";
 import { LOGIN_SEL, describeLoginPage, findLoginRoot } from "../collector/loginFields.ts";
@@ -263,6 +264,24 @@ async function saveSession(context: BrowserContext, teamId: string): Promise<voi
 
 async function finish(flowId: string, flow: Flow): Promise<void> {
   await saveSession(flow.context, flow.teamId);
+
+  // **DB 에도 올린다.** 파일에만 두면 방금 만든 세션이 이 기계 밖으로 나가지 못한다.
+  //
+  // 화면에서 재로그인하면 웹은 로컬 파일로 바로 되지만, 수집기(VM)는 그 세션을 볼 길이
+  // 없어 15분 뒤에도 죽은 세션으로 시도한다. TAS 는 파일시스템이 ephemeral 이라
+  // 그 사이 재시작이 일어나면 방금 로그인한 세션이 통째로 사라지기까지 한다.
+  //
+  // 앞서 "웹이 수집기의 새 세션을 못 본다" 를 고쳤는데, 이건 **반대 방향의 같은 구멍**
+  // 이었다. 백업이 실패해도 로그인 자체는 이미 성공이므로 막지 않는다.
+  try {
+    await persistTeamSessionToDb(flow.teamId);
+  } catch (error) {
+    console.error(
+      "[login] 세션 DB 백업 실패(로그인 자체는 성공):",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
   flows.delete(flowId);
   await flow.browser.close().catch(() => undefined);
 }
