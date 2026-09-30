@@ -175,6 +175,17 @@ export async function buildMonthlyReport(
   const payload = {
     template: TEMPLATE,
     monthLabel: `${month.slice(5)}월`,
+    // 양식 여러 장에 "2026.08.31 기준" 이 **박혀 있고 갱신되지 않았다.** 어느 달로
+    // 만들어도 8월로 나갔다. 보고월의 마지막 날로 갈아끼운다.
+    //
+    // Date(연, 월, 0) 은 그 달의 **마지막 날**이다(월은 0부터라 month 를 그대로 넣으면
+    // 다음 달 0일 = 이번 달 말일). 윤년·30/31일을 따로 다루지 않아도 된다.
+    asOfLabel: (() => {
+      const year = Number(month.slice(0, 4));
+      const mon = Number(month.slice(5, 7));
+      const last = new Date(year, mon, 0).getDate();
+      return `${year}.${String(mon).padStart(2, "0")}.${String(last).padStart(2, "0")} 기준`;
+    })(),
     // 인스턴스 수는 calculateInstances 가 이미 정수로 낸다(lib/instanceCount.ts).
     // 파이썬은 여기서 받은 문자열을 칸에 그대로 넣을 뿐 반올림하지 않는다 —
     // 파이썬 round() 는 은행가 반올림이라 round(136.5) == 136 이다. 그 경로를

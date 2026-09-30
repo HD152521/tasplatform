@@ -16,11 +16,13 @@ import base64
 import copy
 import io
 import json
+import re
 import sys
 from pathlib import Path
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Inches
 
 RELS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -278,6 +280,46 @@ def replace_in_texts(slide, old, new):
                         run._r.getparent().remove(run._r)
 
 
+def walk_shapes(shapes):
+    """그룹 안까지 훑는다.
+
+    slide.shapes 는 맨 위 도형만 준다. 양식의 기준일 문구는 **그룹 안에도** 하나 더
+    있어서, 그룹을 안 열면 그 하나가 옛 날짜로 남는다 — 실제로 그렇게 안 바뀌었다.
+    """
+    for shape in shapes:
+        yield shape
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            yield from walk_shapes(shape.shapes)
+
+
+# 양식에 박혀 있는 기준일. "2026.08.31 기준" 같은 모양이다.
+#
+# 글자 그대로 찾지 않고 **모양으로** 찾는다. 양식이 새 달로 갱신되면 박힌 날짜도 같이
+# 바뀌는데, 글자로 찾으면 그 순간 조용히 안 바뀐다.
+AS_OF_PATTERN = re.compile(r"\d{4}\.\d{2}\.\d{2}\s*기준")
+
+
+def set_as_of(slide, label):
+    """기준일 문구를 보고월 말일로 바꾼다.
+
+    run 단위로 바꾸면 안 된다 — PowerPoint 는 한 문장을 여러 run 으로 쪼개 두는 일이
+    흔해서, "2026.08.31" 과 " 기준" 이 따로 있으면 정규식이 어느 쪽에도 안 걸린다.
+    실제로 그래서 한 군데도 안 바뀌었다. replace_in_texts 와 같은 방식으로 합쳐서 본다.
+    """
+    for shape in walk_shapes(slide.shapes):
+        if not shape.has_text_frame:
+            continue
+        for paragraph in shape.text_frame.paragraphs:
+            joined = "".join(r.text for r in paragraph.runs)
+            if not AS_OF_PATTERN.search(joined):
+                continue
+            runs = list(paragraph.runs)
+            if runs:
+                runs[0].text = AS_OF_PATTERN.sub(label, joined)
+                for run in runs[1:]:
+                    run._r.getparent().remove(run._r)
+
+
 def set_page_no(slide, current, total):
     """제목의 "(1/6)" 같은 쪽 번호를 갱신한다."""
     import re
@@ -475,8 +517,9 @@ def fit_picture(slide, raw, box):
     상자를 넘으면 높이 기준으로 다시 넣는다. 둘 중 **작은 쪽에 맞추는** 것이
     상자 밖으로 안 나가면서 비율을 지키는 유일한 방법이다.
 
-    남는 자리는 가운데로 민다. 두 장이 나란히 설 때 위아래 기준선이 맞아야
-    한쪽만 떠 보이지 않는다.
+    남는 자리는 **바깥쪽**으로 민다. 두 장이 가운데서 맞붙어 큰 한 장처럼 보여야
+    하기 때문이다(lib/reportPhotoLayout.ts 의 GAP 주석). 위아래는 가운데에 둔다 —
+    기준선이 어긋나면 한쪽만 떠 보인다.
     """
     left, top = box["left"], box["top"]
     max_w, max_h = box["width"], box["height"]
@@ -488,7 +531,8 @@ def fit_picture(slide, raw, box):
         picture._element.getparent().remove(picture._element)
         picture = slide.shapes.add_picture(io.BytesIO(raw), Inches(left), Inches(top), None, Inches(max_h))
 
-    picture.left = Inches(left) + int((Inches(max_w) - picture.width) / 2)
+    slack = Inches(max_w) - picture.width
+    picture.left = Inches(left) + (slack if box.get("align") == "right" else 0)
     picture.top = Inches(top) + int((Inches(max_h) - picture.height) / 2)
 
 
@@ -517,6 +561,15 @@ def build(payload, template_path, out_path):
     prs = Presentation(template_path)
     ids = slide_ids(prs)
     slides = list(prs.slides)
+
+    # 양식에 박혀 있는 "2026.08.31 기준" 을 보고월 말일로 바꾼다.
+    #
+    # 날짜를 글자 그대로 찾지 않고 **모양으로** 찾는다. 양식이 새 달로 갱신되면
+    # 박힌 날짜도 같이 바뀌는데, 글자로 찾으면 그 순간 조용히 안 바뀐다.
+    as_of = payload.get("asOfLabel")
+    if as_of:
+        for slide in prs.slides:
+            set_as_of(slide, as_of)
 
     sr_items = payload["srs"]
     work_pages = chunk(payload["work"], WORK_ROWS_PER_SLIDE)
