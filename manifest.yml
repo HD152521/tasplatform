@@ -26,7 +26,10 @@ applications:
       - python_buildpack
       - nodejs_buildpack
     command: npm start          # next start (.next 빌드 필요)
-    memory: 512M
+    # 512M 이 아닌 이유: 첨부 업로드 상한이 50MB 다(lib/attachmentUpload.ts). 라우트가
+    # 본문을 메모리에 올리고(50MB) base64 로 바꾸고(67MB) DB 드라이버가 또 직렬화해
+    # (67MB) 한 건의 피크가 400MB 를 넘는다. 512M 에서는 한 건만으로도 OOM 가능성이 있다.
+    memory: 1G
     instances: 1
     env:
       NODE_ENV: production

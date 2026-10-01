@@ -179,7 +179,9 @@ export async function uploadToCase(
     body: options.bytes as unknown as BodyInit,
   });
   jar.apply(response.headers.getSetCookie(), target);
-  const said = (await response.text()).replace(/s+/g, " ").trim();
+  // `\s+` 다. 한때 백슬래시가 빠진 `/s+/` 여서 **알파벳 s 를 공백으로 바꾸고** 있었다
+  // ("session expired" → " e  ion expired"). 실패 메시지가 그대로 사람에게 간다.
+  const said = (await response.text()).replace(/\s+/g, " ").trim();
 
   if (response.status === 401 || response.status === 403) {
     throw new UploadError("session", `첨부 서버가 거부했습니다 (HTTP ${response.status}). 다시 로그인하세요.`);
