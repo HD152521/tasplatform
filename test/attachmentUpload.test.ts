@@ -103,3 +103,18 @@ test("웹의 이름 다듬기가 수집기의 규칙과 같다", () => {
     assert.throws(() => safeFileName(raw), UploadError, `거절해야 한다: ${JSON.stringify(raw)}`);
   }
 });
+
+/*
+ * 상한 값 자체를 잠근다.
+ *
+ * 이 숫자는 혼자 있지 않다 — **웹 앱 메모리(manifest.yml)와 DB 보관량**이 함께 움직인다.
+ * 50MB 한 건의 피크가 400MB 를 넘어서 메모리를 512M → 1G 로 올렸다. 숫자만 올리면
+ * 그 커플링이 조용히 깨지고, 터지는 곳은 배포된 뒤의 OOM 이다.
+ *
+ * 상한을 바꿀 때 이 시험이 먼저 깨져야 한다. 깨지면 manifest.yml 과
+ * lib/attachmentJobs.ts 의 보관량 계산을 같이 보라는 뜻이다.
+ */
+test("업로드 상한은 50MB 이고 표기도 그렇다", () => {
+  assert.equal(MAX_UPLOAD_BYTES, 50 * 1024 * 1024);
+  assert.equal(MAX_UPLOAD_LABEL, "50MB");
+});
