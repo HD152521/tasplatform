@@ -101,8 +101,13 @@ function makePayload(photoCount: number): unknown {
       total: { cluster: "6", host: "12", container: "600", delta: "+6" },
     },
     license: { bank: "300", central: "300", total: "600" },
+    // SR 과 작업 모두 **한 장을 넘기는** 수를 넣는다. 한 장씩만 만들면 "같은 종류의
+    // 장끼리 표 모양이 같은가" 를 비교할 상대가 없어 그 시험이 조용히 통과한다.
+    // 작업은 한 장에 WORK_ROWS_PER_SLIDE(8)행이라 9행을 넣어야 두 장이 된다.
     srs: [sr, sr],
-    work: [{ center: "-", corp: "-", span: "-", support: "-", title: "확인용", issue: "-", note: "-" }],
+    work: Array.from({ length: 9 }, () => (
+      { center: "-", corp: "-", span: "-", support: "-", title: "확인용", issue: "-", note: "-" }
+    )),
     photos: layoutPhotoSlides(photoCount).map((slide) => ({
       chip: PHOTO_CHIP,
       title: `${PHOTO_TITLE} (${slide.page}/${slide.total})`,
@@ -114,28 +119,56 @@ function makePayload(photoCount: number): unknown {
 interface Described {
   slideWidth: number;
   slideHeight: number;
+  footerFont: { names: string[]; sizes: number[] };
   slides: Array<{
+    layout: string;
+    section: string;
+    header: { chip: string; title: string };
     photos: Array<{ left: number; top: number; width: number; height: number }>;
     labels: string[];
+    tables: Array<{
+      left: number; top: number; width: number;
+      columns: number[]; rows: number[];
+    }>;
   }>;
 }
 
+/**
+ * 같은 장수로 두 번 만들지 않는다. 한 번이 파이썬 두 번 실행(생성+측정)이라 2초쯤
+ * 걸리고, 시험마다 새로 만들면 이 파일만 20초를 쓴다. 보고서는 입력이 같으면 결과가
+ * 같으므로 장수별로 한 번만 만들어 돌려 쓴다.
+ */
+const built = new Map<number, Described>();
+
 /** 보고서를 만들고 재서 돌려준다. 실패하면 파이썬의 표준오류를 그대로 올린다. */
 function buildAndDescribe(photoCount: number): Described {
+  const cached = built.get(photoCount);
+  if (cached !== undefined) return cached;
+
   const dir = mkdtempSync(join(tmpdir(), "sr-report-test-"));
   try {
     const payloadPath = join(dir, "payload.json");
     const outPath = join(dir, "out.pptx");
     writeFileSync(payloadPath, JSON.stringify(makePayload(photoCount)), "utf8");
 
-    const built = spawnSync(pythonExe(), ["scripts/build_report.py", payloadPath, outPath],
+    const made = spawnSync(pythonExe(), ["scripts/build_report.py", payloadPath, outPath],
       { windowsHide: true, encoding: "utf8" });
-    assert.equal(built.status, 0, `보고서 생성 실패:\n${built.stderr}`);
+    assert.equal(made.status, 0, `보고서 생성 실패:\n${made.stderr}`);
 
     const described = spawnSync(pythonExe(), ["scripts/describe_report.py", outPath],
       { windowsHide: true, encoding: "utf8" });
     assert.equal(described.status, 0, `측정 실패:\n${described.stderr}`);
-    return JSON.parse(described.stdout) as Described;
+
+    // 빈 출력에 JSON.parse 를 걸면 무엇이 찍혔는지 알 수 없는 SyntaxError 만 남는다.
+    let report: Described;
+    try {
+      report = JSON.parse(described.stdout) as Described;
+    } catch (error) {
+      assert.fail(`측정 결과를 읽지 못했습니다 (${String(error)})\n`
+        + `stdout: ${described.stdout.slice(0, 400)}\nstderr: ${described.stderr.slice(0, 400)}`);
+    }
+    built.set(photoCount, report);
+    return report;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -224,6 +257,103 @@ test("사진이 없으면 사진 슬라이드를 만들지 않는다", { skip: s
   const four = buildAndDescribe(4);
   // 사진 장은 2장씩 들어가므로 4장이면 두 장이 늘어난다.
   assert.equal(four.slides.length - none.slides.length, 2);
+});
+
+/*
+ * 구간 제목은 **장마다 다르다.** 고객 문서가 레이아웃으로 구분하고 있어서, 우리 양식이
+ * 레이아웃 하나뿐이던 때에는 클라우드·라이선스·사진 장까지 전부 "2. 이슈 및 작업 진행
+ * 사항" 으로 나갔다. 양식을 고객 문서에서 다시 뜨면서 해결됐고, 되돌아가지 않게 잠근다.
+ */
+test("구간 제목이 장마다 고객 문서와 같다", { skip: skip ?? false }, () => {
+  const report = buildAndDescribe(4);
+  // 제목에서 '> PaaS (1/6)' 같은 꼬리를 떼어 종류만 남긴다.
+  const got = report.slides.map((s) => [s.header.title.split(" >")[0] ?? "", s.section] as const);
+
+  const expected = new Map([
+    ["클라우드 운영 현황 (2/2)", "1. Summary"],
+    ["라이선스 현황", "1. Summary"],
+    ["SR 진행현황 요약", "2. 이슈 및 작업 진행 사항"],
+    ["SR 상세 진행 현황", "2. 이슈 및 작업 진행 사항"],
+    ["작업 진행 현황", "2. 이슈 및 작업 진행 사항"],
+    ["PaaS (1/2)", "5. 정기점검 결과 및 상세 내역"],
+    ["PaaS (2/2)", "5. 정기점검 결과 및 상세 내역"],
+  ]);
+
+  const wrong = got.filter(([title, section]) => {
+    const want = expected.get(title);
+    return want !== undefined && want !== section;
+  });
+  assert.deepEqual(wrong, [], `구간 제목이 다릅니다: ${JSON.stringify(wrong)}`);
+
+  /*
+   * **기대한 제목이 전부 나왔는지 따로 확인한다.**
+   *
+   * 위 필터는 아는 제목만 본다. 그래서 양식에서 제목 한 줄이 바뀌면 그 장은 검사
+   * 대상에서 **조용히 빠지고** 시험은 그대로 통과한다 — 구간 제목이 틀려도 녹색이
+   * 된다. 되돌아가지 않게 잠그려고 만든 시험이 정작 그 구멍으로 새는 셈이다.
+   */
+  const seen = new Set(got.map(([title]) => title));
+  const missing = [...expected.keys()].filter((title) => !seen.has(title));
+  assert.deepEqual(missing, [],
+    `기대한 장을 찾지 못했습니다(제목이 바뀌었나?): ${missing.join(", ")} / 나온 제목: ${[...seen].join(", ")}`);
+});
+
+// SR 상세의 구획 번호. 고객 문서는 2-3 이고 한때 2-2 로 나갔다.
+test("SR 상세의 구획 번호는 2-3 이다", { skip: skip ?? false }, () => {
+  const report = buildAndDescribe(0);
+  const chips = report.slides
+    .filter((s) => s.header.title.startsWith("SR 상세 진행 현황"))
+    .map((s) => s.header.chip);
+  assert.ok(chips.length > 0, "SR 상세 장을 찾지 못했습니다");
+  assert.deepEqual([...new Set(chips)], ["2-3"]);
+});
+
+/*
+ * 바닥글 글꼴. 고객 문서는 맑은 고딕 10.5pt 인데, 우리 양식의 '1_본문' 레이아웃이
+ * `Rix고딕 L` 이어서 거의 모든 장이 다른 글꼴로 나갔다. 크기는 원래 맞았다.
+ */
+test("바닥글이 맑은 고딕 10.5pt 다", { skip: skip ?? false }, () => {
+  const report = buildAndDescribe(0);
+  assert.deepEqual(report.footerFont.names, ["맑은 고딕"]);
+  assert.deepEqual(report.footerFont.sizes, [10.5]);
+});
+
+/*
+ * **같은 종류의 장은 표 자리와 열 폭이 똑같아야 한다.** 장마다 미세하게 달라진다는
+ * 지적이 있었다 — 원인은 양식이 고객 문서가 아니라 중간 덱이었던 것이고, 복제로
+ * 만드는 장들끼리 어긋나면 그 자리에서 드러난다.
+ */
+test("같은 종류의 장은 표 자리·열 폭·행 높이가 같다", { skip: skip ?? false }, () => {
+  const report = buildAndDescribe(4);
+
+  /*
+   * 행 **수**는 비교에서 뺀다. 마지막 장은 남은 건수만 담아 행이 적은 것이 정상이고
+   * (작업 9건 → 8행 + 1행), 그걸 어긋남으로 세면 정상인 보고서가 빨갛게 된다.
+   *
+   * 비교하는 것은 **자리와 치수**다 — 표의 left·top·폭, 열 폭, 그리고 쓰이는 행
+   * 높이의 종류(머리행 높이 + 데이터행 높이). 지적받은 "장마다 미세하게 다르다" 가
+   * 바로 이 값들이다.
+   */
+  const groups = new Map<string, string[]>();
+  for (const slide of report.slides) {
+    if (slide.tables.length === 0) continue;
+    const kind = slide.header.title.split(" (")[0] ?? "";
+    const shape = JSON.stringify(slide.tables.map((t) => ({
+      left: t.left, top: t.top, width: t.width,
+      columns: t.columns,
+      rowHeights: [...new Set(t.rows)].sort((a, b) => a - b),
+    })));
+    const seen = groups.get(kind) ?? [];
+    seen.push(shape);
+    groups.set(kind, seen);
+  }
+  for (const [kind, shapes] of groups) {
+    assert.equal(new Set(shapes).size, 1,
+      `${kind} 장끼리 표 모양이 다릅니다 — ${[...new Set(shapes)].join(" / ")}`);
+  }
+  // SR 상세와 작업 장이 여러 장 생겼는지 확인한다 — 한 장씩이면 비교가 무의미하다.
+  const multi = [...groups.values()].filter((v) => v.length > 1);
+  assert.ok(multi.length > 0, "여러 장 생긴 종류가 없어 비교하지 못했습니다");
 });
 
 // 파이썬이 없어 건너뛰었다면 그 사실을 남긴다. 조용히 통과한 것처럼 보이면 안 된다.

@@ -30,31 +30,27 @@ RELS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 # 보고월 기준 미종료 SR 의 "완료 여부" 강조색.
 RED = RGBColor(0xFF, 0x00, 0x00)
 
-# 템플릿에서 각 구획이 시작하는 위치 (0-based)
-IDX_CLOUD = 0        # 01 클라우드 운영 현황
-IDX_LICENSE = 1      # 2-1 라이선스 현황 — TAS App Service 실 운영 현황 3칸만 갱신
-IDX_SR_SUMMARY = 2   # 01 SR 진행현황 요약
-IDX_SR_DETAIL = 3    # 2-2 SR 상세 (원본 1장)
-IDX_WORK = 9         # 3-3 작업 진행 현황 (원본 1장)
+# 템플릿에서 각 구획의 원형 슬라이드 위치 (0-based).
+#
+# 양식은 고객 월정기보고서에서 원형 6장만 떠낸 것이다(scripts/build_template.py).
+# **그 스크립트의 ROLES 순서와 여기가 짝이다.** 한쪽만 고치면 엉뚱한 장을 채운다.
+#
+# 구간 제목("1. Summary" / "2. 이슈 및 작업 진행 사항" / "5. 정기점검 결과 및 상세 내역")은
+# 각 장이 물고 있는 **레이아웃**에서 나온다. 여기서 글자로 넣지 않는다 — 고객 문서가
+# 레이아웃으로 구분하고 있어서 원형을 그대로 복제하면 알아서 맞는다.
+IDX_CLOUD = 0        # 01  클라우드 운영 현황      (레이아웃 '본문')
+IDX_LICENSE = 1      # 2-1 라이선스 현황           (레이아웃 '본문') — TAS 행 3칸만 갱신
+IDX_SR_SUMMARY = 2   # 01  SR 진행현황 요약        (레이아웃 '1_본문')
+IDX_SR_DETAIL = 3    # 2-3 SR 상세                (레이아웃 '1_본문', 원본 1장)
+IDX_WORK = 4         # 3-3 작업 진행 현황          (레이아웃 '1_본문', 원본 1장)
+IDX_PHOTO_PROTO = 5  # 04  정기점검 사진           (레이아웃 '4_본문', 원본 1장)
 
 WORK_ROWS_PER_SLIDE = 8   # 실제 양식이 한 장에 8행까지 담고 있다
 
-# 사진 슬라이드를 **어떻게 만들지** — 작업 슬라이드를 복제해 표만 걷어낸다.
-#
-# 우리 양식(templates/monthly-report.pptx)에는 사진 슬라이드가 없다. 만드는 길이 둘이었다.
-#
-#   (1) 레이아웃에서 새 슬라이드를 추가한다 → 머리말(구획 번호 칸·제목 칸·그 아래
-#       `• PaaS` 그룹)이 따라오지 않는다. 양식의 다른 장과 머리말이 다른 장이 끼어
-#       티가 난다. 마스터의 '그림 및 캡션' 레이아웃도 우리 양식의 머리말과 모양이 다르다.
-#   (2) 기존 장을 복제해 내용(표)만 걷어낸다 → 머리말·밑줄·글꼴이 그대로 남는다.
-#
-# 그래서 (2)를 쓴다. 복제 원본은 **작업 슬라이드**다. SR 상세 장에는 "2026.08.31 기준"
-# 같은 날짜 텍스트 상자가 따로 붙어 있어 걷어낼 것이 하나 더 늘고, 작업 장에는 그게 없다.
-IDX_PHOTO_PROTO = IDX_WORK
-
 # 구획 번호 칸을 제목 칸과 구별하는 기준.
-# 양식의 두 칸은 각각 0.56인치와 10.91인치라 폭 하나로 확실히 갈린다.
+# 양식의 두 칸은 각각 0.456인치와 8.861인치라 폭 하나로 확실히 갈린다.
 # 텍스트("3-3")로 찾으면 양식에서 그 글자가 바뀌는 순간 조용히 어긋난다.
+# scripts/build_template.py 와 scripts/describe_report.py 도 같은 기준을 쓴다.
 CHIP_MAX_WIDTH = Inches(1)
 
 
@@ -535,14 +531,19 @@ def fill_photos(slide, chip, title, items):
     일은 fit_picture 가 한다(근거는 그쪽 주석에 있다 — 상자에 맞춰 늘렸더니 가로로
     긴 사진 속 사람이 찌그러져 보고서에 그대로 나갔다).
     """
-    # 본문(표)을 걷어내 머리말만 남긴다. 복제 원본이 작업 슬라이드이기 때문이다.
+    # 복제 원본은 **전용 사진 장**(IDX_PHOTO_PROTO)이고 머리말 두 칸만 들어 있다.
+    # 그래서 걷어낼 것이 없다.
     #
-    # 머리말 아래의 작은 그룹(`• PaaS`)은 일부러 남겨 둔다. 그 줄은 1.536~1.767 에
-    # 있고 사진은 표와 같은 1.781 에서 시작하므로 서로 겹치지 않는다 — 앞뒤 장의
-    # 표 위에 있는 그 줄과 같은 자리에 그대로 선다.
-    # 양식에서 덜 걷어낼수록 나중에 양식이 바뀔 때 어긋날 곳이 적다.
+    # 한때 작업 슬라이드를 복제해 썼다. 그때는 표와 머리말 아래의 `• PaaS` 줄이
+    # 따라와, 표는 지우고 그 줄은 사진이 덮기를 기대해 남겼다. 양식을 고객 문서에서
+    # 다시 뜨면서 전용 장이 생겨 그 군더더기가 없어졌다 — 사진이 top 1.552 로
+    # 올라가면서 그 줄과 겹칠 뻔한 것도 같이 사라졌다.
+    #
+    # 표가 남아 있으면 사진 아래에 깔려 보인다. 양식이 바뀌어 표가 딸려 오면
+    # **조용히 넘기지 않고** 걷어내되, 그런 일이 있었음을 알린다.
     for shape in list(slide.shapes):
         if shape.has_table:
+            print("경고: 사진 장 원형에 표가 있습니다. 양식을 확인하세요.", file=sys.stderr)
             shape._element.getparent().remove(shape._element)
 
     set_section(slide, chip, title)
@@ -611,6 +612,16 @@ def build(payload, template_path, out_path):
     prs = Presentation(template_path)
     ids = slide_ids(prs)
     slides = list(prs.slides)
+
+    # 아래에서 `ids[IDX_SR_DETAIL:]` 로 원형 세 장을 한꺼번에 걷어낸다. 그래서 원형이
+    # **마지막 세 장이고 이 순서여야** 한다. 주석으로만 적어 두면 한쪽 파일만 고쳤을 때
+    # 엉뚱한 장을 지우고도 조용히 보고서가 나온다.
+    if (IDX_SR_DETAIL + 1, IDX_WORK + 1) != (IDX_WORK, IDX_PHOTO_PROTO):
+        raise AssertionError("IDX_SR_DETAIL / IDX_WORK / IDX_PHOTO_PROTO 가 연속이 아니다")
+    if len(slides) != IDX_PHOTO_PROTO + 1:
+        raise AssertionError(
+            f"양식이 {len(slides)}장이다 (기대 {IDX_PHOTO_PROTO + 1}장). "
+            f"scripts/build_template.py 로 다시 뜰 것")
 
     # 양식에 박혀 있는 "2026.08.31 기준" 을 보고월 말일로 바꾼다.
     #

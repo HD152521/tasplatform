@@ -21,8 +21,10 @@
  *
  * 교훈은 그대로다. 좌표는 다른 문서에서 옮겨 오지 않고 **쓰는 템플릿에서 잰다.**
  *
- * 높이 5.04 는 이 템플릿에서 가장 큰 표의 높이다(top 1.78 → bottom 6.82). 그보다 크면
- * 다른 장보다 아래로 삐져나온다.
+ * 위아래는 **고객 문서의 사진 장**에서 잰다. 그 장에는 표가 없어 사진이 더 아래까지
+ * 내려온다 — 큰 그림 한 장이 top 1.552 에서 높이 5.434(= bottom 6.986)로 놓여 있다.
+ * 바닥글이 7.131 에 있어 겹치지도 않는다. 한때 표 높이(top 1.78 / 높이 5.04)를 썼는데,
+ * 사진 장은 표가 있는 장이 아니다.
  *
  * ## 상자는 꽉 채울 크기가 아니라 테두리다
  *
@@ -68,10 +70,10 @@ export const PHOTO_LEFT = [
   CONTENT_LEFT + (CONTENT_WIDTH + GAP) / 2,
 ] as const;
 
-/** 두 자리가 공유하는 top·폭·높이 (인치). */
-export const PHOTO_TOP = 1.78;
+/** 두 자리가 공유하는 top·폭·높이 (인치). 위아래는 고객 문서의 사진 장에서 잰 값이다. */
+export const PHOTO_TOP = 1.552;
 export const PHOTO_WIDTH = (CONTENT_WIDTH - GAP) / 2;
-export const PHOTO_HEIGHT = 5.04;
+export const PHOTO_HEIGHT = 5.434;
 
 /** 사진 슬라이드의 구획 번호와 제목. 실제 고객 보고서가 "04" / "PaaS (1/2)" 였다. */
 export const PHOTO_CHIP = "04";
