@@ -47,7 +47,31 @@ export const maxDuration = 180;
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
-export async function POST(request: Request) {
+/**
+ * 어떤 예외든 **읽을 수 있는 본문**으로 돌려준다.
+ *
+ * 예외를 처리하지 않으면 Next 가 본문 없는 500 을 돌려준다. 그러면 화면에는 "500" 만
+ * 남고, 이유는 컨테이너 로그에만 있다. 이 기능에서 실제로 그 일이 났고 — 라우트는
+ * 0.25초에 떨어지는데 어디서 떨어지는지 알 길이 없었다 — 원인을 좁히는 데 배포를
+ * 두 번 더 썼다.
+ *
+ * 그래서 **마지막 그물**을 둔다. 아래 handle 안에서 미리 다루지 못한 것이 나오면,
+ * 원본은 로그에 남기고 화면에는 한 줄을 준다. 500 을 400 처럼 꾸미지는 않는다 —
+ * 모르는 실패는 500 이 맞다. 다만 이유 없이 비어 있지는 않게 한다.
+ */
+export async function POST(request: Request): Promise<Response> {
+  try {
+    return await handle(request);
+  } catch (error) {
+    console.error("[draft/quick] 처리하지 못한 예외:", error);
+    return NextResponse.json(
+      { ok: false, message: `서버에서 처리하지 못했습니다: ${chatFailureMessage(error)}` },
+      { status: 500 },
+    );
+  }
+}
+
+async function handle(request: Request): Promise<Response> {
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
