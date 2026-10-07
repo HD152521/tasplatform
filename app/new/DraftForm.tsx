@@ -3,6 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { ProductComponent } from "../../lib/queries.ts";
+import {
+  DEFAULT_SEVERITY,
+  SEVERITIES,
+  priorityIdOf,
+} from "../../lib/severity.ts";
 import { COLOR, Card, RADIUS, controlStyle } from "../ui.tsx";
 import { Select } from "../Select.tsx";
 import { Composer, type ComposeMode } from "./Composer.tsx";
@@ -28,19 +33,8 @@ const FIXED = {
   issueType: "Technical",
 } as const;
 
-const SEVERITIES = [
-  "Critical - P1",
-  "High - P2",
-  "Medium - P3",
-  "Low - P4",
-] as const;
-
+/** 포털 작성 폼이 표시하는 실제 제목 길이 제한. */
 const SUBJECT_LIMIT = 700;
-
-/** 실측한 포털 우선순위 id (request_type_priority_mapping) */
-const PRIORITY_ID: Record<string, number> = {
-  "Critical - P1": 1, "High - P2": 2, "Medium - P3": 3, "Low - P4": 4,
-};
 
 interface Draft {
   serial: string;
@@ -61,7 +55,7 @@ export function DraftForm({
   const [d, setD] = useState<Draft>({
     serial: "",
     release: "",
-    severity: "Medium - P3",
+    severity: DEFAULT_SEVERITY,
     subject: "",
     content: "",
   });
@@ -164,7 +158,7 @@ export function DraftForm({
         body: JSON.stringify({
           subject: d.subject,
           content: d.content,
-          priorityId: PRIORITY_ID[d.severity] ?? 3,
+          priorityId: priorityIdOf(d.severity),
           productId,
           componentId: activeComponent?.componentId,
         }),

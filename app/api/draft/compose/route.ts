@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { OpenAiError, chat, hasOpenAi } from "../../../../lib/aiChat.ts";
 import {
+  DRAFT_CONTENT_LIMIT,
   buildDraftUser,
   parseComposed,
   readMode,
@@ -13,8 +14,7 @@ export const dynamic = "force-dynamic";
 // 본문 한 건이라 요약보다 가볍지만, 사내 LLM 이 밀릴 때를 감안한다.
 export const maxDuration = 180;
 
-/** 담당자가 적은 한국어 길이 상한. 실측 최초등록 본문 최대가 6,531자였다. */
-const CONTENT_LIMIT = 12_000;
+
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
@@ -34,9 +34,9 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  if (content.length > CONTENT_LIMIT) {
+  if (content.length > DRAFT_CONTENT_LIMIT) {
     return NextResponse.json(
-      { ok: false, message: `내용이 너무 깁니다 (${content.length}자 / 최대 ${CONTENT_LIMIT}자).` },
+      { ok: false, message: `내용이 너무 깁니다 (${content.length}자 / 최대 ${DRAFT_CONTENT_LIMIT}자).` },
       { status: 400 },
     );
   }

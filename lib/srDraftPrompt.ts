@@ -22,6 +22,16 @@
  * server-only 를 붙이지 않는다. 프롬프트와 파서는 순수 함수라 그대로 테스트한다.
  */
 
+/**
+ * 담당자가 적는 한국어 길이 상한.
+ *
+ * 실측 최초등록 본문 최대가 6,531자였다. 여유를 두고 그 두 배 가까이 잡는다.
+ *
+ * **두 라우트가 같이 쓴다**(/api/draft/compose, /api/draft/quick). 한때 각자 베껴
+ * 두었는데, 한쪽만 바뀌면 사람이 같은 글을 넣고 한쪽에서는 거절당한다.
+ */
+export const DRAFT_CONTENT_LIMIT = 12_000;
+
 /** 모델이 쓸 수 있는 유일한 섹션 제목. 질문이 있을 때만 붙인다. */
 export const QUESTIONS_HEADING = "Questions";
 
