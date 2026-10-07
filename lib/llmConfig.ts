@@ -84,16 +84,50 @@ function coerceAuthKind(value: string): LlmAuthKind {
   return (AUTH_KINDS as readonly string[]).includes(value) ? (value as LlmAuthKind) : "keycloak";
 }
 
-/** https 만 허용한다. 비밀번호/토큰이 실려 나갈 주소를 평문 http 로 두지 않기 위해서다. */
-export function assertHttpsUrl(label: string, url: string): void {
-  let parsed: URL;
+function parseUrl(label: string, url: string): URL {
   try {
-    parsed = new URL(url);
+    return new URL(url);
   } catch {
     throw new Error(`${label} 형식이 올바르지 않습니다: ${JSON.stringify(url)}`);
   }
-  if (parsed.protocol !== "https:") {
+}
+
+/**
+ * https 만 허용한다. **비밀번호가 실려 나가는 주소**에 쓴다(토큰 발급 URL).
+ *
+ * 토큰 발급은 client secret 또는 관리자 비밀번호를 본문에 담아 보낸다. 그걸 평문
+ * http 로 두면 같은 망에 있는 누구든 주워 갈 수 있고, 그 비밀번호 하나로 LLM 호출이
+ * 아니라 **인증 서버**를 쓸 수 있게 된다. 사내망이라도 여기는 열지 않는다.
+ */
+export function assertHttpsUrl(label: string, url: string): void {
+  if (parseUrl(label, url).protocol !== "https:") {
     throw new Error(`${label} 은 https 여야 합니다.`);
+  }
+}
+
+/**
+ * http · https 둘 다 허용한다. **API 기본 주소**에 쓴다.
+ *
+ * ## 왜 여기만 http 를 받나
+ *
+ * 사내 LLM 이 http 로만 열려 있는 경우가 있다. https 를 강제하면 그 연결을 아예 등록할
+ * 수 없고, 그러면 요약·번역·분류가 전부 OpenAI 로 넘어간다 — SR 내용을 사내에 두려고
+ * 사내 LLM 을 붙이는 것인데 **정반대 결과**가 된다. 그래서 이쪽은 연다.
+ *
+ * 대신 http 로 두면 무엇이 노출되는지는 분명히 해 둔다. 요청 헤더의 **bearer 토큰**과
+ * **SR 본문**이 평문으로 지나간다. 토큰은 수명이 짧고 그 LLM 에만 쓰이지만, SR 본문은
+ * 고객 문장이다. 사내망 안이라는 전제가 깨지는 순간 그게 그대로 드러난다.
+ *
+ * 그래서 토큰 **발급** 주소(assertHttpsUrl)는 계속 https 만 받는다 — 거기 실리는 것은
+ * 수명이 긴 비밀번호다.
+ *
+ * http/https 가 아닌 것은 막는다. `file:`·`javascript:` 같은 것이 들어오면 주소가
+ * 아니라 다른 일이 벌어진다.
+ */
+export function assertHttpUrl(label: string, url: string): void {
+  const protocol = parseUrl(label, url).protocol;
+  if (protocol !== "https:" && protocol !== "http:") {
+    throw new Error(`${label} 은 http 또는 https 여야 합니다.`);
   }
 }
 
@@ -139,7 +173,9 @@ export async function upsertLlmConfig(db: Db, input: UpsertLlmInput): Promise<vo
 
   if (modelId === "") throw new Error("모델 ID 가 필요합니다.");
   if (baseUrl === "") throw new Error("API 기본 주소가 필요합니다.");
-  assertHttpsUrl("API 기본 주소", baseUrl);
+  // 기본 주소는 http 도 받는다 — 사내 LLM 이 http 로만 열려 있는 경우가 있다
+  // (assertHttpUrl 주석에 노출되는 것까지 적어 두었다).
+  assertHttpUrl("API 기본 주소", baseUrl);
 
   if (authKind === "keycloak" || authKind === "client_credentials") {
     if (tokenUrl === "") throw new Error("Keycloak 인증에는 토큰 발급 URL 이 필요합니다.");

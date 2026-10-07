@@ -128,7 +128,11 @@ export function LlmSettingsForm({ initialConfig, keyPresent }: Props) {
           <input value={modelId} onChange={(e) => setModelId(e.target.value)} placeholder="google/gemma-4-31b-it" style={inputStyle} />
         </Field>
 
-        <Field label="API 기본 주소" hint="OpenAI 호환 엔드포인트. https 만 허용">
+        {/*
+          http 도 받는다 — 사내 LLM 이 http 로만 열려 있는 경우가 있다. 그때 무엇이
+          평문으로 지나가는지는 lib/llmConfig.ts 의 assertHttpUrl 주석에 적어 두었다.
+        */}
+        <Field label="API 기본 주소" hint="OpenAI 호환 엔드포인트. http · https 모두 가능">
           <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://pais.ds.lab/api/v1/compatibility/openai" style={inputStyle} />
         </Field>
 

@@ -157,9 +157,44 @@ test("keycloak 인데 토큰 URL 이 없으면 거부한다", async () => {
   await db.close();
 });
 
-test("http base_url 은 거부한다 (https 만)", async () => {
+/*
+ * **API 기본 주소는 http 도 받는다.** 사내 LLM 이 http 로만 열려 있는 경우가 있고,
+ * 거기서 막으면 그 연결을 등록할 수 없어 SR 내용이 전부 OpenAI 로 넘어간다 —
+ * 사내에 두려고 붙이는 것인데 정반대가 된다(lib/llmConfig.ts 의 assertHttpUrl 주석).
+ */
+test("http API 기본 주소를 받는다", async () => {
   const db = await freshDb();
-  await assert.rejects(upsertLlmConfig(db, { ...base, baseUrl: "http://pais.ds.lab" }), /https/);
+  await upsertLlmConfig(db, { ...base, baseUrl: "http://pais.ds.lab/openai" });
+  const got = await getLlmConfig(db);
+  assert.ok(got);
+  assert.equal(got.baseUrl, "http://pais.ds.lab/openai");
+  await db.close();
+});
+
+// http·https 가 아닌 것은 막는다. 주소가 아니라 다른 일이 벌어진다.
+test("http·https 가 아닌 기본 주소는 거부한다", async () => {
+  const db = await freshDb();
+  for (const bad of ["file:///etc/passwd", "ftp://pais.ds.lab", "ws://pais.ds.lab",
+    "pais.ds.lab", ""]) {
+    await assert.rejects(
+      upsertLlmConfig(db, { ...base, baseUrl: bad }),
+      /API 기본 주소/,
+      `거부해야 함: ${JSON.stringify(bad)}`,
+    );
+  }
+  await db.close();
+});
+
+/*
+ * **토큰 발급 URL 은 계속 https 만** 받는다. 거기 실리는 것은 client secret 또는 관리자
+ * 비밀번호다 — 수명이 길고, 새면 LLM 이 아니라 인증 서버를 쓸 수 있게 된다.
+ */
+test("http 토큰 발급 URL 은 거부한다 (https 만)", async () => {
+  const db = await freshDb();
+  await assert.rejects(
+    upsertLlmConfig(db, { ...base, tokenUrl: "http://pai-keycloak.ds.lab/token" }),
+    /https/,
+  );
   await db.close();
 });
 
