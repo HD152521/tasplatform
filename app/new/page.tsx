@@ -2,6 +2,7 @@ import { mergeCatalog } from "../../lib/productCatalog.ts";
 import { listProductComponents, type ProductComponent } from "../../lib/queries.ts";
 import { COLOR, Notice } from "../ui.tsx";
 import { DraftForm } from "./DraftForm.tsx";
+import { QuickButton } from "./QuickButton.tsx";
 
 export const dynamic = "force-dynamic";
 
@@ -24,13 +25,23 @@ export default async function NewCasePage() {
 
   return (
     <>
-      <header style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
-          SR 작성
-        </h1>
-        <p style={{ margin: "7px 0 0", fontSize: 13, color: COLOR.muted }}>
-          한국어로 적으면 Broadcom 이 읽기 좋은 형식으로 정리해 드립니다.
-        </p>
+      <header style={{
+        marginBottom: 20, display: "flex", alignItems: "flex-start",
+        justifyContent: "space-between", gap: 16,
+      }}>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
+            SR 작성
+          </h1>
+          <p style={{ margin: "7px 0 0", fontSize: 13, color: COLOR.muted }}>
+            한국어로 적으면 Broadcom 이 읽기 좋은 형식으로 정리해 드립니다.
+          </p>
+        </div>
+        {/*
+          한 칸만 적으면 Product · Component 까지 정해 주는 빠른 길. 아래 폼은 직접
+          고르고 싶을 때 쓴다 — 둘 다 같은 /api/create 로 등록한다.
+        */}
+        <QuickButton />
       </header>
 
       {loadError !== null && (
