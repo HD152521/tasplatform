@@ -98,6 +98,30 @@ def footer_font(prs) -> dict:
             "sizes": sorted({s for _, s in found if s is not None})}
 
 
+def red_cells(table) -> list:
+    """글자색이 **직접 빨강으로 지정된** 칸. (행, 열, 글자)
+
+    SR 요약의 "완료 여부" 는 진행 중만 빨강이어야 한다. 양식에 박힌 빨강이 복제로
+    번져 "종료" 가 빨갛게 나간 적이 있어, 어느 칸이 빨간지 눈이 아니라 숫자로 본다.
+    """
+    found = []
+    for r in range(len(table.rows)):
+        for c in range(len(table.columns)):
+            cell = table.cell(r, c)
+            red = False
+            for paragraph in cell.text_frame.paragraphs:
+                for run in paragraph.runs:
+                    try:
+                        rgb = run.font.color.rgb
+                    except (AttributeError, TypeError):
+                        continue   # 색을 직접 지정하지 않은 run (테마 상속)
+                    if rgb is not None and str(rgb).upper() == "FF0000":
+                        red = True
+            if red:
+                found.append({"row": r, "col": c, "text": cell.text.strip()})
+    return found
+
+
 def tables_of(slide) -> list:
     """표의 자리와 열 폭·행 높이. 장마다 미세하게 어긋나던 값들이다."""
     out = []
@@ -109,8 +133,10 @@ def tables_of(slide) -> list:
             "left": inches(shape.left),
             "top": inches(shape.top),
             "width": inches(shape.width),
+            "bottom": inches(shape.top + shape.height),
             "columns": [inches(c.width) for c in table.columns],
             "rows": [inches(r.height) for r in table.rows],
+            "red": red_cells(table),
         })
     return out
 

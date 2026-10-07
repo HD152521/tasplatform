@@ -83,7 +83,7 @@ function missingReason(): string | null {
  * 사진 자리와 라벨은 진짜 모듈에서 가져온다 — 여기서 숫자를 베껴 적으면 정작
  * 검사하려던 "TS 가 파이썬에 제대로 넘기는가" 를 검사하지 못한다.
  */
-function makePayload(photoCount: number): unknown {
+function makePayload(photoCount: number, srCount: number, openCount: number): unknown {
   const row = { container: "100", note: "확인용", delta: "+1" };
   const sr = {
     no: "CS0000000", openedOn: "2026-09-01", closedOn: "2026-09-10",
@@ -104,7 +104,12 @@ function makePayload(photoCount: number): unknown {
     // SR 과 작업 모두 **한 장을 넘기는** 수를 넣는다. 한 장씩만 만들면 "같은 종류의
     // 장끼리 표 모양이 같은가" 를 비교할 상대가 없어 그 시험이 조용히 통과한다.
     // 작업은 한 장에 WORK_ROWS_PER_SLIDE(8)행이라 9행을 넣어야 두 장이 된다.
-    srs: [sr, sr],
+    // 앞 openCount 건은 **진행 중**(완료 여부가 빨간 글씨), 나머지는 종료.
+    srs: Array.from({ length: srCount }, (_, i) => (
+      i < openCount
+        ? { ...sr, done: "진행 중", status: "진행 중", open: "1" }
+        : sr
+    )),
     work: Array.from({ length: 9 }, () => (
       { center: "-", corp: "-", span: "-", support: "-", title: "확인용", issue: "-", note: "-" }
     )),
@@ -127,8 +132,9 @@ interface Described {
     photos: Array<{ left: number; top: number; width: number; height: number }>;
     labels: string[];
     tables: Array<{
-      left: number; top: number; width: number;
+      left: number; top: number; width: number; bottom: number;
       columns: number[]; rows: number[];
+      red: Array<{ row: number; col: number; text: string }>;
     }>;
   }>;
 }
@@ -138,18 +144,19 @@ interface Described {
  * 걸리고, 시험마다 새로 만들면 이 파일만 20초를 쓴다. 보고서는 입력이 같으면 결과가
  * 같으므로 장수별로 한 번만 만들어 돌려 쓴다.
  */
-const built = new Map<number, Described>();
+const built = new Map<string, Described>();
 
 /** 보고서를 만들고 재서 돌려준다. 실패하면 파이썬의 표준오류를 그대로 올린다. */
-function buildAndDescribe(photoCount: number): Described {
-  const cached = built.get(photoCount);
+function buildAndDescribe(photoCount: number, srCount = 2, openCount = 0): Described {
+  const key = `${photoCount}:${srCount}:${openCount}`;
+  const cached = built.get(key);
   if (cached !== undefined) return cached;
 
   const dir = mkdtempSync(join(tmpdir(), "sr-report-test-"));
   try {
     const payloadPath = join(dir, "payload.json");
     const outPath = join(dir, "out.pptx");
-    writeFileSync(payloadPath, JSON.stringify(makePayload(photoCount)), "utf8");
+    writeFileSync(payloadPath, JSON.stringify(makePayload(photoCount, srCount, openCount)), "utf8");
 
     const made = spawnSync(pythonExe(), ["scripts/build_report.py", payloadPath, outPath],
       { windowsHide: true, encoding: "utf8" });
@@ -167,7 +174,7 @@ function buildAndDescribe(photoCount: number): Described {
       assert.fail(`측정 결과를 읽지 못했습니다 (${String(error)})\n`
         + `stdout: ${described.stdout.slice(0, 400)}\nstderr: ${described.stderr.slice(0, 400)}`);
     }
-    built.set(photoCount, report);
+    built.set(key, report);
     return report;
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -354,6 +361,63 @@ test("같은 종류의 장은 표 자리·열 폭·행 높이가 같다", { skip
   // SR 상세와 작업 장이 여러 장 생겼는지 확인한다 — 한 장씩이면 비교가 무의미하다.
   const multi = [...groups.values()].filter((v) => v.length > 1);
   assert.ok(multi.length > 0, "여러 장 생긴 종류가 없어 비교하지 못했습니다");
+});
+
+/*
+ * **SR 요약이 한 장을 넘으면 장을 나눈다.**
+ *
+ * 한때 한 표에 쭉 이어 붙였다. 그러면 표가 바닥글(top 7.131)을 넘어 아래쪽 글자가
+ * 잘려 나가는데, 그건 파일을 열어 보기 전까지 아무도 모른다.
+ */
+test("SR 요약이 넘치면 다음 장으로 넘긴다", { skip: skip ?? false }, () => {
+  const one = buildAndDescribe(0, 6, 0);
+  const many = buildAndDescribe(0, 8, 0);
+
+  const pagesOf = (r: Described): typeof r.slides =>
+    r.slides.filter((x) => x.header.title.startsWith("SR 진행현황 요약"));
+
+  // 6건은 한 장. 그때 제목에는 쪽 번호를 붙이지 않는다(고객 문서가 그렇다).
+  const single = pagesOf(one);
+  assert.equal(single.length, 1, "6건은 한 장이어야");
+  assert.equal(single[0]?.header.title, "SR 진행현황 요약");
+
+  // 8건은 두 장. 머리행 1 + 데이터로 6 / 2 로 갈린다.
+  const split = pagesOf(many);
+  assert.equal(split.length, 2, "8건은 두 장이어야");
+  assert.deepEqual(split.map((p) => p.tables[0]?.rows.length), [7, 3]);
+  assert.deepEqual(split.map((p) => p.header.title), [
+    "SR 진행현황 요약 (1/2)", "SR 진행현황 요약 (2/2)",
+  ]);
+
+  // 어느 장도 바닥글을 넘지 않는다. 이게 장을 나누는 **이유**다.
+  for (const page of [...single, ...split]) {
+    const bottom = page.tables[0]?.bottom ?? 0;
+    assert.ok(bottom > 0 && bottom < 7.131, `표가 바닥글까지 내려왔다: ${bottom}`);
+  }
+});
+
+/*
+ * **빨간 글씨는 "진행 중" 만이다.**
+ *
+ * 양식의 SR 요약표는 고객 문서에서 떠 온 것이라 그 달에 진행 중이던 행이 FF0000 으로
+ * 박혀 있다. 거기에 resize_rows 가 마지막 행을 복제해 늘리므로, 칠하기만 하고
+ * 되돌리지 않으면 **"종료" 가 빨갛게 나간다.** 실제로 그렇게 나갔다.
+ */
+test("요약의 빨간 글씨는 진행 중뿐이다", { skip: skip ?? false }, () => {
+  // 8건 중 앞 3건만 진행 중 → 첫 장에 섞이고 둘째 장은 전부 종료.
+  const report = buildAndDescribe(0, 8, 3);
+  const pages = report.slides.filter((x) => x.header.title.startsWith("SR 진행현황 요약"));
+  assert.equal(pages.length, 2);
+
+  const reds = pages.flatMap((p) => p.tables[0]?.red ?? []);
+  assert.ok(reds.length > 0, "진행 중이 있는데 빨간 칸이 하나도 없다");
+  for (const cell of reds) {
+    assert.equal(cell.text, "진행 중", `종료인데 빨갛다: ${JSON.stringify(cell)}`);
+  }
+  // 진행 중 3건이 전부 빨간지 — 덜 칠해도 안 된다.
+  assert.equal(reds.length, 3, `빨간 칸이 ${reds.length}개 (기대 3)`);
+  // 둘째 장은 전부 종료라 빨강이 없어야 한다.
+  assert.deepEqual(pages[1]?.tables[0]?.red, []);
 });
 
 // 파이썬이 없어 건너뛰었다면 그 사실을 남긴다. 조용히 통과한 것처럼 보이면 안 된다.

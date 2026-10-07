@@ -111,12 +111,34 @@ export function buildClassifyUser(content: string, choices: readonly Choice[]): 
   ].join("\n");
 }
 
+/**
+ * 쓸 수 있는 줄만 남긴다.
+ *
+ * ## 왜 거르나
+ *
+ * DB 에서 온 줄이 **깨져 올 수 있다.** 실제로 그랬다 — SQL 별칭에 따옴표가 없어
+ * Postgres 가 컬럼명을 소문자로 접었고(lib/queries.ts 주석), 운영에서만 모든 필드가
+ * `undefined` 인 줄이 섞였다. 그 줄의 이름으로 `localeCompare` 를 부르다 터져
+ * **데이터 문제가 HTTP 500 으로** 나갔다.
+ *
+ * 그 원인은 고쳤지만, 여기서도 막는다. **데이터가 이상해서 기능이 죽는 일은 없어야
+ * 한다** — 쓸 수 없는 줄은 조용히 빼고 나머지로 고르면 된다. id 가 없으면 등록할 수
+ * 없으므로 그게 쓸 수 있는지의 기준이다.
+ */
+function usable(choices: readonly Choice[]): Choice[] {
+  const ok = (n: unknown): boolean => typeof n === "number" && Number.isSafeInteger(n) && n > 0;
+  return choices.filter((c) => ok(c.productId) && ok(c.componentId));
+}
+
+/** 이름이 없어도 정렬은 돌아야 한다. 비면 뒤로 간다. */
+const nameOf = (value: unknown): string => (typeof value === "string" ? value : "");
+
 /** 많이 쓴 순, 같으면 이름 순. 순서가 흔들리면 프롬프트도 흔들린다. */
 function sortByUse(choices: readonly Choice[]): Choice[] {
-  return [...choices].sort((a, b) =>
-    b.used - a.used
-    || a.productName.localeCompare(b.productName)
-    || a.componentName.localeCompare(b.componentName));
+  return usable(choices).sort((a, b) =>
+    (typeof b.used === "number" ? b.used : 0) - (typeof a.used === "number" ? a.used : 0)
+    || nameOf(a.productName).localeCompare(nameOf(b.productName))
+    || nameOf(a.componentName).localeCompare(nameOf(b.componentName)));
 }
 
 /** 모델 답에서 고른 쌍과 이유를 꺼낸다. 못 읽으면 null. */
@@ -162,7 +184,9 @@ export function resolveClassification(
   // **쌍으로 찾는다.** componentId 하나로 찾으면 같은 번호를 쓰는 다른 제품이 걸린다
   // (codeOf 주석). 그 경우 fallback 이 false 라 화면 경고도 뜨지 않는다.
   const wanted = codeOf(parsed);
-  const matched = choices.find((c) => codeOf(c) === wanted);
+  // 쓸 수 있는 줄에서만 찾는다. 깨진 줄이 우연히 코드가 맞아떨어지면 id 없이 등록을
+  // 시도하게 된다(usable 주석).
+  const matched = usable(choices).find((c) => codeOf(c) === wanted);
   if (matched === undefined) return { choice: fallbackChoice, reason: "", fallback: true };
 
   return { choice: matched, reason: parsed.reason, fallback: false };

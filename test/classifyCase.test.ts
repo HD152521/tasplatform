@@ -236,3 +236,45 @@ test("실제 카탈로그의 코드는 유일하다", () => {
   const codes = PRODUCT_CATALOG.map(codeOf);
   assert.equal(new Set(codes).size, codes.length, "같은 코드가 두 번 있다");
 });
+
+// ---------------------------------------------------------------- 깨진 데이터
+
+/*
+ * **깨진 줄이 섞여도 죽지 않는다.**
+ *
+ * 실제로 운영에서 터졌다 — SQL 별칭에 따옴표가 없어 Postgres 가 컬럼명을 소문자로
+ * 접었고, 모든 필드가 undefined 인 줄이 목록에 섞여 `localeCompare` 에서 예외가 났다.
+ * 데이터 문제가 HTTP 500 으로 나가면 사람은 원인을 짐작할 수도 없다.
+ */
+const BROKEN = [
+  // Postgres 가 컬럼명을 접었을 때의 모양 — 이름도 id 도 없다.
+  { productId: undefined, productName: undefined, componentId: undefined,
+    componentName: undefined, used: 3 },
+  { productId: 0, productName: "", componentId: 0, componentName: "", used: 1 },
+] as unknown as Choice[];
+
+test("깨진 줄이 섞여도 목록을 만든다", () => {
+  const listed = buildChoiceList([...BROKEN, ...CHOICES]);
+  const codes = listed.split("\n").map((l) => l.split("\t")[0]);
+  assert.deepEqual(codes, ["4322-9698", "4322-9695", "4301-9294", "4332-9453"],
+    "깨진 줄은 빠지고 멀쩡한 줄만 남아야");
+});
+
+test("깨진 줄이 섞여도 분류가 된다", () => {
+  const got = resolveClassification("PICK: 4301-9294\nREASON: BOSH", [...BROKEN, ...CHOICES]);
+  assert.ok(got !== null);
+  assert.equal(got.choice.componentId, 9294);
+  assert.equal(got.fallback, false);
+});
+
+test("깨진 줄은 폴백으로도 고르지 않는다", () => {
+  const got = resolveClassification(null, [...BROKEN, ...CHOICES]);
+  assert.ok(got !== null);
+  assert.equal(got.choice.componentId, 9698, "멀쩡한 것 중 가장 많이 쓴 것");
+});
+
+// 전부 깨졌으면 올릴 수 없다 — id 없이 등록을 시도하지 않는다.
+test("쓸 수 있는 줄이 하나도 없으면 null 이다", () => {
+  assert.equal(resolveClassification("PICK: 4322-9698", BROKEN), null);
+  assert.equal(mostUsed(BROKEN), null);
+});
