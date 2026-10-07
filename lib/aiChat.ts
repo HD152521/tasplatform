@@ -22,6 +22,32 @@ export { OpenAiError } from "./openaiClient.ts";
 export type { ChatOptions } from "./llmClient.ts";
 
 /**
+ * `chat()` 이 던진 것을 사람이 읽을 한 줄로 바꾼다.
+ *
+ * ## 왜 필요한가
+ *
+ * `chat()` 은 **두 종류**를 던진다 — OpenAI 경로는 `OpenAiError`, 설정된 LLM 경로는
+ * `LlmError`(lib/llmClient.ts)다. `OpenAiError` 만 잡고 나머지를 다시 던지면 사내 LLM
+ * 쪽 실패가 전부 **HTTP 500** 이 되고, 화면에는 이유 없이 "500" 만 남는다. 실제로
+ * /api/draft/quick 이 그렇게 나갔다.
+ *
+ * ## 왜 메시지를 다듬나
+ *
+ * 게이트웨이가 죽으면 nginx 가 **HTML 오류 페이지**를 돌려주고, 그게 그대로 메시지에
+ * 실린다(`LlmError` 가 본문 앞 200자를 담는다). 화면에 `<html><head><title>500 …` 이
+ * 뜨면 사람은 무엇이 문제인지 알 수 없다. 태그를 걷어내고 공백을 접는다.
+ */
+export function chatFailureMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const text = raw
+    .replace(/<[^>]*>/g, " ")   // HTML 오류 페이지의 태그
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text === "") return "LLM 호출이 실패했습니다.";
+  return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+}
+
+/**
  * system + user 한 번 주고받기. 실패는 던진다.
  * 설정된 LLM 이 있으면 그쪽, 없으면 OpenAI 폴백.
  */

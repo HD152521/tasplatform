@@ -6,6 +6,7 @@
  */
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { chatFailureMessage } from "../lib/aiChat.ts";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -236,4 +237,40 @@ test("삭제하면 다시 null (또는 env 폴백)", async () => {
   await deleteLlmConfig(db);
   assert.equal(await getLlmConfig(db), null);
   await db.close();
+});
+
+/*
+ * chat() 이 던진 것을 사람이 읽을 한 줄로 바꾸는 규칙.
+ *
+ * chat() 은 **두 종류**를 던진다 — OpenAI 경로는 OpenAiError, 설정된 LLM 경로는
+ * LlmError 다. 한쪽만 잡고 나머지를 다시 던지면 사내 LLM 실패가 전부 HTTP 500 이
+ * 되고 화면에는 이유 없는 "500" 만 남는다. /api/draft/quick 이 실제로 그렇게 나갔다.
+ */
+test("LLM 실패 메시지에서 HTML 태그를 걷어낸다", () => {
+  const nginx = new Error(
+    "LLM 호출 실패 (HTTP 500): <html>\n<head><title>500 Internal Server Error</title></head>\n"
+    + "<body>\n<center><h1>500 Internal Server Error</h1></center>\n<hr><center>nginx/1.26.3</center>\n</body>\n</html>",
+  );
+  const got = chatFailureMessage(nginx);
+  assert.ok(!got.includes("<"), `태그가 남았다: ${got}`);
+  assert.ok(got.includes("HTTP 500"), "상태 코드는 남아야 사람이 원인을 안다");
+  assert.ok(got.includes("nginx/1.26.3"), "누가 거부했는지도 남아야");
+  assert.ok(!got.includes("\n"), "여러 줄이면 화면에서 깨진다");
+});
+
+test("Error 가 아닌 것도 받아 적는다", () => {
+  assert.equal(chatFailureMessage("그냥 문자열"), "그냥 문자열");
+  assert.equal(chatFailureMessage(undefined), "undefined");
+});
+
+// 빈 메시지를 그대로 보여 주면 화면이 비어 사람은 아무것도 모른다.
+test("메시지가 비면 기본 문구를 준다", () => {
+  assert.equal(chatFailureMessage(new Error("   ")), "LLM 호출이 실패했습니다.");
+  assert.equal(chatFailureMessage(new Error("<html></html>")), "LLM 호출이 실패했습니다.");
+});
+
+test("너무 길면 자른다", () => {
+  const got = chatFailureMessage(new Error("가".repeat(1000)));
+  assert.ok(got.length <= 301, `길이 ${got.length}`);
+  assert.ok(got.endsWith("…"));
 });
