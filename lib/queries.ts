@@ -446,15 +446,23 @@ export interface ProductComponent {
 export function listProductComponents(): Promise<ProductComponent[]> {
   return withDb(async (db) =>
     toPlain<ProductComponent>(
+      // 별칭에 **따옴표가 반드시 있어야 한다.** Postgres 는 따옴표 없는 식별자를
+      // 소문자로 접으므로 `AS productName` 은 `productname` 이 된다. 그러면 SQLite(로컬)
+      // 에서는 멀쩡한데 Postgres(운영)에서만 `row.productName` 이 undefined 가 되고,
+      // 화면에는 선택지가 빈 채로, 간단히 올리기에서는
+      // "Cannot read properties of undefined" 로 터졌다. 실제로 그렇게 나갔다.
+      //
+      // 이 저장소에서 camelCase 별칭을 쓰는 곳은 여기뿐이다(나머지는 snake_case 그대로).
+      // test/sqlAliases.test.ts 가 따옴표 없는 camelCase 별칭을 막는다.
       await db.all(
-        `SELECT product_id AS productId, product_name AS productName,
-                component_id AS componentId, component_name AS componentName,
+        `SELECT product_id AS "productId", product_name AS "productName",
+                component_id AS "componentId", component_name AS "componentName",
                 COUNT(*) AS used
            FROM cases
           WHERE product_id IS NOT NULL AND product_name <> ''
             AND component_id IS NOT NULL AND component_name <> ''
           GROUP BY product_id, component_id, product_name, component_name
-          ORDER BY productName, used DESC`,
+          ORDER BY "productName", used DESC`,
       ),
     ),
   );

@@ -23,6 +23,7 @@ from pathlib import Path
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.oxml.ns import qn
 from pptx.util import Inches
 
 RELS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -46,6 +47,17 @@ IDX_WORK = 4         # 3-3 작업 진행 현황          (레이아웃 '1_본문
 IDX_PHOTO_PROTO = 5  # 04  정기점검 사진           (레이아웃 '4_본문', 원본 1장)
 
 WORK_ROWS_PER_SLIDE = 8   # 실제 양식이 한 장에 8행까지 담고 있다
+
+# SR 진행현황 요약 한 장에 담는 건수.
+#
+# 양식의 그 표가 **데이터 행 6개**로 그려져 있다(고객 문서에서 떠 온 그대로). 자리만
+# 보면 7행도 들어가지만(top 1.782 + 머리행 0.610 + 7×0.633 = 6.82 < 바닥글 7.131),
+# SR 내용·진행 현황 칸은 긴 글이 들어가 **줄바꿈으로 행이 늘어난다.** 그래서 고객이
+# 실제로 쓰는 6을 그대로 쓴다.
+#
+# 넘치면 쭉 이어 붙이지 않고 **장을 하나 더 만든다.** 이어 붙이면 표가 바닥글을 넘어
+# 글자가 잘려 나가는데, 그건 파일을 열어 보기 전까지 아무도 모른다.
+SR_SUMMARY_ROWS_PER_SLIDE = 6
 
 # 구획 번호 칸을 제목 칸과 구별하는 기준.
 # 양식의 두 칸은 각각 0.456인치와 8.861인치라 폭 하나로 확실히 갈린다.
@@ -250,6 +262,31 @@ def color_cell(table, row, col, rgb):
             run.font.color.rgb = rgb
 
 
+def clear_cell_color(table, row, col):
+    """한 칸의 **직접 지정된** 글자색을 떼어내 표 서식을 다시 물려받게 한다.
+
+    ## 왜 필요한가
+
+    색을 칠하기만 하고 되돌리지 않으면 **칠한 적 없는 행이 빨갛게 나간다.**
+
+    양식의 SR 요약표는 고객 문서에서 떠 온 것이라, 그 달에 진행 중이던 행(3~6행)이
+    `FF0000` 으로 박혀 있다. 거기에 resize_rows 가 **마지막 데이터 행을 복제**해 행을
+    늘리므로, 늘어난 행도 전부 빨강을 물려받는다. 그래서 "종료" 인데 빨간 글씨로
+    나갔다 — 빨강은 진행 중만이어야 한다.
+
+    `run.font.color.rgb = 검정` 으로 덮지 않는다. 물려받는 색이 테마 색일 수 있어
+    눈에 띄게 달라질 수 있다. `<a:solidFill>` 자체를 떼어 **원래 서식으로 돌린다.**
+    """
+    frame = table.cell(row, col).text_frame
+    for paragraph in frame.paragraphs:
+        for run in paragraph.runs:
+            rPr = run._r.find(qn("a:rPr"))
+            if rPr is None:
+                continue
+            for fill in rPr.findall(qn("a:solidFill")):
+                rPr.remove(fill)
+
+
 def first_table(slide):
     for shape in slide.shapes:
         if shape.has_table:
@@ -366,6 +403,38 @@ def set_footer_month(prs, label):
 PAGE_NO_PATTERN = re.compile(r"\(\s*\d+\s*/\s*\d+\s*\)")
 
 
+def set_summary_page_no(slide, current, total):
+    """SR 요약 제목에 쪽 번호를 붙인다. **한 장이면 붙이지 않는다.**
+
+    고객 문서의 그 장 제목은 쪽 번호 없이 `SR 진행현황 요약` 이다. 한 장으로 끝나는
+    달에 "(1/1)" 을 붙이면 고객 문서와 달라진다. 두 장 이상일 때만 붙인다.
+
+    제목에 이미 "(n/m)" 이 있으면 바꾸고, 없으면 뒤에 붙인다 — 양식이 어느 쪽이든
+    같은 결과가 나와야 한다.
+    """
+    if total <= 1:
+        return 0
+    if sub_in_paragraphs(slide.shapes, PAGE_NO_PATTERN, f"({current}/{total})",
+                         stop_after_first=True, recurse_groups=False) > 0:
+        return 1
+
+    # 없으면 제목 칸 뒤에 붙인다. 제목 칸은 폭으로 가른다(CHIP_MAX_WIDTH).
+    for shape in slide.shapes:
+        if not shape.has_text_frame or shape.width is None:
+            continue
+        if shape.width <= CHIP_MAX_WIDTH:
+            continue
+        text = shape.text_frame.text.strip()
+        if text == "":
+            continue
+        set_text(shape.text_frame, f"{text} ({current}/{total})")
+        return 1
+
+    print(f"경고: SR 요약 제목을 찾지 못해 쪽 번호({current}/{total})를 붙이지 못했습니다.",
+          file=sys.stderr)
+    return 0
+
+
 def set_page_no(slide, current, total):
     """제목의 "(1/6)" 같은 쪽 번호를 갱신한다.
 
@@ -461,7 +530,11 @@ def fill_license(slide, values):
 
 
 def fill_sr_summary(slide, items):
-    """01 SR 진행현황 요약. 헤더 1행 + SR 수만큼."""
+    """01 SR 진행현황 요약 **한 장**. 헤더 1행 + 받은 SR 수만큼.
+
+    한 장에 몇 건까지인지는 부르는 쪽이 정한다(SR_SUMMARY_ROWS_PER_SLIDE). 여기서
+    받은 만큼만 채우므로, 넘치는 건은 다음 장이 받는다.
+    """
     table = first_table(slide)
     resize_rows(table, keep_header=1, wanted=len(items))
 
@@ -475,9 +548,13 @@ def fill_sr_summary(slide, items):
         cell_text(table, r, base + 2, sr["title"])
         cell_text(table, r, base + 3, sr["progress"])
         cell_text(table, r, base + 4, sr["done"])
-        # 보고월 기준 미종료 SR 은 완료 여부를 빨간 글씨로 강조한다.
+        # 완료 여부 색은 **양쪽을 다 정한다.** 진행 중만 빨강이고, 종료는 양식에서
+        # 물려받은 색으로 되돌린다. 칠하기만 하면 양식에 박힌 빨강이 그대로 남아
+        # "종료" 가 빨갛게 나간다(clear_cell_color 주석).
         if sr.get("open") == "1":
             color_cell(table, r, base + 4, RED)
+        else:
+            clear_cell_color(table, r, base + 4)
 
 
 def fill_sr_detail(slide, sr):
@@ -616,8 +693,11 @@ def build(payload, template_path, out_path):
     # 아래에서 `ids[IDX_SR_DETAIL:]` 로 원형 세 장을 한꺼번에 걷어낸다. 그래서 원형이
     # **마지막 세 장이고 이 순서여야** 한다. 주석으로만 적어 두면 한쪽 파일만 고쳤을 때
     # 엉뚱한 장을 지우고도 조용히 보고서가 나온다.
-    if (IDX_SR_DETAIL + 1, IDX_WORK + 1) != (IDX_WORK, IDX_PHOTO_PROTO):
-        raise AssertionError("IDX_SR_DETAIL / IDX_WORK / IDX_PHOTO_PROTO 가 연속이 아니다")
+    # 아래에서 `ids[IDX_SR_SUMMARY:]` 로 원형 네 장을 한꺼번에 걷어낸다.
+    want = (IDX_SR_DETAIL, IDX_WORK, IDX_PHOTO_PROTO)
+    if (IDX_SR_SUMMARY + 1, IDX_SR_DETAIL + 1, IDX_WORK + 1) != want:
+        raise AssertionError(
+            "IDX_SR_SUMMARY / IDX_SR_DETAIL / IDX_WORK / IDX_PHOTO_PROTO 가 연속이 아니다")
     if len(slides) != IDX_PHOTO_PROTO + 1:
         raise AssertionError(
             f"양식이 {len(slides)}장이다 (기대 {IDX_PHOTO_PROTO + 1}장). "
@@ -649,6 +729,7 @@ def build(payload, template_path, out_path):
     photo_pages = payload.get("photos") or []
 
     # 원본으로 쓸 슬라이드
+    summary_proto = slides[IDX_SR_SUMMARY]
     sr_proto = slides[IDX_SR_DETAIL]
     work_proto = slides[IDX_WORK]
     photo_proto = slides[IDX_PHOTO_PROTO]
@@ -658,9 +739,19 @@ def build(payload, template_path, out_path):
     if payload.get("license"):
         if not fill_license(slides[IDX_LICENSE], payload["license"]):
             print("경고: 라이선스 표에서 TAS App Service 행을 찾지 못했습니다.", file=sys.stderr)
-    fill_sr_summary(slides[IDX_SR_SUMMARY], sr_items)
 
-    # 2) SR 상세 · 작업 슬라이드를 필요한 수만큼 새로 만든다
+    # 2) SR 요약 · 상세 · 작업 슬라이드를 필요한 수만큼 새로 만든다.
+    #
+    # 요약도 **장을 나눈다.** 한 표에 쭉 이어 붙이면 바닥글을 넘어 글자가 잘린다
+    # (SR_SUMMARY_ROWS_PER_SLIDE 주석).
+    summary_pages = chunk(sr_items, SR_SUMMARY_ROWS_PER_SLIDE)
+    made_summary = []
+    for i, rows in enumerate(summary_pages, 1):
+        slide = clone_slide(prs, summary_proto)
+        fill_sr_summary(slide, rows)
+        set_summary_page_no(slide, i, len(summary_pages))
+        made_summary.append(slide)
+
     made_sr = []
     for i, sr in enumerate(sr_items, 1):
         slide = clone_slide(prs, sr_proto)
@@ -685,15 +776,22 @@ def build(payload, template_path, out_path):
     # 3) 원본 슬라이드들을 걷어내고 순서를 다시 잡는다
     new_ids = slide_ids(prs)
     made_ids = new_ids[len(ids):]
-    keep_front = [ids[IDX_CLOUD], ids[IDX_LICENSE], ids[IDX_SR_SUMMARY]]
-    made_sr_ids = made_ids[:len(made_sr)]
-    made_work_ids = made_ids[len(made_sr):len(made_sr) + len(made_work)]
-    made_photo_ids = made_ids[len(made_sr) + len(made_work):]
+    keep_front = [ids[IDX_CLOUD], ids[IDX_LICENSE]]
 
-    for element in ids[IDX_SR_DETAIL:]:
+    # 만든 순서대로 잘라 쓴다. 위 루프 순서(요약 → SR 상세 → 작업 → 사진)와 **짝이다.**
+    cuts = [len(made_summary), len(made_sr), len(made_work), len(made_photo)]
+    at = 0
+    sliced = []
+    for count in cuts:
+        sliced.append(made_ids[at:at + count])
+        at += count
+    made_summary_ids, made_sr_ids, made_work_ids, made_photo_ids = sliced
+
+    # 요약 원형부터 끝까지 걷어낸다 — 요약도 이제 복제본을 쓴다.
+    for element in ids[IDX_SR_SUMMARY:]:
         drop_slide(prs, element)
 
-    reorder(prs, keep_front + made_sr_ids + made_work_ids + made_photo_ids)
+    reorder(prs, keep_front + made_summary_ids + made_sr_ids + made_work_ids + made_photo_ids)
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     prs.save(out_path)
