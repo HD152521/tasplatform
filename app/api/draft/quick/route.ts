@@ -21,7 +21,7 @@
  * 사람은 AI 가 고른 줄 안다.
  */
 import { NextResponse } from "next/server";
-import { OpenAiError, chat, hasOpenAi } from "../../../../lib/aiChat.ts";
+import { chat, chatFailureMessage, hasOpenAi } from "../../../../lib/aiChat.ts";
 import {
   CLASSIFY_SYSTEM_PROMPT,
   buildClassifyUser,
@@ -95,8 +95,12 @@ export async function POST(request: Request) {
     } catch (error) {
       // 분류가 실패해도 **정리는 계속한다.** 제품을 못 고른 것이 글을 못 쓰는 이유는
       // 아니고, 사람은 화면에서 제품만 바꿔 주면 된다.
+      //
+      // **오류 종류를 가리지 않는다.** 한때 OpenAiError 가 아니면 다시 던졌는데, 사내
+      // LLM 은 LlmError 를 던지므로 그게 전부 HTTP 500 이 됐다. 분류는 폴백이 있는
+      // 단계라 여기서 멈출 이유가 없다.
       answer = null;
-      if (!(error instanceof OpenAiError)) throw error;
+      console.error("[draft/quick] 분류 실패(폴백으로 진행):", chatFailureMessage(error));
     }
   }
   const classified = resolveClassification(answer, choices);
@@ -165,9 +169,13 @@ export async function POST(request: Request) {
       fallback: classified.fallback,
     });
   } catch (error) {
-    if (error instanceof OpenAiError) {
-      return NextResponse.json({ ok: false, message: error.message }, { status: 502 });
-    }
-    throw error;
+    // **다시 던지지 않는다.** chat() 은 OpenAiError 와 LlmError 두 종류를 던지는데,
+    // 한쪽만 잡고 나머지를 던지면 화면에 이유 없는 500 만 남는다(chatFailureMessage 주석).
+    // 서버 로그에는 원본을 남기고, 화면에는 다듬은 한 줄을 준다.
+    console.error("[draft/quick] 정리 실패:", error);
+    return NextResponse.json(
+      { ok: false, message: chatFailureMessage(error) },
+      { status: 502 },
+    );
   }
 }
