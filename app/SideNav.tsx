@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { activeNavHref } from "../lib/navActive.ts";
 import { COLOR, MONO_STACK, RADIUS, formatStamp } from "./ui.tsx";
 
 interface Counts {
@@ -31,7 +32,7 @@ export function SideNav({
 }) {
   const path = usePathname();
 
-  const items = [
+  const items: Array<{ href: string; label: string; count: number | null; badge: number }> = [
     { href: "/", label: "진행중", count: counts.open, badge: counts.unread },
     { href: "/closed", label: "종료", count: counts.closed, badge: 0 },
     { href: "/new", label: "SR 작성", count: null, badge: 0 },
@@ -39,9 +40,17 @@ export function SideNav({
     { href: "/kb", label: "기술 문서", count: counts.kb, badge: counts.kbMatch },
     { href: "/report", label: "정기점검", count: null, badge: 0 },
     { href: "/logs", label: "수집 로그", count: null, badge: 0 },
-    { href: "/settings", label: "연동 설정", count: null, badge: 0 },
+    // "연동 설정" 은 걷어냈다 — 아무 일도 하지 않는 화면이었다(app/settings/page.tsx).
+    // `/settings` 는 여기로 리다이렉트된다.
     { href: "/settings/llm", label: "LLM 연결", count: null, badge: 0 },
   ];
+
+  // 지금 어느 항목에 있나. **가장 깊게 맞는 것 하나만** 켠다.
+  //
+  // 전에는 `path.startsWith(item.href)` 였다. 그러면 `/settings/llm` 에서 `/settings`
+  // 도 걸려 **두 항목이 같이 켜져 보였다** — 어디에 있는지 알 수 없다.
+  // 이 규칙은 lib/navActive.ts 에 두고 단위 시험으로 잠근다.
+  const activeHref = activeNavHref(path, items.map((i) => i.href));
 
   return (
     <aside style={{
@@ -57,7 +66,7 @@ export function SideNav({
 
       <nav style={{ padding: "14px 12px", display: "flex", flexDirection: "column", gap: 2 }}>
         {items.map((item) => {
-          const active = item.href === "/" ? path === "/" : path.startsWith(item.href);
+          const active = item.href === activeHref;
           return (
             <Link key={item.href} href={item.href} style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
