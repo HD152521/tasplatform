@@ -308,6 +308,10 @@ CREATE INDEX IF NOT EXISTS idx_team_tokens_team ON team_tokens(team_id);
 -- kind 로 연동 종류를 구분한다("jira" 등) — 앞으로 다른 연동도 같은 틀을 쓴다.
 -- secret_enc 는 토큰 등 민감값을 AES-256-GCM 으로 암호화한 것(lib/secretBox.ts).
 -- 평문은 여기 절대 들어가지 않는다. 암호화 키(SR_SECRET_KEY)가 없으면 저장 자체를 거부한다.
+-- **더 이상 쓰지 않는다.** 연동 설정 화면을 걷어내면서 읽고 쓰는 코드가 모두 없어졌다
+-- (app/settings/page.tsx 주석에 근거). 정의만 남겨 둔다 — 여기서 지우면 새로 만드는 DB
+-- 에는 없고 이미 돌고 있는 DB 에는 남아 둘이 어긋난다. 실제로 지우려면 의도적인
+-- 마이그레이션이 필요하고, 그 안의 옛 설정은 되돌릴 수 없다.
 CREATE TABLE IF NOT EXISTS team_integrations (
   team_id    TEXT NOT NULL,
   kind       TEXT NOT NULL,
