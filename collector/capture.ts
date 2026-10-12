@@ -26,9 +26,16 @@ const OUT_DIR = resolve("data/captured");
 const POLL_MS = 2000;
 const MAX_WAIT_MS = 60 * 60 * 1000;
 
-/** 화면을 그리는 정적 자원과 텔레메트리는 걸러낸다. */
+/**
+ * 화면을 그리는 정적 자원과 텔레메트리는 걸러낸다.
+ *
+ * `flex_mapping_events` 는 **거르지 않는다.** 이름이 텔레메트리처럼 보이지만 포털의
+ * flex 필드(작성 폼의 Issue Type 이 그것이다 — lib/createCase.ts 의
+ * requestFlexMapValueList)와 관련돼 있어, 선택지 목록이 그 경로로 올 수 있다.
+ * 정작 찾는 요청을 걸러 버리면 캡처를 다시 해야 한다. 잡음은 싸다.
+ */
 const SKIP =
-  /[.](js|css|woff2?|ttf|png|jpe?g|gif|svg|ico|map)([?]|$)|google-analytics|googletagmanager|doubleclick|fonts[.]g|\/assets\/|\/i18n\/|ext_data_push|flex_mapping_events/i;
+  /[.](js|css|woff2?|ttf|png|jpe?g|gif|svg|ico|map)([?]|$)|google-analytics|googletagmanager|doubleclick|fonts[.]g|\/assets\/|\/i18n\/|ext_data_push/i;
 
 /** 볼 만한 호스트. 첨부 파일은 포털이 아니라 supportftp / BOX 로 오간다. */
 const HOSTS = /wolkenservicedesk\.com|supportftp\.broadcom\.com|box\.com|boxcloud\.com/i;
@@ -209,13 +216,14 @@ async function main(): Promise<void> {
   console.log("=".repeat(74));
   console.log("이미 로그인된 세션으로 열었습니다. 재로그인은 필요 없습니다.");
   console.log("");
-  console.log("  [첨부 업로드]  진행 중 케이스를 열고 답변 칸에서");
-  console.log("                 파일 첨부 버튼 -> 작은 파일 하나 선택");
-  console.log("                 파일은 작은 것(10KB 정도) 하나면 충분합니다.");
-  console.log("                 파일 고른 직후 아래에 요청이 찍히면 두 단계 구조입니다.");
-  console.log("                 찍히지 않으면 전송할 때만 올라가는 구조입니다.");
+  console.log("  [Release 선택지]  SR 작성(Create Case) 화면을 엽니다.");
+  console.log("                    Product 를 고르고 -> Component 를 고르고");
+  console.log("                    -> Release(Prod Release) 드롭다운을 **펼칩니다.**");
+  console.log("                    펼치는 순간 선택지를 받아오는 요청이 아래에 찍힙니다.");
+  console.log("                    제품을 바꿔 가며 두세 번 펼쳐 주시면 더 좋습니다");
+  console.log("                    (제품마다 목록이 다른지 확인할 수 있습니다).");
   console.log("");
-  console.log("  [첨부 다운로드] 첨부가 달린 케이스에서 기존 파일 하나를 내려받기");
+  console.log("  ** 등록(Submit) 은 누르지 마세요. ** 펼쳐서 보기만 하면 됩니다.");
   console.log("");
   console.log("  다 되면 [브라우저 창을 닫으세요]");
   console.log("=".repeat(74));
