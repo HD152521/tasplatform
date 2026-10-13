@@ -18,7 +18,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isWithinHours, parseHours, resolveDurationMs } from "./schedule.ts";
 import { isCloudFoundry } from "./launchPlan.ts";
-import { openDb } from "../lib/db.ts";
+import { openDb, type Db } from "../lib/db.ts";
 import { COLLECT_KINDS, type CollectKind } from "../lib/collectKind.ts";
 import {
   markCollectFinished, markCollectHandled, pendingCollectRequest,
@@ -173,9 +173,9 @@ interface CollectJob {
  *
  * DB 를 못 읽어도 루프를 세우지 않는다. 정기 수집은 이것과 무관하게 돌아야 한다.
  */
-async function takeCollectRequests(): Promise<CollectJob[]> {
+async function takeCollectRequests(shared?: Db): Promise<CollectJob[]> {
   try {
-    const db = await openDb();
+    const db = shared ?? await openDb();
     try {
       const jobs: CollectJob[] = [];
       for (const kind of COLLECT_KINDS) {
@@ -186,7 +186,7 @@ async function takeCollectRequests(): Promise<CollectJob[]> {
       }
       return jobs;
     } finally {
-      await db.close();
+      if (shared === undefined) await db.close();
     }
   } catch (error) {
     console.error("[worker] 수집 요청 확인 실패(정기 수집은 계속):", error instanceof Error ? error.message : String(error));
@@ -246,8 +246,9 @@ async function runRequestedJob(job: CollectJob, casesTimeoutMs: number): Promise
  * 첨부는 브라우저가 있어야 처리되므로 이 기계가 해야 한다. 사람이 앞에서 기다리는
  * 구간이라 수집 간격(15분)을 기다리게 두지 않는다. DB 를 못 읽어도 루프는 세우지 않는다.
  */
-async function attachmentsWaiting(): Promise<boolean> {
+async function attachmentsWaiting(shared?: Db): Promise<boolean> {
   try {
+    if (shared !== undefined) return await hasPendingJobs(shared);
     const db = await openDb();
     try {
       return await hasPendingJobs(db);
@@ -272,6 +273,32 @@ async function attachmentsWaiting(): Promise<boolean> {
  * 다시 재지 않는다(CVE 를 눌렀다고 케이스 주기가 밀릴 이유는 없다).
  */
 async function sleepWatchingRequests(ms: number, casesTimeoutMs: number): Promise<number | null> {
+  // **연결을 하나만 열어 돌려 쓴다.** 폴링마다 openDb() 를 부르면 그때마다 스키마
+  // 점검과 기본팀 INSERT 가 돌고 진단 배너가 찍힌다. 3초 간격에서는 하루 수만 번이고,
+  // 실제로 journalctl 이 그 줄로 덮여 `[attachments]` 를 못 찾았다.
+  //
+  // 못 열면 shared 는 undefined 로 두고, 폴러들이 그때그때 열던 옛 방식으로 돈다 —
+  // DB 가 잠깐 안 열려도 루프를 세우지 않는다(두 폴러의 주석과 같은 이유).
+  let shared: Db | undefined;
+  try {
+    shared = await openDb();
+  } catch (error) {
+    console.error("[worker] 폴링용 연결을 열지 못했습니다(그때그때 엽니다):",
+      error instanceof Error ? error.message : String(error));
+  }
+
+  try {
+    return await pollLoop(ms, casesTimeoutMs, shared);
+  } finally {
+    if (shared !== undefined) await shared.close().catch(() => undefined);
+  }
+}
+
+async function pollLoop(
+  ms: number,
+  casesTimeoutMs: number,
+  shared: Db | undefined,
+): Promise<number | null> {
   let left = ms;
   while (left > 0 && !stopping) {
     const chunk = Math.min(REQUEST_POLL_MS, left);
@@ -280,7 +307,7 @@ async function sleepWatchingRequests(ms: number, casesTimeoutMs: number): Promis
     if (stopping) return null;
 
     let casesSeq: number | null = null;
-    for (const job of await takeCollectRequests()) {
+    for (const job of await takeCollectRequests(shared)) {
       if (job.kind === "cases") {
         casesSeq = job.seq;
         continue;
@@ -294,7 +321,7 @@ async function sleepWatchingRequests(ms: number, casesTimeoutMs: number): Promis
     }
 
     // 첨부는 사람이 앞에서 기다린다. 수집 간격을 기다리게 두지 않는다.
-    if (await attachmentsWaiting()) {
+    if (await attachmentsWaiting(shared)) {
       await runChildOnce(ATTACHMENTS_ENTRY, ATTACHMENTS_TIMEOUT_MS, "첨부");
     }
   }
