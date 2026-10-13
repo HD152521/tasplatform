@@ -37,16 +37,29 @@ export async function openDb(file?: string): Promise<Db> {
  * - 없을 때만 현재 계정 소유로 만든다(그러려면 그 계정에 CREATE 권한이 있어야 한다).
  *   실패해도 起動을 막지 않는다(로그만).
  */
+/**
+ * 진단 배너를 이미 찍었나. **프로세스당 한 번만** 찍는다.
+ *
+ * 주석에는 "起動 로그에 남긴다" 고 적혀 있었지만, 이 함수는 openDb() 마다 돈다.
+ * 수집기 worker 가 큐를 3초마다 확인하면서 **하루 5만 줄**이 쌓였고, journalctl 로
+ * 최근 로그를 보면 전부 이 줄이라 정작 봐야 할 `[attachments]` 가 묻혔다. 실제로
+ * 첨부가 처리됐는지 확인하지 못해 진단이 한 번 헛돌았다.
+ */
+let bannerShown = false;
+
 async function preparePostgresSchema(db: Db, schema: string): Promise<void> {
-  try {
-    const who = await db.get<{ u: string; sp: string; d: string }>(
-      "SELECT current_user AS u, current_setting('search_path') AS sp, current_database() AS d",
-    );
-    console.log(
-      `[db] postgres db=${who?.d} user=${who?.u} search_path=${who?.sp} target_schema=${schema}`,
-    );
-  } catch {
-    // 진단 실패는 무시한다.
+  if (!bannerShown) {
+    bannerShown = true;
+    try {
+      const who = await db.get<{ u: string; sp: string; d: string }>(
+        "SELECT current_user AS u, current_setting('search_path') AS sp, current_database() AS d",
+      );
+      console.log(
+        `[db] postgres db=${who?.d} user=${who?.u} search_path=${who?.sp} target_schema=${schema}`,
+      );
+    } catch {
+      // 진단 실패는 무시한다.
+    }
   }
   if (schema === "public") return;
 
