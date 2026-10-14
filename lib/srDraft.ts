@@ -9,15 +9,22 @@ import { DEFAULT_SEVERITY, SEVERITIES } from "./severity.ts";
 
 export interface SrDraft {
   serial: string;
-  release: string;
   severity: string;
   subject: string;
   content: string;
 }
 
+/*
+ * ## Prod Release 는 보관하지 않는다
+ *
+ * 릴리스는 **고른 제품에 딸린 값**인데, 제품은 이 초안에 담지 않는다(화면을 다시 열면
+ * 목록 첫 제품으로 돌아간다). 릴리스만 되살리면 "제품은 A, 버전은 B 제품의 것" 이 되고,
+ * 그 조합은 사람이 고른 적이 없다. 글을 지키는 것이 이 보관의 목적이고, 버전은 다시
+ * 고르는 데 몇 초면 된다. 틀린 버전으로 올라가는 것보다 낫다.
+ */
+
 export const EMPTY_SR_DRAFT: SrDraft = {
   serial: "",
-  release: "",
   severity: DEFAULT_SEVERITY,
   subject: "",
   content: "",
@@ -44,7 +51,6 @@ export function parseSrDraft(text: string): SrDraft | null {
       typeof raw[key] === "string" ? (raw[key] as string) : "";
     const restored: SrDraft = {
       serial: pick("serial"),
-      release: pick("release"),
       // 아는 등급만 받는다. 모르는 값을 넣으면 선택칸이 빈 채로 떠 등록이 막힌다.
       severity: (SEVERITIES as readonly string[]).includes(pick("severity"))
         ? pick("severity")

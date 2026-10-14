@@ -1,4 +1,5 @@
 import { mergeCatalog } from "../../lib/productCatalog.ts";
+import { selectableProducts } from "../../lib/productCategory.ts";
 import { listProductComponents, type ProductComponent } from "../../lib/queries.ts";
 import { COLOR, Notice } from "../ui.tsx";
 import { DraftForm } from "./DraftForm.tsx";
@@ -20,7 +21,15 @@ export default async function NewCasePage() {
   // 수집분에 내장 목록을 **더한다**. 예전처럼 "비었을 때만" 쓰면, 쓸모없는 조합이
   // 몇 개만 있어도 내장 목록이 안 켜져 정작 필요한 제품을 못 골랐다.
   const fromDbCount = combos.length;
-  combos = mergeCatalog(combos);
+  /*
+   * 내장 목록을 더한 뒤 **올릴 수 있는 제품만 남긴다.**
+   *
+   * 내장 목록에는 이름이 바뀌거나 단종된 제품과, 기술 문의가 아닌 요청 종류(계약·포털
+   * 접근)가 섞여 있다. 포털의 현재 목록에 없으므로 그쪽으로 등록하면 거절된다
+   * (lib/productCategory.ts). 고를 수 있게 두면 사람은 릴리스가 하나도 안 나오는 이유를
+   * 알 수 없고, 거기서 막힌다.
+   */
+  combos = selectableProducts(mergeCatalog(combos));
 
 
   return (

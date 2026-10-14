@@ -12,7 +12,7 @@ import { DEFAULT_SEVERITY } from "../lib/severity.ts";
 
 test("저장한 모양을 그대로 돌려준다", () => {
   const draft = {
-    serial: "SN-0001", release: "10.4.2", severity: "High - P2",
+    serial: "SN-0001", severity: "High - P2",
     subject: "제목", content: "본문",
   };
   assert.deepEqual(parseSrDraft(JSON.stringify(draft)), draft);
@@ -41,7 +41,7 @@ test("빠진 칸은 빈 값으로 채운다", () => {
 // 숫자·객체가 들어와도 문자열 칸으로 취급해야 한다(화면이 value 로 쓴다).
 test("문자열이 아닌 값은 빈 값으로 둔다", () => {
   const restored = parseSrDraft(JSON.stringify({
-    subject: 123, content: { a: 1 }, serial: null, release: [], severity: 7,
+    subject: 123, content: { a: 1 }, serial: null, severity: 7,
   }));
   assert.equal(restored, null, "알맹이가 없으니 복구할 것도 없다");
 });
@@ -50,6 +50,19 @@ test("문자열이 아닌 값은 빈 값으로 둔다", () => {
  * 모르는 등급을 그대로 넣으면 선택칸이 빈 채로 떠 **등록이 막힌다.** 등급 이름이
  * 바뀌어도 글은 살아 있어야 한다.
  */
+/*
+ * Prod Release 는 **일부러 보관하지 않는다.** 제품 없이 버전만 되살리면 "제품은 A,
+ * 버전은 B 것" 이 되고, 그 조합은 사람이 고른 적이 없다(lib/srDraft.ts 주석).
+ */
+test("옛 초안에 남아 있는 release 는 무시한다", () => {
+  const restored = parseSrDraft(JSON.stringify({
+    release: "10.4.2", subject: "제목", content: "본문",
+  }));
+  assert.ok(restored !== null);
+  assert.equal("release" in restored!, false, "되살리면 엉뚱한 버전이 남는다");
+  assert.equal(restored!.subject, "제목", "글은 지켜야 한다");
+});
+
 test("모르는 등급은 기본값으로 바꾼다", () => {
   const restored = parseSrDraft(JSON.stringify({
     severity: "긴급", subject: "제목", content: "본문",

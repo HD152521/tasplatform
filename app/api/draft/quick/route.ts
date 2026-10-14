@@ -14,6 +14,12 @@
  * 초안을 만든다(제품·버전을 문단에 녹인다). 그래서 제품을 먼저 정하고 그 이름을
  * 넘긴다. 순서를 바꾸면 초안이 제품을 모르는 상태로 쓰인다.
  *
+ * ## 버전도 집어 준다 — 다만 애매하면 비운다
+ *
+ * 글에 버전이 적혀 있으면("TPCF 10.4.2 에서…") 그 제품의 릴리스 목록에서 **정확히
+ * 일치하는 것만** 집는다(lib/releaseGuess.ts). 못 집으면 비워서 보내고, 화면이 그
+ * 사실을 말한다. 비슷한 것을 찍으면 틀린 환경으로 SR 이 올라간다.
+ *
  * ## 분류가 실패해도 멈추지 않는다
  *
  * LLM 이 없거나 답이 쓸 수 없으면 **가장 많이 쓴 조합**으로 떨어진다(lib/classifyCase.ts).
@@ -29,6 +35,11 @@ import {
   type Choice,
 } from "../../../../lib/classifyCase.ts";
 import { mergeCatalog } from "../../../../lib/productCatalog.ts";
+import { fetchClient } from "../../../../collector/httpClient.ts";
+import { DEFAULT_TEAM_ID, sessionFileForTeam } from "../../../../lib/config.ts";
+import { guessRelease } from "../../../../lib/releaseGuess.ts";
+import { selectableProducts } from "../../../../lib/productCategory.ts";
+import { hasTeamSession } from "../../../../lib/requestAudit.ts";
 import { listProductComponents } from "../../../../lib/queries.ts";
 import {
   DRAFT_CONTENT_LIMIT,
@@ -97,7 +108,10 @@ async function handle(request: Request): Promise<Response> {
   // 있어서, 그것만 쓰면 고를 것이 하나도 없다(lib/productCatalog.ts 머리말).
   let choices: Choice[];
   try {
-    choices = mergeCatalog(await listProductComponents());
+    // **올릴 수 있는 제품만** 고르게 한다. 단종·비기술 요청 종류가 섞인 내장 목록을
+    // 그대로 주면 모델이 그중 하나를 골라, 등록 단계에서야 거절당한다
+    // (lib/productCategory.ts). 고를 수 없는 것을 보여 주지 않는 편이 낫다.
+    choices = selectableProducts(mergeCatalog(await listProductComponents()));
   } catch (error) {
     return NextResponse.json(
       {
@@ -147,6 +161,24 @@ async function handle(request: Request): Promise<Response> {
   }
 
   const { choice } = classified;
+
+  /*
+   * 2) 버전 찾기. **정리보다 먼저** 한다 — 찾은 버전을 정리 프롬프트에 문맥으로 넘겨야
+   * 본문에 맞는 환경이 적힌다. 포털 왕복은 실측 0.3~0.6초이고 정리는 7~8초라, 순서를
+   * 이렇게 두는 값이 체감에 묻힌다.
+   *
+   * 세션이 없으면 **묻지 않는다.** 버전을 못 집는 것 때문에 간단히 올리기가 실패하면
+   * 안 된다. 그래서 여기서는 ensureTeamSession 으로 막지 않고 조용히 건너뛴다.
+   */
+  let release: { releaseId: number; releaseDesc: string } | null = null;
+  if (hasTeamSession(DEFAULT_TEAM_ID)) {
+    release = await guessRelease(
+      fetchClient(sessionFileForTeam(DEFAULT_TEAM_ID)),
+      choice.productId,
+      content,
+    );
+  }
+
   try {
     // "tidy" — 받은 글을 우리 팀 서식으로 **정리**한다(번역만 하는 "translate" 가 아니다).
     // 간단히 올리기는 담당자가 메모처럼 적는 자리라, 문단을 다시 짜 주는 쪽이 맞다.
@@ -157,14 +189,17 @@ async function handle(request: Request): Promise<Response> {
         mode: "tidy",
         productName: choice.productName,
         componentName: choice.componentName,
-        release: "",
+        // 찾았으면 넘긴다. 못 찾았으면 빈 값 — 없는 버전을 본문에 적게 하지 않는다.
+        release: release?.releaseDesc ?? "",
         severity: str(body.severity),
         subject: "",
       }),
     ));
     // 제목 앞 대괄호는 근거가 있을 때만 남긴다. compose 라우트와 같은 규칙이다 —
     // 모델이 본문에 없는 버전을 지어 붙인 적이 있다.
-    const facts = [choice.productName, choice.componentName, content].join(" ");
+    // 제목 대괄호의 근거에 **찾은 버전도** 넣는다. 안 넣으면 모델이 올바른 버전을
+    // 적었는데도 근거가 없다고 보고 떼어낸다.
+    const facts = [choice.productName, choice.componentName, release?.releaseDesc ?? "", content].join(" ");
     const subject = stripUngroundedTag(composed.subject, facts);
 
     // 빈 값 판정은 **떼어낸 뒤에** 한다. 제목이 대괄호 태그 하나뿐이면(모델이 실제로
@@ -189,6 +224,9 @@ async function handle(request: Request): Promise<Response> {
       productName: choice.productName,
       componentId: choice.componentId,
       componentName: choice.componentName,
+      // 못 찾으면 0/빈 값으로 보낸다. 화면이 "버전 없이 등록됩니다" 를 말한다.
+      releaseId: release?.releaseId ?? 0,
+      releaseDesc: release?.releaseDesc ?? "",
       reason: classified.reason,
       fallback: classified.fallback,
     });
