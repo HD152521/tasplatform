@@ -395,6 +395,10 @@ CREATE TABLE IF NOT EXISTS attachment_jobs (
   state       TEXT    NOT NULL DEFAULT 'pending',   -- pending | running | done | failed
   error       TEXT    NOT NULL DEFAULT '',
   actor       TEXT    NOT NULL DEFAULT '',
+  -- 어느 팀(공용 계정) 일인가. 끝낸 뒤 감사 로그를 **수집기가** 남기는데, 그 한 줄에
+  -- 팀이 필요하다. 이게 없던 동안 수집기는 기본 팀으로 적었고, 큐에 넣은 쪽(웹)이
+  -- 남긴 'queued' 줄과 팀이 어긋났다. 옛 행은 빈 값이고 그때는 기본 팀으로 본다.
+  team_id     TEXT    NOT NULL DEFAULT '',
   created_at  TEXT    NOT NULL,
   updated_at  TEXT    NOT NULL
 );

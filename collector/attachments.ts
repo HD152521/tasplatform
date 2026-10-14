@@ -27,7 +27,7 @@ import {
   parseFilePath,
   uploadToCase,
 } from "../lib/crushftp.ts";
-import { openDb, type Db } from "../lib/db.ts";
+import { openDb, recordAudit, type Db } from "../lib/db.ts";
 import {
   claimNextJob,
   finishJob,
@@ -232,6 +232,29 @@ async function runDownload(
   return { error: "", payload: body.toString("base64") };
 }
 
+/**
+ * 올리기 결과를 감사 로그에 남긴다.
+ *
+ * 웹 라우트는 큐에 넣는 데까지만 알고 바로 응답한다(app/api/attachments/upload 머리말).
+ * 그래서 **성공했는지 못 했는지는 여기서만 알 수 있다.** 이 한 줄이 없으면 감사 로그에
+ * queued 만 쌓여, 나중에 "그 파일 올라갔었나" 를 로그로 답할 수 없다.
+ *
+ * 받아오기(download)는 남기지 않는다 — 조회를 남기면 로그가 조회로 덮인다.
+ * 로그 실패가 일을 뒤집지 않는다(recordAudit 이 예외를 삼킨다).
+ */
+async function auditUpload(db: Db, job: AttachmentJob, error: string): Promise<void> {
+  if (job.kind !== "upload") return;
+  await recordAudit(db, {
+    actor: job.actor,
+    // 큐에 넣은 쪽이 실어 보낸 팀. 이 칸이 생기기 전 행은 빈 값이라 기본 팀으로 본다.
+    teamId: job.team_id === "" ? DEFAULT_TEAM_ID : job.team_id,
+    action: "upload",
+    requestId: job.request_id,
+    result: error === "" ? "ok" : "failed:upload",
+    detail: job.file_name,
+  });
+}
+
 async function main(): Promise<void> {
   const db = await openDb();
   try {
@@ -268,6 +291,7 @@ async function main(): Promise<void> {
             await finishJob(db, job.job_id, outcome.error === ""
               ? { payload: outcome.payload }
               : { error: outcome.error });
+            await auditUpload(db, job, outcome.error);
             if (outcome.error !== "") log(`실패 #${job.job_id}: ${outcome.error}`);
           } catch (error) {
             // 던지고 나온 뒤에는 세션 상태를 믿을 수 없다. 다음 일은 다시 들어간다.
@@ -276,6 +300,7 @@ async function main(): Promise<void> {
               ? error.message
               : String(error);
             await finishJob(db, job.job_id, { error: message });
+            await auditUpload(db, job, message);
             log(`실패 #${job.job_id}: ${message}`);
           }
           done += 1;

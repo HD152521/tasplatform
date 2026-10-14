@@ -4,6 +4,19 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { COLOR, RADIUS, controlStyle } from "../../ui.tsx";
 import { MAX_UPLOAD_LABEL, checkUploadRequest } from "../../../lib/attachmentUpload.ts";
+import { isSessionFailure } from "../../../lib/writeFailure.ts";
+
+/**
+ * 끝나기를 기다리는 상한.
+ *
+ * 수집기가 집어가는 데 최대 15초(확인 주기), 브라우저로 케이스에 들어가는 데 10초,
+ * 조각을 올리는 데 몇 초. 넘겨도 실패로 부르지 않는다 — 큐에 남아 결국 올라간다.
+ */
+const WAIT_MS = 120_000;
+/** 얼마나 자주 되묻는지. */
+const POLL_MS = 2_000;
+/** 연달아 이만큼 못 물으면 손을 든다(그래도 "실패" 라고 말하지 않는다). */
+const MAX_MISSES = 5;
 
 /**
  * 파일 붙이기.
@@ -47,18 +60,80 @@ export function AttachButton({ requestId }: { requestId: number }) {
     return () => clearInterval(timer);
   }, [busy]);
 
-  /** 한 건. 성공이면 빈 문자열, 실패면 사유. */
+  /**
+   * 한 건. 성공이면 빈 문자열, 실패면 사유.
+   *
+   * **두 번에 나눠 부른다.** 예전에는 POST 하나가 수집기가 올릴 때까지 최대 120초를
+   * 붙잡고 있었는데, 그 사이 바이트가 오가지 않는 연결은 VPN·TAS 라우터가 끊었다 —
+   * 담당자는 10~20초 만에 "fetch 실패" 를 봤고, 파일은 정작 올라가 있었다.
+   * 지금은 올려 놓고(POST) 끝났는지만 되물어(GET) 긴 연결을 아예 만들지 않는다.
+   */
   async function uploadOne(file: File): Promise<string> {
+    let jobId: number;
     try {
       const body = new FormData();
       body.append("requestId", String(requestId));
       body.append("file", file);
       const response = await fetch("/api/attachments/upload", { method: "POST", body });
-      const data = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string };
-      if (data.ok === true) return "";
-      return data.message ?? `올리지 못했습니다 (HTTP ${response.status}).`;
+      const data = (await response.json().catch(() => ({}))) as {
+        ok?: boolean; jobId?: number; message?: string;
+      };
+      if (data.ok !== true || typeof data.jobId !== "number") {
+        return data.message ?? `올리지 못했습니다 (HTTP ${response.status}).`;
+      }
+      jobId = data.jobId;
     } catch (problem) {
-      return problem instanceof Error ? problem.message : String(problem);
+      // 파일을 보내는 중에 끊긴 것이다. **자동으로 다시 보내지 않는다** — 큐에는
+      // 들어갔는데 응답만 못 받은 경우일 수 있고, 그러면 같은 파일이 두 번 붙는다.
+      const why = problem instanceof Error ? problem.message : String(problem);
+      return `${why} (올라갔는지는 잠시 후 케이스를 새로고침해 확인하세요)`;
+    }
+    return waitForJob(jobId);
+  }
+
+  /**
+   * 그 일이 끝날 때까지 되묻는다.
+   *
+   * 확인이 한 번 실패해도 **포기하지 않는다.** 일은 서버 큐에 그대로 있고 수집기가
+   * 올린다 — 여기서 실패라고 말하면 사람이 다시 올려 같은 파일이 두 번 붙는다.
+   * 연달아 못 물을 때만 손을 든다.
+   */
+  async function waitForJob(jobId: number): Promise<string> {
+    const deadline = Date.now() + WAIT_MS;
+    let misses = 0;
+
+    for (;;) {
+      await new Promise((r) => setTimeout(r, POLL_MS));
+      try {
+        const response = await fetch(
+          `/api/attachments/upload?job=${jobId}&requestId=${requestId}`,
+          { cache: "no-store" },
+        );
+        const data = (await response.json().catch(() => ({}))) as {
+          ok?: boolean; code?: string; state?: string; message?: string;
+        };
+        if (data.ok === true) {
+          misses = 0;
+          if (data.state === "done") return "";
+          if (data.state === "failed") return data.message ?? "첨부를 올리지 못했습니다.";
+        } else if (isSessionFailure(data.code)) {
+          // 세션이 끊기면 다시 물어도 같은 답이다. 다섯 번 헛물을 켜지 않고 바로 말한다.
+          // **올리지 못했다고 말하지 않는다** — 파일은 줄에 남아 수집기가 올린다.
+          return "세션이 끊겨 진행 상황을 확인할 수 없습니다. 파일은 줄에 남아 있으니 다시 올리지 말고, 로그인한 뒤 케이스를 새로고침해 확인하세요.";
+        } else {
+          misses += 1;
+        }
+      } catch {
+        misses += 1;
+      }
+
+      if (misses >= MAX_MISSES) {
+        return "진행 상황을 확인할 수 없습니다. 잠시 후 케이스를 새로고침해 확인하세요 (다시 올리지 마세요).";
+      }
+      if (Date.now() > deadline) {
+        // 상한을 넘겨도 **실패가 아니다.** 일은 큐에 남아 있고 수집기가 결국 올린다.
+        return "수집기가 아직 올리는 중입니다. 다시 올리지 말고 잠시 후 케이스를 새로고침해 확인하세요.";
+      }
     }
   }
 

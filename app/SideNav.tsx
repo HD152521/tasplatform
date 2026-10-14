@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { activeNavHref } from "../lib/navActive.ts";
-import { COLOR, MONO_STACK, RADIUS, formatStamp } from "./ui.tsx";
+import { COLOR, MONO_STACK, RADIUS } from "./ui.tsx";
+import { SessionDot } from "./SessionDot.tsx";
 
 interface Counts {
   open: number;
@@ -106,21 +107,11 @@ export function SideNav({
       </nav>
 
       <div style={{ marginTop: "auto", padding: "16px 20px", borderTop: `1px solid ${COLOR.divider}` }}>
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8, fontSize: 12,
-          color: signedIn ? COLOR.ok : COLOR.waitUs,
-        }}>
-          <span style={{
-            width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
-            background: signedIn ? COLOR.ok : COLOR.waitUs,
-          }} />
-          <span>{signedIn ? "세션 연결됨" : "세션 없음"}</span>
-        </div>
-        <div style={{ fontSize: 11, color: COLOR.faint, marginTop: 5, paddingLeft: 15, lineHeight: 1.6 }}>
-          {signedIn && expiresAt !== null
-            ? `${formatStamp(expiresAt)}까지`
-            : "로그인이 필요합니다"}
-        </div>
+        {/*
+          밑줄까지 SessionDot 이 그린다. 표시등은 포털에 물어 고쳐 그리는데 밑줄은
+          쿠키 기준으로 남으면, 세션이 죽은 상태에서 "…까지" 가 같이 보여 엇갈린다.
+        */}
+        <SessionDot signedIn={signedIn} expiresAt={expiresAt} />
         <div style={{ marginTop: 9, paddingLeft: 15 }}>{authSlot}</div>
       </div>
     </aside>

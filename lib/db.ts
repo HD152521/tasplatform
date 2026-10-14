@@ -130,6 +130,7 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: string 
   { table: "instance_counts", column: "prev_bank_dev_shared", ddl: "REAL NOT NULL DEFAULT 0" },
   { table: "instance_counts", column: "prev_central_prod", ddl: "REAL NOT NULL DEFAULT 0" },
   { table: "instance_counts", column: "prev_central_dev", ddl: "REAL NOT NULL DEFAULT 0" },
+  { table: "attachment_jobs", column: "team_id", ddl: "TEXT NOT NULL DEFAULT ''" },
 ];
 
 /** 테이블의 현재 컬럼 이름 집합(방언별 조회). */
