@@ -1,7 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { clearDraft, draftKey, loadDraft, saveDraft } from "../../../lib/draftStore.ts";
+import { writeFailureText } from "../../../lib/writeFailure.ts";
+import { useEffect, useState } from "react";
 import { COLOR, Card, RADIUS, controlStyle } from "../../ui.tsx";
 import { AttachButton } from "./AttachButton.tsx";
 
@@ -13,7 +15,38 @@ import { AttachButton } from "./AttachButton.tsx";
  */
 export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabel: string }) {
   const router = useRouter();
+  /**
+   * 쓰던 글은 브라우저에 붙잡아 둔다.
+   *
+   * 긴 글을 쓰고 보내면 "세션이 만료되었습니다" 가 뜨는 일이 있다(공용 계정을 웹과
+   * 수집기가 같이 쓰기 때문이다). 그때 글은 입력칸에 남지만, 세션을 고치려고
+   * **새로고침하면 사라졌다.** 5분 쓴 답변을 다시 쓰게 되는 자리였다.
+   *
+   * 첫 그림에서 빈 값으로 시작하는 이유: 서버가 그린 HTML 과 처음 렌더가 달라지면
+   * React 가 경고를 내고 화면이 한 번 튄다. 그래서 붙여 넣기는 마운트 뒤에 한다.
+   */
+  const key = draftKey("reply", requestId);
   const [text, setText] = useState("");
+  /**
+   * 보존해 둔 글을 **아직 꺼내 오지 않았다**는 표시.
+   *
+   * 이게 없으면 첫 렌더의 빈 값으로 저장이 한 번 돌아 **보관해 둔 글을 지웠다가**
+   * 다시 쓴다(복구 setState 가 다음 렌더에 반영되므로). 그 틈에 창을 닫으면 글이
+   * 사라진다. 꺼내 온 뒤부터 저장한다.
+   */
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    const saved = loadDraft(key);
+    if (saved !== "") setText(saved);
+    setLoaded(true);
+  }, [key]);
+
+  // 타이핑마다 저장한다. 글자 수가 많아도 localStorage 쓰기는 가볍다.
+  useEffect(() => {
+    if (!loaded) return;
+    saveDraft(key, text);
+  }, [key, loaded, text]);
   const [stage, setStage] = useState<"write" | "confirm">("write");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -62,15 +95,20 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ requestId, text }),
       });
-      const data = (await response.json()) as { ok?: boolean; message?: string };
+      const data = (await response.json()) as { ok?: boolean; code?: string; message?: string };
       if (data.ok === true) {
         setDone(data.message ?? "답변을 등록했습니다.");
+        // 보낸 뒤에는 보존해 둔 초안을 **반드시** 지운다. 남기면 다음에 열 때
+        // 이미 보낸 글이 되살아나 같은 답변을 두 번 보내게 된다.
+        clearDraft(draftKey("reply", requestId));
         setText("");
         setStage("write");
         router.refresh();
         return;
       }
-      setError(data.message ?? "전송에 실패했습니다.");
+      // 세션 만료면 "글은 남아 있다 + 이렇게 되살려라" 까지 말한다. 그 한 줄이 없어서
+      // 담당자가 날아간 줄 알고 다시 쓰기 시작했다(lib/writeFailure.ts 머리말).
+      setError(writeFailureText(data, "전송에 실패했습니다."));
       setStage("write");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

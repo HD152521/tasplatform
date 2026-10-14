@@ -1,13 +1,17 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ProductComponent } from "../../lib/queries.ts";
+import { clearDraft, draftKey, loadDraft, saveDraft } from "../../lib/draftStore.ts";
 import {
-  DEFAULT_SEVERITY,
-  SEVERITIES,
-  priorityIdOf,
-} from "../../lib/severity.ts";
+  EMPTY_SR_DRAFT,
+  hasBody,
+  parseSrDraft,
+  type SrDraft,
+} from "../../lib/srDraft.ts";
+import { writeFailureText } from "../../lib/writeFailure.ts";
+import { SEVERITIES, priorityIdOf } from "../../lib/severity.ts";
 import { COLOR, Card, RADIUS, controlStyle } from "../ui.tsx";
 import { Select } from "../Select.tsx";
 import { Composer, type ComposeMode } from "./Composer.tsx";
@@ -36,13 +40,8 @@ const FIXED = {
 /** 포털 작성 폼이 표시하는 실제 제목 길이 제한. */
 const SUBJECT_LIMIT = 700;
 
-interface Draft {
-  serial: string;
-  release: string;
-  severity: string;
-  subject: string;
-  content: string;
-}
+/** SR 작성 칸은 한 곳뿐이라 대상 번호가 없다. */
+const DRAFT_KEY = draftKey("new");
 
 export function DraftForm({
   combos,
@@ -52,13 +51,35 @@ export function DraftForm({
   /** 수집분이 없어 내장 목록으로 채웠는가. 힌트 문구만 달라진다. */
   fromCatalog?: boolean;
 }) {
-  const [d, setD] = useState<Draft>({
-    serial: "",
-    release: "",
-    severity: DEFAULT_SEVERITY,
-    subject: "",
-    content: "",
-  });
+  const [d, setD] = useState<SrDraft>(EMPTY_SR_DRAFT);
+
+  /**
+   * 쓰던 내용을 브라우저에 붙잡아 둔다.
+   *
+   * SR 본문은 번역·정리까지 거쳐 몇 분을 들이는 글이다. 보내려는 순간 "세션이
+   * 만료되었습니다" 가 뜨는 일이 있는데(공용 계정을 웹과 수집기가 같이 쓴다),
+   * 세션을 고치려고 **새로고침하면 그 글이 사라졌다.**
+   *
+   * 첫 그림은 빈 값으로 둔다. 서버가 그린 HTML 과 처음 렌더가 다르면 React 가
+   * 경고를 내고 화면이 한 번 튄다. 그래서 붙여 넣기는 마운트 뒤에 한다.
+   */
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    const restored = parseSrDraft(loadDraft(DRAFT_KEY));
+    if (restored !== null) setD(restored);
+    setLoaded(true);
+  }, []);
+
+  // 꺼내 온 **뒤부터** 저장한다. 안 그러면 첫 렌더의 빈 값이 보관해 둔 글을 덮는다
+  // (복구 setState 는 다음 렌더에 반영되므로 한 박자 늦다).
+  useEffect(() => {
+    if (!loaded) return;
+    // 알맹이(제목·본문)가 없으면 **빈 문자열로** 넘겨 자리를 비운다. JSON 을 그대로
+    // 넘기면 빈 칸들만 담긴 글자가 남아, 등록 직후에도 보관해 둔 초안이 있는 것처럼
+    // 자리를 차지한다(lib/draftStore.ts: 빈 글은 저장하지 않는다).
+    saveDraft(DRAFT_KEY, hasBody(d) ? JSON.stringify(d) : "");
+  }, [d, loaded]);
   const [copied, setCopied] = useState<string | null>(null);
   // 실제로 써 본 조합만 고를 수 있다. Product 를 바꾸면 Component 도 그 제품 것으로 바뀐다.
   const products = useMemo(() => {
@@ -135,7 +156,7 @@ export function DraftForm({
   const [created, setCreated] = useState<{ id: string; num: number } | null>(null);
   const router = useRouter();
 
-  const set = (k: keyof Draft) => (
+  const set = (k: keyof SrDraft) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
   ) => setD((prev) => ({ ...prev, [k]: e.target.value }));
 
@@ -164,14 +185,20 @@ export function DraftForm({
         }),
       });
       const data = (await response.json()) as {
-        ok?: boolean; message?: string; requestId?: number; requestIdFormatted?: string;
+        ok?: boolean; code?: string; message?: string;
+        requestId?: number; requestIdFormatted?: string;
       };
       if (data.ok === true && typeof data.requestId === "number") {
         setCreated({ id: data.requestIdFormatted ?? String(data.requestId), num: data.requestId });
+        // 올린 뒤에는 **반드시** 지운다. 남기면 다음에 열 때 이미 올린 SR 이
+        // 되살아나 같은 건을 두 번 등록하게 된다.
+        clearDraft(DRAFT_KEY);
+        setD(EMPTY_SR_DRAFT);
         router.refresh();
         return;
       }
-      setError(data.message ?? "등록에 실패했습니다.");
+      // 세션 만료면 글이 남아 있다는 사실과 되살리는 방법까지 함께 보여 준다.
+      setError(writeFailureText(data, "등록에 실패했습니다."));
       setStage("write");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

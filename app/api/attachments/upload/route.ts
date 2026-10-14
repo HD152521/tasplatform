@@ -6,9 +6,26 @@
  * 인증 자체가 안 된다(lib/crushftp.ts 머리말). 그래서 브라우저가 있는 수집기 VM 에
  * 일을 맡긴다(attachment_jobs). 받아오는 쪽과 대칭이다(app/api/attachments/[id]).
  *
- * 여기서 하는 일은 셋뿐이다: 받아도 되는 요청인지 판정하고, 큐에 넣고, 결과를 기다린다.
- * 기다리는 이유는 사람이 화면 앞에 있기 때문이다 — "올렸다/못 올렸다" 를 그 자리에서
- * 말해 주지 않으면 사람은 같은 파일을 다시 올려 케이스에 중복 첨부가 생긴다.
+ * ## 왜 기다리지 않고 바로 돌려주나
+ *
+ * 예전에는 POST 하나가 **수집기가 올릴 때까지 최대 120초를 붙잡고** 있었다. 그 사이
+ * 요청은 바이트 한 개도 오가지 않는 상태로 열려 있는데, 그 길에는 VPN 과 TAS 라우터가
+ * 있다. 조용한 연결은 끊긴다 — 실제로 담당자는 **10~20초 만에 "fetch 실패"** 를 봤다.
+ * 파일은 큐에 멀쩡히 들어가 수집기가 올렸는데도 화면은 실패라고 말했고, 그러면 사람은
+ * 다시 올려 케이스에 같은 파일이 두 번 붙는다.
+ *
+ * 그래서 둘로 나눈다.
+ *   POST  파일을 받아 큐에 넣고 **즉시** job 번호를 돌려준다(202).
+ *   GET   그 job 이 끝났는지 묻는다. 한 번에 1초도 안 걸린다.
+ *
+ * 긴 연결이 사라지므로 중간에서 끊길 자리가 없다. 확인이 한 번 실패해도 다시 물으면
+ * 되고(일은 큐에 그대로 있다), 창을 닫아도 수집기는 올린다.
+ *
+ * ## 감사 로그
+ *
+ * 올리기의 **결과**는 이제 수집기가 안다. 그래서 여기서는 "큐에 넣었다(queued)" 까지만
+ * 남기고, 성공/실패 한 줄은 수집기가 남긴다(collector/attachments.ts). 확인(GET)은
+ * 남기지 않는다 — 조회를 남기면 로그가 조회로 덮인다.
  *
  * 파일 내용은 어디에도 로그로 남기지 않는다. 고객 파일이다.
  */
@@ -25,64 +42,8 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// 수집기가 올릴 때까지 기다린다. WAIT_MS 보다 넉넉해야 기다리는 도중에 잘리지 않는다.
-export const maxDuration = 180;
-
-/**
- * 수집기가 올릴 때까지 기다리는 상한.
- *
- * 집어가는 데 최대 15초(worker 확인 주기), 브라우저로 케이스에 진입하는 데 10초,
- * 조각을 올리는 데 몇 초. 받아오는 쪽과 같은 값으로 둔다 — 같은 수집기, 같은 대기다.
- */
-const WAIT_MS = 120_000;
-/** 얼마나 자주 확인할지. */
-const POLL_MS = 1_500;
-
-type WaitOutcome =
-  | { state: "done" }
-  | { state: "failed"; message: string }
-  | { state: "slow"; message: string };
-
-/**
- * 큐에 넣고 결과를 기다린다.
- *
- * 상한을 넘겨도 **실패로 부르지 않는다**. 일은 큐에 그대로 남아 있고 수집기가 결국
- * 올린다 — 여기서 "실패" 라고 말하면 사람이 다시 올려 케이스에 같은 파일이 두 번 붙는다.
- * 그래서 "아직 처리 중" 으로 구분해 돌려준다.
- */
-async function uploadViaWorker(
-  requestId: number,
-  fileName: string,
-  payload: string,
-  actor: string,
-): Promise<WaitOutcome> {
-  const db = await openDb();
-  try {
-    const jobId = await enqueueUpload(db, { requestId, fileName, payload, actor });
-    const deadline = Date.now() + WAIT_MS;
-
-    for (;;) {
-      const status = await getJobStatus(db, jobId);
-      if (status === null) {
-        return { state: "failed", message: "첨부 작업이 사라졌습니다. 다시 시도하세요." };
-      }
-      if (status.state === "failed") {
-        return { state: "failed", message: status.error || "첨부를 올리지 못했습니다." };
-      }
-      if (status.state === "done") return { state: "done" };
-      if (Date.now() > deadline) {
-        return {
-          state: "slow",
-          message:
-            "수집기가 아직 올리는 중입니다. 다시 올리지 말고 잠시 후 케이스를 새로고침해 확인하세요.",
-        };
-      }
-      await new Promise((r) => setTimeout(r, POLL_MS));
-    }
-  } finally {
-    await db.close();
-  }
-}
+// 파일을 받아 큐에 넣는 것까지다. 더 기다리지 않으므로 긴 상한이 필요 없다.
+export const maxDuration = 60;
 
 /**
  * multipart 경계·필드 이름이 붙으므로 본문은 파일보다 조금 크다. 여유분.
@@ -161,30 +122,96 @@ export async function POST(request: Request): Promise<Response> {
   // (lib/attachmentJobs.ts). 일이 끝나면 수집기가 payload 를 비운다.
   const payload = Buffer.from(await file.arrayBuffer()).toString("base64");
 
-  let outcome: WaitOutcome;
+  const db = await openDb();
+  let jobId: number;
   try {
-    outcome = await uploadViaWorker(requestId, fileName, payload, actor);
+    jobId = await enqueueUpload(db, { requestId, fileName, payload, actor, teamId });
   } catch (error) {
     // 여기 닿는 것은 DB 자체가 안 열리는 등 진짜 예상 못한 오류뿐이다.
     // 파일 내용은 절대 담지 않는다 — 메시지만 흘린다.
     const message = error instanceof Error ? error.message : String(error);
     await recordWriteAudit({ actor, teamId, action: "upload", requestId, result: "failed:error" });
     return NextResponse.json({ ok: false, message }, { status: 500 });
-  }
-
-  if (outcome.state === "done") {
-    await recordWriteAudit({
-      actor, teamId, action: "upload", requestId, result: "ok", detail: fileName,
-    });
-    return NextResponse.json({ ok: true, message: `${fileName} 을 올렸습니다.` });
+  } finally {
+    await db.close();
   }
 
   await recordWriteAudit({
-    actor, teamId, action: "upload", requestId,
-    result: outcome.state === "slow" ? "failed:timeout" : "failed:upload",
-    detail: fileName,
+    actor, teamId, action: "upload", requestId, result: "queued", detail: fileName,
   });
-  // 아직 처리 중인 것(slow)은 200 으로 돌려주지 않는다 — 버튼이 성공으로 읽으면
-  // 사람은 올라간 줄 안다. 다만 문구로 "다시 올리지 말라" 고 구분해 말한다.
-  return NextResponse.json({ ok: false, message: outcome.message }, { status: 409 });
+
+  // 202: 받았고 아직 안 끝났다. 끝났는지는 아래 GET 으로 묻는다.
+  return NextResponse.json(
+    { ok: true, jobId, state: "pending", message: `${fileName} 을 줄에 세웠습니다.` },
+    { status: 202 },
+  );
+}
+
+/**
+ * 올리기 한 건이 끝났는지 알려준다.
+ *
+ * ## 누가 물을 수 있나
+ *
+ * `job_id` 는 팀·케이스를 통틀어 **1씩 늘어나는 정수**다. 그래서 번호만으로는
+ * 울타리가 되지 않는다 — 작은 수를 차례로 넣어 보면 남의 올리기 상태와 파일 이름,
+ * 실패 사유를 훑을 수 있다. 세 겹으로 막는다.
+ *
+ *   1. 세션이 있어야 한다(ensureTeamSession). 쓰기 경로와 같은 문턱이다.
+ *   2. `requestId` 가 그 일의 케이스와 같아야 한다.
+ *   3. 그 일의 팀이 묻는 팀과 같아야 한다.
+ *
+ * 옛 행은 team_id 가 빈 문자열이다(이 칸이 생기기 전에 들어간 것). 그때는 팀을
+ * 따지지 않는다 — 막으면 그 일들의 상태를 아무도 못 묻게 되고, 그건 중복 업로드를
+ * 부른다. 이 글을 쓰는 시점에 팀은 하나다.
+ */
+export async function GET(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const jobId = Number(url.searchParams.get("job"));
+  const requestId = Number(url.searchParams.get("requestId"));
+  if (!Number.isInteger(jobId) || jobId <= 0 || !Number.isInteger(requestId) || requestId <= 0) {
+    return NextResponse.json({ ok: false, message: "잘못된 요청입니다." }, { status: 400 });
+  }
+
+  const actorTeam = resolveActorTeam({ team: url.searchParams.get("team") ?? undefined });
+  if (!actorTeam.ok) {
+    return NextResponse.json({ ok: false, message: actorTeam.message }, { status: 400 });
+  }
+  const { teamId } = actorTeam;
+  // 조회라 감사 로그는 남기지 않는다(audit 인자를 주지 않는다).
+  const noSession = await ensureTeamSession(teamId);
+  if (noSession !== null) return noSession;
+
+  const db = await openDb();
+  try {
+    const status = await getJobStatus(db, jobId);
+    if (
+      status === null
+      || status.request_id !== requestId
+      || status.kind !== "upload"
+      || (status.team_id !== "" && status.team_id !== teamId)
+    ) {
+      return NextResponse.json(
+        { ok: false, message: "첨부 작업을 찾을 수 없습니다." },
+        { status: 404 },
+      );
+    }
+    if (status.state === "failed") {
+      return NextResponse.json({
+        ok: true, state: "failed",
+        message: status.error || "첨부를 올리지 못했습니다.",
+      });
+    }
+    if (status.state === "done") {
+      return NextResponse.json({
+        ok: true, state: "done", message: `${status.file_name} 을 올렸습니다.`,
+      });
+    }
+    return NextResponse.json({ ok: true, state: status.state });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[api/attachments/upload] 상태 확인 실패", error);
+    return NextResponse.json({ ok: false, message }, { status: 500 });
+  } finally {
+    await db.close();
+  }
 }

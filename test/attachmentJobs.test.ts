@@ -404,3 +404,33 @@ test("치워진 뒤에는 사본이 없다", async () => {
   assert.equal(await findKeptUpload(db, { requestId: CASE, fileName: "a.txt" }), null);
   await db.close();
 });
+
+/*
+ * 팀이 일과 함께 움직이는지.
+ *
+ * 올리기의 성공/실패 감사 로그는 **수집기가** 남긴다(웹 라우트는 큐에 넣고 바로
+ * 응답한다). 그 한 줄에 팀이 필요한데, 일에 실려 오지 않으면 수집기는 기본 팀으로
+ * 적어 큐에 넣은 쪽이 남긴 'queued' 줄과 팀이 어긋난다. 상태 조회의 팀 확인도
+ * 이 칸에 걸려 있다.
+ */
+test("넣은 팀이 집어 올 때와 상태 조회에 그대로 실려 온다", async () => {
+  const db = await freshDb();
+  const id = await enqueueUpload(db, {
+    requestId: CASE, fileName: "a.txt", payload: "aGk=", teamId: "other",
+  });
+
+  assert.equal((await getJobStatus(db, id))?.team_id, "other");
+  assert.equal((await claimNextJob(db))?.team_id, "other");
+  await db.close();
+});
+
+// 팀을 주지 않던 호출(기존 화면)도 그대로 돌아야 한다. 빈 값은 "기본 팀" 으로 읽힌다.
+test("팀을 주지 않으면 빈 값으로 남는다", async () => {
+  const db = await freshDb();
+  const upload = await enqueueUpload(db, { requestId: CASE, fileName: "a.txt", payload: "aGk=" });
+  const download = await enqueueDownload(db, { requestId: CASE, documentId: DOC, fileName: "b.txt" });
+
+  assert.equal((await getJobStatus(db, upload))?.team_id, "");
+  assert.equal((await getJobStatus(db, download))?.team_id, "");
+  await db.close();
+});

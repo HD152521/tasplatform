@@ -45,16 +45,18 @@ export interface AttachmentJob {
   state: JobState;
   error: string;
   actor: string;
+  /** 어느 팀 일인가. 옛 행은 빈 문자열이고, 그때는 기본 팀으로 본다. */
+  team_id: string;
   created_at: string;
   updated_at: string;
 }
 
 const COLUMNS =
-  "job_id, kind, request_id, document_id, file_name, payload, state, error, actor, created_at, updated_at";
+  "job_id, kind, request_id, document_id, file_name, payload, state, error, actor, team_id, created_at, updated_at";
 
 /** payload 를 뺀 조회. 목록·상태 확인에 쓴다 — 큰 문자열을 괜히 끌고 오지 않는다. */
 const LIGHT_COLUMNS =
-  "job_id, kind, request_id, document_id, file_name, '' AS payload, state, error, actor, created_at, updated_at";
+  "job_id, kind, request_id, document_id, file_name, '' AS payload, state, error, actor, team_id, created_at, updated_at";
 
 export interface EnqueueUpload {
   readonly requestId: number;
@@ -62,6 +64,11 @@ export interface EnqueueUpload {
   /** 올릴 파일. base64. */
   readonly payload: string;
   readonly actor?: string;
+  /**
+   * 어느 팀 일인가. 끝낸 뒤 감사 로그를 수집기가 남기므로 여기 실어 보낸다 —
+   * 비워 두면 수집기는 기본 팀으로 적고, 'queued' 줄과 팀이 어긋난다.
+   */
+  readonly teamId?: string;
 }
 
 /** 올릴 파일을 큐에 넣는다. */
@@ -69,9 +76,9 @@ export async function enqueueUpload(db: Db, job: EnqueueUpload): Promise<number>
   const now = isoNow();
   return await db.insertReturning(
     `INSERT INTO attachment_jobs
-       (kind, request_id, document_id, file_name, payload, state, error, actor, created_at, updated_at)
-     VALUES ('upload', ?, 0, ?, ?, 'pending', '', ?, ?, ?)`,
-    [job.requestId, job.fileName, job.payload, job.actor ?? "", now, now],
+       (kind, request_id, document_id, file_name, payload, state, error, actor, team_id, created_at, updated_at)
+     VALUES ('upload', ?, 0, ?, ?, 'pending', '', ?, ?, ?, ?)`,
+    [job.requestId, job.fileName, job.payload, job.actor ?? "", job.teamId ?? "", now, now],
     "job_id",
   );
 }
@@ -81,6 +88,8 @@ export interface EnqueueDownload {
   readonly documentId: number;
   readonly fileName: string;
   readonly actor?: string;
+  /** 어느 팀 일인가. 받아오기는 감사 로그를 남기지 않지만 같은 칸을 채워 둔다. */
+  readonly teamId?: string;
 }
 
 /**
@@ -101,9 +110,9 @@ export async function enqueueDownload(db: Db, job: EnqueueDownload): Promise<num
   const now = isoNow();
   return await db.insertReturning(
     `INSERT INTO attachment_jobs
-       (kind, request_id, document_id, file_name, payload, state, error, actor, created_at, updated_at)
-     VALUES ('download', ?, ?, ?, '', 'pending', '', ?, ?, ?)`,
-    [job.requestId, job.documentId, job.fileName, job.actor ?? "", now, now],
+       (kind, request_id, document_id, file_name, payload, state, error, actor, team_id, created_at, updated_at)
+     VALUES ('download', ?, ?, ?, '', 'pending', '', ?, ?, ?, ?)`,
+    [job.requestId, job.documentId, job.fileName, job.actor ?? "", job.teamId ?? "", now, now],
     "job_id",
   );
 }
