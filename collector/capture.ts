@@ -29,13 +29,18 @@ const MAX_WAIT_MS = 60 * 60 * 1000;
 /**
  * 화면을 그리는 정적 자원과 텔레메트리는 걸러낸다.
  *
- * `flex_mapping_events` 는 **거르지 않는다.** 이름이 텔레메트리처럼 보이지만 포털의
- * flex 필드(작성 폼의 Issue Type 이 그것이다 — lib/createCase.ts 의
- * requestFlexMapValueList)와 관련돼 있어, 선택지 목록이 그 경로로 올 수 있다.
- * 정작 찾는 요청을 걸러 버리면 캡처를 다시 해야 한다. 잡음은 싸다.
+ * **`ext_data_push` 와 `flex_mapping_events` 는 거르지 않는다.** 이름이 텔레메트리처럼
+ * 보여 제외돼 있었는데, 포털의 조회형 필드가 그 경로를 쓴다. 실측으로 확인했다 —
+ * `request_config` 의 `Prod Release` 필드 정의가
+ *
+ *     typeName "Look Up" / dataApiName "itemReleaseList"
+ *     apiUrl   "wlkn-reports/ext_data_push/pull"  (POST)
+ *
+ * 다. 즉 Release 선택지를 받아오는 요청이 바로 `ext_data_push` 로 나간다. 한 번은
+ * 이걸 걸러 둔 채로 캡처해서 헛수고를 했다. 잡음은 싸고, 다시 캡처하는 것은 비싸다.
  */
 const SKIP =
-  /[.](js|css|woff2?|ttf|png|jpe?g|gif|svg|ico|map)([?]|$)|google-analytics|googletagmanager|doubleclick|fonts[.]g|\/assets\/|\/i18n\/|ext_data_push/i;
+  /[.](js|css|woff2?|ttf|png|jpe?g|gif|svg|ico|map)([?]|$)|google-analytics|googletagmanager|doubleclick|fonts[.]g|\/assets\/|\/i18n\//i;
 
 /** 볼 만한 호스트. 첨부 파일은 포털이 아니라 supportftp / BOX 로 오간다. */
 const HOSTS = /wolkenservicedesk\.com|supportftp\.broadcom\.com|box\.com|boxcloud\.com/i;
@@ -217,11 +222,15 @@ async function main(): Promise<void> {
   console.log("이미 로그인된 세션으로 열었습니다. 재로그인은 필요 없습니다.");
   console.log("");
   console.log("  [Release 선택지]  SR 작성(Create Case) 화면을 엽니다.");
-  console.log("                    Product 를 고르고 -> Component 를 고르고");
-  console.log("                    -> Release(Prod Release) 드롭다운을 **펼칩니다.**");
-  console.log("                    펼치는 순간 선택지를 받아오는 요청이 아래에 찍힙니다.");
-  console.log("                    제품을 바꿔 가며 두세 번 펼쳐 주시면 더 좋습니다");
-  console.log("                    (제품마다 목록이 다른지 확인할 수 있습니다).");
+  console.log("                    Product 를 고르고 -> Component 를 고릅니다.");
+  console.log("");
+  console.log("                    -> Prod Release 칸을 클릭하고 **글자를 입력하세요.**");
+  console.log("                       펼치기만 하면 요청이 안 갑니다 — 검색형 필드라");
+  console.log("                       한 글자 이상 쳐야 목록을 받아옵니다(minChar 1).");
+  console.log("                       '1' 이나 'T' 처럼 한 글자만 쳐도 됩니다.");
+  console.log("");
+  console.log("                    제품을 바꿔 가며 두세 번 해 주시면 더 좋습니다");
+  console.log("                    (목록이 제품의 categoryId 에 딸려 있습니다).");
   console.log("");
   console.log("  ** 등록(Submit) 은 누르지 마세요. ** 펼쳐서 보기만 하면 됩니다.");
   console.log("");

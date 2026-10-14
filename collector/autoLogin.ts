@@ -54,6 +54,16 @@ export class CredentialsMissingError extends Error {
  */
 async function looksLikeOtpScreen(page: Page): Promise<boolean> {
   if (page.url().includes("factorselection")) return true;
+  // 이동 중에는 실행 컨텍스트가 사라져 evaluate 가 던진다
+  // ("Execution context was destroyed, most likely because of a navigation").
+  //
+  // 비밀번호를 넣은 직후 SSO 리다이렉트가 몇 번 도는데, 그 사이에 이걸 부르면
+  // **로그인 전체가 그 예외로 끝났다.** 판별용 코드가 로그인을 깨뜨리는 셈이다 —
+  // 실제로 `npm run refresh` 가 그렇게 실패했다.
+  //
+  // 못 보면 false 로 둔다. 부르는 쪽이 1.5초 뒤 다시 묻고(아래 폴링 루프), 진짜 OTP
+  // 화면이면 URL(factorselection)이나 다음 회차에서 잡힌다. 같은 위험을 아는
+  // lib/loginFlow.ts 의 다른 자리도 이미 .catch 로 막아 두었다.
   return page.evaluate(() => {
     const text = document.body?.innerText?.toLowerCase() ?? "";
     const mentionsOtp =
@@ -67,7 +77,7 @@ async function looksLikeOtpScreen(page: Page): Promise<boolean> {
       ),
     );
     return mentionsOtp || hasCodeInput;
-  });
+  }).catch(() => false);
 }
 
 /**

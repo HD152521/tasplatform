@@ -88,7 +88,10 @@ async function hasOtpInput(page: Page): Promise<boolean> {
       (el) => Boolean(el.offsetParent) && ["text", "tel", "number"].includes(el.type),
     );
     return mentionsCode && typed.length === 1;
-  });
+    // 이동 중에는 실행 컨텍스트가 사라져 evaluate 가 던진다. 판별용 코드가 흐름을
+    // 깨뜨리면 안 된다 — collector/autoLogin.ts 의 같은 자리에서 실제로 로그인이
+    // 통째로 실패했다. 못 보면 false 로 두고 부르는 쪽이 다시 묻는다.
+  }).catch(() => false);
 }
 
 /** 보이는 텍스트 입력이 하나뿐일 때의 대체 입력칸. */
