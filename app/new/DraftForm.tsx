@@ -15,6 +15,7 @@ import { SEVERITIES, priorityIdOf } from "../../lib/severity.ts";
 import { COLOR, Card, RADIUS, controlStyle } from "../ui.tsx";
 import { Select } from "../Select.tsx";
 import { Composer, type ComposeMode } from "./Composer.tsx";
+import { ReleasePicker, type PickedRelease } from "./ReleasePicker.tsx";
 import { SubmitBar } from "./SubmitBar.tsx";
 
 /**
@@ -102,6 +103,12 @@ export function DraftForm({
     componentsOf.find((c) => c.componentId === componentId) ?? componentsOf[0];
   const productName = products.find((p) => p.id === productId)?.name ?? "";
   const componentName = activeComponent?.componentName ?? "";
+  /**
+   * 고른 Prod Release. 글자가 아니라 **번호**를 들고 있어야 한다 — 포털이 받는 것이
+   * 번호다(app/new/ReleasePicker.tsx 머리말). 고르지 않으면 null 이고, 그때는 버전을
+   * 보내지 않는다.
+   */
+  const [release, setRelease] = useState<PickedRelease | null>(null);
   const [stage, setStage] = useState<"write" | "confirm">("write");
   const [busy, setBusy] = useState(false);
   /** 돌고 있는 작업. 없으면 null. */
@@ -127,7 +134,9 @@ export function DraftForm({
           content: d.content,
           mode,
           productName, componentName,
-          release: d.release, severity: d.severity,
+          // 고른 릴리스 이름을 넘긴다(AI 가 본문에 환경을 적는 데 쓴다).
+          // 안 골랐으면 빈 값 — 없는 버전을 넘겨 본문에 적히게 하지 않는다.
+          release: release?.releaseDesc ?? "", severity: d.severity,
           // 이미 제목을 적어 뒀으면 그대로 둔다.
           subject: d.subject,
         }),
@@ -162,12 +171,14 @@ export function DraftForm({
 
   const missing = useMemo(() => {
     const need: Array<[string, string]> = [
-      ["Prod Release", d.release],
+      // 적은 글자가 아니라 **고른 번호**를 본다. 글자만 보면, 적었지만 고르지 않아
+      // 전송되지 않는 상태를 "다 채웠다" 로 보여 준다 — 그게 이 버그의 모습이었다.
+      ["Prod Release", release === null ? "" : "ok"],
       ["Product", productName], ["Component", componentName],
       ["Subject", d.subject], ["Content", d.content],
     ];
     return need.filter(([, v]) => v.trim() === "").map(([k]) => k);
-  }, [d, productName, componentName]);
+  }, [d, productName, componentName, release]);
 
   async function submit(): Promise<void> {
     setBusy(true);
@@ -182,6 +193,9 @@ export function DraftForm({
           priorityId: priorityIdOf(d.severity),
           productId,
           componentId: activeComponent?.componentId,
+          // 분류(categoryId)는 보내지 않는다. 서버가 제품에서 되찾는다 —
+          // 화면이 둘을 따로 보내면 한쪽만 고쳐졌을 때 짝이 어긋난다(lib/releasePair.ts).
+          releaseId: release?.releaseId,
         }),
       });
       const data = (await response.json()) as {
@@ -292,8 +306,8 @@ export function DraftForm({
 
         {/* 제품·컴포넌트는 이름이 길어 두 칸, 나머지 셋은 짧아 한 줄에 몰아 둔다. */}
         <Row>
-          <Field label="Prod Release" required hint="예: TPCF 10.4, Ops Manager 3.0">
-            <input value={d.release} onChange={set("release")} placeholder="TPCF 10.4" style={inputStyle} />
+          <Field label="Prod Release" required hint="제품의 릴리스를 포털에서 찾아 고릅니다">
+            <ReleasePicker productId={productId} value={release} onChange={setRelease} />
           </Field>
           <Field label="Severity" required hint="P3 이 일반 문의입니다">
             <Select

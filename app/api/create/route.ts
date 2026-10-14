@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { PRIORITIES, createCase } from "../../../lib/createCase.ts";
+import { resolveRelease } from "../../../lib/releasePair.ts";
 import { fetchClient } from "../../../collector/httpClient.ts";
 import { sessionFileForTeam } from "../../../lib/config.ts";
 import { refreshOpenCases } from "../../../lib/refreshCase.ts";
@@ -15,7 +16,8 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   let body: {
     subject?: unknown; content?: unknown; priorityId?: unknown;
-    productId?: unknown; componentId?: unknown; actor?: unknown; team?: unknown;
+    productId?: unknown; componentId?: unknown; releaseId?: unknown;
+    actor?: unknown; team?: unknown;
   };
   try {
     body = await request.json();
@@ -36,6 +38,26 @@ export async function POST(request: Request) {
 
   // actor/team 없이 호출하는 기존 뷰어 화면과 하위호환: team 미제공시 기본 팀,
   // actor 미제공시 빈 문자열로 처리한다. team 형식이 잘못됐을 때만 여기서 걸린다.
+  /*
+   * 릴리스를 못 고르면 **등록하지 않는다.**
+   *
+   * 분류(categoryId)는 화면이 보내는 값을 믿지 않고 제품에서 되찾는다. 릴리스 번호는
+   * 버전 문자열에 묶인 전역 값이라 어느 제품의 릴리스인지는 분류가 정하기 때문이다
+   * (lib/releasePair.ts).
+   *
+   * 못 골랐을 때 "둘 다 안 보내고 템플릿 값으로" 두면 안 된다. 제품(`subCategoryId`)은
+   * 무조건 덮어써지므로, 그러면 제품·분류·릴리스가 서로 다른 제품을 가리키는 요청이
+   * 나간다. 거절은 사람이 한 번 더 고르면 되지만, 틀린 버전으로 올라간 SR 은 답변이
+   * 오고 나서야 드러난다.
+   */
+  const release = resolveRelease(body.productId, body.releaseId);
+  if (!release.ok) {
+    return NextResponse.json(
+      { ok: false, code: release.code, message: release.message },
+      { status: 400 },
+    );
+  }
+
   const actorTeam = resolveActorTeam(body);
   if (!actorTeam.ok) {
     return NextResponse.json({ ok: false, message: actorTeam.message }, { status: 400 });
@@ -57,6 +79,8 @@ export async function POST(request: Request) {
       subject, content, priorityId,
       productId: Number.isFinite(productId) ? productId : undefined,
       componentId: Number.isFinite(componentId) ? componentId : undefined,
+      categoryId: release.categoryId,
+      releaseId: release.releaseId,
     };
     let result = await createCase(client, draft);
 

@@ -9,6 +9,7 @@ import {
 } from "../../lib/severity.ts";
 import { COLOR, Notice, RADIUS, controlStyle } from "../ui.tsx";
 import { Select } from "../Select.tsx";
+import { ReleasePicker, type PickedRelease } from "./ReleasePicker.tsx";
 
 /**
  * 간단히 올리기.
@@ -42,6 +43,9 @@ interface Ready {
   readonly productName: string;
   readonly componentId: number;
   readonly componentName: string;
+  /** 글에서 찾은 릴리스. 못 찾으면 0 / 빈 문자열이고, 버전 없이 등록된다. */
+  readonly releaseId: number;
+  readonly releaseDesc: string;
   readonly reason: string;
   readonly fallback: boolean;
 }
@@ -76,6 +80,9 @@ function readReady(body: Record<string, unknown>): Ready | null {
     productName: text2(body.productName),
     componentId,
     componentName: text2(body.componentName),
+    // 버전은 **없어도 올릴 수 있다.** 그래서 제품·컴포넌트처럼 거부 조건에 넣지 않는다.
+    releaseId: posInt(body.releaseId),
+    releaseDesc: text2(body.releaseDesc),
     reason: text2(body.reason).trim(),
     // 모르면 **폴백으로 본다.** 경고를 띄우고 마는 쪽이, 조용히 "AI 가 골랐다" 고
     // 보여 주는 쪽보다 낫다.
@@ -88,6 +95,15 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState("");
   const [severity, setSeverity] = useState<string>(DEFAULT_SEVERITY);
   const [ready, setReady] = useState<Ready | null>(null);
+  /**
+   * 올릴 때 쓸 릴리스.
+   *
+   * 서버가 글에서 집어 주면 그걸로 시작하고, 못 집었으면 null 이다. null 이면
+   * **올리기를 막고** 이 자리에서 고르게 한다. 전에는 "버전 없이 등록됩니다" 라고
+   * 적어 두고 실제로는 템플릿 값(다른 제품의 10.4.2)으로 올라갔다 — 화면이 거짓말을
+   * 한 셈이다(lib/releasePair.ts 머리말).
+   */
+  const [release, setRelease] = useState<PickedRelease | null>(null);
   const [busy, setBusy] = useState<"compose" | "create" | null>(null);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<{ id: string; num: number } | null>(null);
@@ -129,6 +145,10 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
         return;
       }
       setReady(parsed);
+      // 서버가 글에서 집어 준 버전. 못 집었으면 null 이고, 그러면 아래에서 고르게 한다.
+      setRelease(parsed.releaseId > 0
+        ? { releaseId: parsed.releaseId, releaseDesc: parsed.releaseDesc }
+        : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "정리하지 못했습니다.");
     } finally {
@@ -151,6 +171,9 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
           priorityId: priorityIdOf(severity),
           productId: ready.productId,
           componentId: ready.componentId,
+          // 고른 값만 보낸다. 없으면 서버가 400 으로 거절한다 — 아래 버튼이 이미
+          // 막고 있지만, 막는 곳이 한 군데면 그 한 군데가 깨질 때 조용히 뚫린다.
+          releaseId: release?.releaseId ?? 0,
         }),
       });
       const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
@@ -259,6 +282,32 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
 
             <Row label="Product">{ready.productName}</Row>
             <Row label="Component">{ready.componentName}</Row>
+            {/*
+              버전을 집었으면 보여 주고, 못 집었으면 **여기서 고르게 한다.**
+
+              전에는 "버전 없이 등록됩니다" 라고 적어 두고 실제로는 템플릿 값(다른
+              제품의 10.4.2)으로 올라갔다. 화면이 거짓말을 한 셈이고, 그 사실은 답변이
+              오고 나서야 드러났다. 지금은 고르지 않으면 올리기가 잠긴다.
+            */}
+            {release !== null && ready.releaseId > 0 ? (
+              <Row label="Prod Release">{`${release.releaseDesc} (글에서 찾음)`}</Row>
+            ) : (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12, color: COLOR.muted, marginBottom: 4 }}>
+                  Prod Release
+                </div>
+                <ReleasePicker
+                  productId={ready.productId}
+                  value={release}
+                  onChange={setRelease}
+                />
+                {release === null && (
+                  <div style={{ fontSize: 11.5, color: COLOR.warn, marginTop: 2 }}>
+                    글에서 버전을 찾지 못했습니다. 골라야 올릴 수 있습니다.
+                  </div>
+                )}
+              </div>
+            )}
             {ready.reason !== "" && <Row label="고른 이유">{ready.reason}</Row>}
             <Row label="심각도">{severity}</Row>
             <Row label="제목">{ready.subject}</Row>
@@ -274,7 +323,7 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
               <button
                 type="button"
-                onClick={() => { setReady(null); setError(""); }}
+                onClick={() => { setReady(null); setRelease(null); setError(""); }}
                 style={ghost}
                 disabled={busy !== null}
               >
@@ -287,8 +336,10 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
               <button
                 type="button"
                 onClick={() => void submit()}
-                disabled={busy !== null}
-                style={primary}
+                // 버전을 고르지 않으면 올릴 수 없다. 서버도 거절하지만, 거절을
+                // 보고 나서야 알게 하면 사람은 왜 막혔는지 모른다.
+                disabled={busy !== null || release === null}
+                style={release === null ? { ...primary, opacity: 0.45, cursor: "default" } : primary}
               >
                 {busy === "create" ? "올리는 중…" : "올리기"}
               </button>
