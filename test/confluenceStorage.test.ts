@@ -130,3 +130,82 @@ test("문서 섹션 제목이 전부 헤딩으로 변환된다", () => {
       `"${heading}" 의 글자가 보존되지 않았다: ${out.slice(0, 80)}`);
   }
 });
+
+/*
+ * ## 코드 블록
+ *
+ * 요약은 **진단 명령과 설정 구문을 코드 블록으로 그대로 옮기게** 되어 있다
+ * (lib/summaryPrompt.ts 의 cleanSectionText 가 코드 블록 안을 일부러 건드리지 않는다).
+ * 그런데 변환기에 그 규칙이 없어서 게시된 문서에 ``` 가 **글자 그대로** 찍혔다 —
+ * 헤딩과 똑같은 구멍이다. 명령을 복사해 쓰려는 사람이 가장 많이 보는 자리다.
+ */
+test("코드 블록은 매크로가 되고 ``` 가 남지 않는다", () => {
+  const out = toConfluenceStorage("```bash\nbosh -d cf ssh log-cache/0\n```");
+  assert.match(out, /<ac:structured-macro ac:name="code" ac:schema-version="1">/);
+  assert.match(out, /bosh -d cf ssh log-cache\/0/);
+  assert.doesNotMatch(out, /```/, "울타리가 글자로 남았다");
+});
+
+test("여는 줄에 붙은 말이 언어가 된다", () => {
+  assert.match(
+    toConfluenceStorage("```bash\nls\n```"),
+    /<ac:parameter ac:name="language">bash<\/ac:parameter>/,
+  );
+  // 말이 없거나 모양이 아니면 아예 붙이지 않는다. 틀린 언어보다 없는 편이 낫다.
+  for (const fence of ["```", "```아무 말 두 개"]) {
+    assert.doesNotMatch(
+      toConfluenceStorage(`${fence}\nls\n\`\`\``),
+      /ac:name="language"/,
+      `${fence} 에서 언어가 붙었다`,
+    );
+  }
+});
+
+/*
+ * 코드 블록 안의 `#`·`-`·`|` 는 주석이나 옵션일 뿐이다. 헤딩·불릿·표로 바꾸면
+ * 명령이 제목으로 바뀌어 **복사해서 쓸 수 없는 글**이 된다.
+ */
+test("코드 블록 안은 헤딩·불릿·표로 보지 않는다", () => {
+  const out = toConfluenceStorage("```sh\n# 주석\n- 옵션\n| a | b |\n```");
+  assert.doesNotMatch(out, /<h2>/);
+  assert.doesNotMatch(out, /<ul>/);
+  assert.doesNotMatch(out, /<table>/);
+  assert.match(out, /# 주석/);
+});
+
+/*
+ * CDATA 라서 이스케이프하지 않는다 — `<`·`&` 가 들어간 설정 구문이 원문대로 보여야
+ * 한다. 다만 CDATA 를 닫는 글자가 본문에 있으면 **문서가 그 자리에서 깨져 게시가
+ * 실패한다.** 그것만 쪼갠다.
+ */
+test("코드 안의 특수문자는 원문대로 두고, CDATA 를 닫는 글자만 쪼갠다", () => {
+  const out = toConfluenceStorage('```xml\n<a href="x">b & c</a>\n```');
+  assert.match(out, /<a href="x">b & c<\/a>/, "이스케이프되면 원문이 아니다");
+
+  const closing = toConfluenceStorage("```\na]]>b\n```");
+  assert.doesNotMatch(closing, /\[CDATA\[a\]\]>b/, "CDATA 가 중간에서 닫혔다");
+  assert.match(closing, /\]\]\]\]><!\[CDATA\[>/);
+});
+
+// 모델이 닫는 줄을 빠뜨리기도 한다. 여는 줄만 글자로 남기는 것보다 끝까지 코드가 낫다.
+test("닫는 줄이 없으면 글 끝까지 코드로 본다", () => {
+  const out = toConfluenceStorage("```bash\nls -al\n더 적은 줄");
+  assert.doesNotMatch(out, /```/);
+  assert.match(out, /ls -al\n더 적은 줄/);
+});
+
+/*
+ * 한 줄 안의 백틱도 같은 단축어다. 문단·불릿·표 어디에 있든 코드 글씨가 되어야 한다.
+ */
+test("한 줄 안의 백틱은 코드 글씨가 된다", () => {
+  assert.match(toConfluenceStorage("`bosh` 로 붙는다"), /<p><code>bosh<\/code> 로 붙는다<\/p>/);
+  assert.match(toConfluenceStorage("- `-d` 는 값을 받는다"), /<li><code>-d<\/code> 는 값을 받는다<\/li>/);
+  assert.match(toConfluenceStorage("| `a` | b |"), /<td><code>a<\/code><\/td>/);
+});
+
+// 짝이 없는 백틱 하나는 그대로 둔다. 멋대로 태그를 열면 문서가 깨진다.
+test("짝 없는 백틱은 건드리지 않는다", () => {
+  const out = toConfluenceStorage("백틱 하나 ` 만 있는 줄");
+  assert.doesNotMatch(out, /<code>/);
+  assert.match(out, /백틱 하나 ` 만 있는 줄/);
+});
