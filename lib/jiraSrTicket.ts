@@ -162,3 +162,21 @@ export function srTicketBody(input: SrTicketInput): AdfDoc {
     input.caseUrl === "" ? null : adfParagraph("케이스: ", adfLink(input.caseLabel, input.caseUrl)),
   ]);
 }
+
+/**
+ * SR 이 끝난 뒤 티켓에 남기는 댓글 본문.
+ *
+ * 문서 전체를 베끼지 않는다 — 결과 두세 줄과 **링크**다. 링크가 있으니 나머지는 거기서
+ * 본다(lib/srResultExcerpt.ts).
+ */
+export function srCommentBody(input: {
+  caseLabel: string;
+  result: string;
+  pageUrl: string;
+}) {
+  return adfDoc([
+    adfParagraph(`SR ${input.caseLabel} 가 종료되어 정리 문서를 올렸습니다.`),
+    ...(input.result === "" ? [] : adfLines(input.result)),
+    adfParagraph("문서: ", adfLink("Confluence 에서 보기", input.pageUrl)),
+  ]);
+}

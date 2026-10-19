@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import {
   MAX_PER_RUN,
+  bumpCommentTries,
   bumpPublishTries,
   claimRun,
+  countCommentGivenUp,
   countGivenUp,
+  findCommentable,
   findPublishable,
   readSince,
   refundPublishTries,
@@ -12,6 +15,7 @@ import {
 import { openDb } from "../../../lib/db.ts";
 import { publishSummaryToConfluence } from "../../../lib/confluencePublish.ts";
 import { getSummary } from "../../../lib/summary.ts";
+import { commentPublished } from "../../../lib/srJiraComment.ts";
 import { AtlassianError, hasAtlassian } from "../../../lib/atlassian.ts";
 
 export const runtime = "nodejs";
@@ -51,6 +55,12 @@ const BUDGET_MS = 150_000;
  * **자물쇠를 먼저 잡고, 그다음에 대상을 고른다.** 순서가 반대면 두 호출이 같은 목록을
  * 들고 차례로 돌아, 이미 올라간 문서를 또 갱신하고 시도 횟수를 두 번 먹는다. "올렸다"
  * 표시는 **고를 때만** 보는 값이라 자물쇠 역할을 하지 못한다.
+ *
+ * ## 게시 뒤에는 Jira 티켓에 댓글을 남긴다
+ *
+ * SR 등록 때 끊은 티켓에 "이렇게 끝났고 문서는 여기 있다" 를 남긴다. 그 댓글이 실패해도
+ * **게시 성공은 뒤집지 않는다** — 문서는 이미 올라갔고, 뒤집으면 다음 회차가 같은 문서를
+ * 또 올린다. AI 를 다시 부르지도 않는다(요약에서 결과 부분만 뽑아 쓴다).
  *
  * ## 요약은 보통 이미 만들어져 있다
  *
@@ -118,6 +128,10 @@ async function handle(request: Request, dryRun: boolean): Promise<Response> {
         // 상한에 닿아 **포기한** 건수. 이게 보이지 않으면 자동 게시가 조용히 멈춘 것을
         // 아무도 모른다.
         givenUp: await countGivenUp(db, sinceMs),
+        // 게시는 됐는데 **댓글만** 못 단 건. 이게 보이지 않으면 결과가 영구히 누락된
+        // 것을 아무도 모른다.
+        commentPending: (await findCommentable(db, sinceMs, 1000)).length,
+        commentGivenUp: await countCommentGivenUp(db, sinceMs),
         cases: targets.map((t) => ({ caseLabel: t.caseLabel, issueKey: t.issueKey, tries: t.tries })),
       });
     }
@@ -135,13 +149,16 @@ async function handle(request: Request, dryRun: boolean): Promise<Response> {
 
     const done: string[] = [];
     const failed: Array<{ caseLabel: string; message: string }> = [];
+    /** 티켓에 결과를 남긴 건. 게시와 **따로** 센다 — 둘 중 하나만 실패할 수 있다. */
+    const commented: string[] = [];
+    const commentFailed: Array<{ caseLabel: string; message: string }> = [];
     let stoppedBy: "budget" | "environment" | null = null;
     let left = 0;
 
     try {
+      const deadline = Date.now() + BUDGET_MS;
       const targets = await findPublishable(db, sinceMs);
       left = targets.length;
-      const deadline = Date.now() + BUDGET_MS;
 
       for (const target of targets) {
         if (Date.now() > deadline) {
@@ -162,6 +179,23 @@ async function handle(request: Request, dryRun: boolean): Promise<Response> {
           const result = await publishSummaryToConfluence(target.requestId);
           done.push(`${target.caseLabel} → ${result.url}`);
           console.log(`[autopublish] 올림 ${target.caseLabel} ${result.created ? "(새 문서)" : "(갱신)"}`);
+
+          /*
+           * 티켓에 결과를 남긴다. **게시 성공을 뒤집지 않는다** — 던지지 않는 함수이고,
+           * 실패하면 값으로 돌아온다. 여기서 던지게 두면 이미 올라간 문서가 "실패" 로
+           * 기록되고 다음 회차가 또 올린다.
+           */
+          const comment = await commentPublished(db, {
+            requestId: target.requestId,
+            caseLabel: target.caseLabel,
+            summary: summary.content,
+            pageUrl: result.url,
+          });
+          if (comment.state === "failed") {
+            commentFailed.push({ caseLabel: target.caseLabel, message: comment.message });
+          } else if (comment.state === "ok") {
+            commented.push(`${target.caseLabel} → ${comment.issueKey}`);
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           failed.push({ caseLabel: target.caseLabel, message });
@@ -177,6 +211,39 @@ async function handle(request: Request, dryRun: boolean): Promise<Response> {
           }
         }
       }
+      /*
+       * ## 밀린 댓글을 따라잡는다
+       *
+       * 게시가 성공하면 그 SR 은 게시 대상 조회에서 빠진다. 그래서 그때 댓글이 실패하면
+       * **영구히 누락됐다** — 다시 집는 조회가 없었다. 알림도 그 순간 화면을 연 사람에게만
+       * 보이고 새로고침하면 사라졌다.
+       *
+       * 그래서 "게시됐고 아직 댓글 안 달린" 건을 따로 집어 다시 보낸다. 다시 보내기
+       * 전에는 Jira 에 이미 달렸는지 물어본다 — 보냈는지 모르는 실패가 있어서다
+       * (lib/srJiraComment.ts 머리말).
+       */
+      const behind = await findCommentable(db, sinceMs);
+      for (const target of behind) {
+        if (Date.now() > deadline) {
+          stoppedBy = stoppedBy ?? "budget";
+          break;
+        }
+        await bumpCommentTries(db, target.requestId);
+        const outcome = await commentPublished(db, {
+          requestId: target.requestId,
+          caseLabel: target.caseLabel,
+          summary: target.summary,
+          pageUrl: target.pageUrl,
+          retry: true,
+        });
+        if (outcome.state === "failed") {
+          // 화면에는 짧게만 흘린다. Jira 응답 본문이 400자까지 실려 오는데(AtlassianError),
+          // 그걸 그대로 보여 주면 읽히지도 않고 담을 이유도 없다. 원문은 서버 로그에 있다.
+          commentFailed.push({ caseLabel: target.caseLabel, message: outcome.message.slice(0, 160) });
+        } else if (outcome.state === "ok") {
+          commented.push(`${target.caseLabel} → ${outcome.issueKey}`);
+        }
+      }
     } finally {
       // **반드시 놓는다.** 안 놓으면 자물쇠가 상할 때까지 아무도 못 돈다.
       await releaseRun(db);
@@ -190,7 +257,9 @@ async function handle(request: Request, dryRun: boolean): Promise<Response> {
       pending: Math.max(0, left),
       stoppedBy,
       limit: MAX_PER_RUN,
-      details: { done, failed },
+      commented: commented.length,
+      commentFailed: commentFailed.length,
+      details: { done, failed, commented, commentFailed },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

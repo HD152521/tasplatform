@@ -7,8 +7,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_TRACK, guessTrack, hasHangul, koTitleFrom, readTrack, srTicketBody,
-  srTicketSummary, type SrTicketInput,
+  DEFAULT_TRACK, guessTrack, hasHangul, koTitleFrom, readTrack, srCommentBody,
+  srTicketBody, srTicketSummary, type SrTicketInput,
 } from "../lib/jiraSrTicket.ts";
 
 const BASE: SrTicketInput = {
@@ -182,4 +182,44 @@ test("자를 때 이모지를 쪼개지 않는다", () => {
   const flat = JSON.stringify(doc);
   assert.ok(!/\ud800-\udbff(?![\udc00-\udfff])/.test(flat));
   assert.ok(JSON.parse(flat) !== null, "JSON 으로 왕복된다");
+});
+
+/* ------------------------------------------------------------------ *
+ * SR 종료 뒤 티켓에 남기는 댓글
+ *
+ * 문서 전체를 베끼지 않는다 — 결과 두세 줄과 **링크**다. 링크가 있으니 나머지는 거기서
+ * 본다. 링크가 빠지면 댓글의 쓸모가 거의 없어진다.
+ * ------------------------------------------------------------------ */
+
+test("댓글에 케이스 번호·결과·링크가 들어간다", () => {
+  const doc = srCommentBody({
+    caseLabel: "20000001",
+    result: "메모리 쿼터를 2G 로 올려 해소했습니다.",
+    pageUrl: "https://conf.test/wiki/x",
+  });
+  const flat = JSON.stringify(doc);
+  assert.match(flat, /20000001/);
+  assert.match(flat, /메모리 쿼터/);
+  assert.match(flat, /conf\.test\/wiki\/x/);
+  assert.match(flat, /"type":"link"/, "링크 마크가 없다");
+});
+
+// 결과를 못 뽑아도 **링크는 남아야 한다.** 그게 댓글의 핵심이다.
+test("결과가 비어도 링크는 남는다", () => {
+  const doc = srCommentBody({ caseLabel: "20000001", result: "", pageUrl: "https://conf.test/x" });
+  const flat = JSON.stringify(doc);
+  assert.match(flat, /conf\.test\/x/);
+  // ADF 가 거부하는 빈 글자 노드가 섞이면 댓글 자체가 안 달린다.
+  const walk = (n: { text?: string; content?: unknown[] }): void => {
+    if (n.text !== undefined) assert.notEqual(n.text, "", "빈 글자 노드가 있다");
+    for (const c of (n.content ?? []) as Array<typeof n>) walk(c);
+  };
+  walk(doc as unknown as { content?: unknown[] });
+});
+
+test("여러 줄 결과는 줄바꿈을 지킨다", () => {
+  const doc = srCommentBody({
+    caseLabel: "20000001", result: "첫째 줄\n둘째 줄", pageUrl: "https://conf.test/x",
+  });
+  assert.match(JSON.stringify(doc), /hardBreak/);
 });
