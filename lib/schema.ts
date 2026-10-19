@@ -189,6 +189,31 @@ CREATE TABLE IF NOT EXISTS case_summaries (
   PRIMARY KEY (request_id, kind)
 );
 
+-- SR 하나 ↔ 그 SR 로 끊은 Jira 티켓.
+--
+-- 두 가지에 쓴다.
+--   1. SR 이 끝난 뒤 **어디에 댓글을 달지** 안다.
+--   2. 자동 게시의 울타리. 이 행이 있는 SR 만 자동 대상이다 — 행은 새 생성 버튼을
+--      거친 SR 에만 생기므로, 기능이 들어가기 **전**의 SR 은 구조적으로 빠진다.
+--      (과거 SR 수십 건이 종료되면서 한꺼번에 Confluence 로 쏟아지는 것을 막는다)
+--
+-- case_summaries 를 kind='jira_issue' 로 재활용할 수도 있지만, 이건 요약이 아니라
+-- 연결이고 이 값으로 외부에 글을 쓴다. 제 표를 둔다.
+--
+-- title_ko: 티켓 제목에 쓴 한글. 포털 SR 제목은 영문이라(한국어로 적으면 번역해서
+--   올린다) 그 영문으로는 목록에서 무슨 일인지 읽히지 않는다. 그래서 번역 전 한글을
+--   여기 남긴다 — 나중에 댓글이나 문서 제목에도 쓴다.
+-- commented_at: 결과 댓글을 단 시각. 두 번 달지 않으려고 둔다.
+CREATE TABLE IF NOT EXISTS sr_jira_links (
+  request_id   INTEGER PRIMARY KEY,
+  issue_key    TEXT    NOT NULL,
+  issue_url    TEXT    NOT NULL DEFAULT '',
+  track        TEXT    NOT NULL DEFAULT '',
+  title_ko     TEXT    NOT NULL DEFAULT '',
+  created_at   TEXT    NOT NULL,
+  commented_at TEXT    NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS case_reads (
   request_id          INTEGER PRIMARY KEY,
   last_read_thread_ms INTEGER NOT NULL DEFAULT 0,
