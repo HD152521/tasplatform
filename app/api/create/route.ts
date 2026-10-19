@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { PRIORITIES, createCase } from "../../../lib/createCase.ts";
 import { resolveRelease } from "../../../lib/releasePair.ts";
+import { readTrack } from "../../../lib/jiraSrTicket.ts";
+import { createTicketForSr, type TicketOutcome } from "../../../lib/srJiraTicketing.ts";
 import { fetchClient } from "../../../collector/httpClient.ts";
 import { sessionFileForTeam } from "../../../lib/config.ts";
 import { refreshOpenCases } from "../../../lib/refreshCase.ts";
@@ -18,6 +20,9 @@ export async function POST(request: Request) {
     subject?: unknown; content?: unknown; priorityId?: unknown;
     productId?: unknown; componentId?: unknown; releaseId?: unknown;
     actor?: unknown; team?: unknown;
+    // Jira 티켓용. 없으면 기본값으로 떨어진다(운영 / 한글 없음).
+    track?: unknown; titleKo?: unknown; bodyKo?: unknown;
+    productName?: unknown; componentName?: unknown;
   };
   try {
     body = await request.json();
@@ -106,13 +111,69 @@ export async function POST(request: Request) {
       await runSideEffect("create refresh", () => refreshOpenCases(client, teamId, result.requestId));
     }
 
+    /*
+     * Jira 티켓을 끊는다 — **SR 등록이 성공한 뒤에만.**
+     *
+     * 티켓 생성이 실패해도 SR 등록은 성공이다. 뒤집으면 사람이 재시도해서 브로드컴에
+     * 중복 케이스가 생긴다(위 persist/refresh 와 같은 이유). 그래서 createTicketForSr 는
+     * 던지지 않고 결과를 값으로 돌려준다.
+     *
+     * 다만 **조용히 넘기지는 않는다.** 응답에 담아 화면이 "티켓은 만들지 못했습니다" 를
+     * 보여 주고, 감사 로그에도 남긴다 — 티켓이 없으면 SR 이 끝난 뒤 댓글을 달 곳이
+     * 없으므로 사람이 알아야 손으로 만들 수 있다.
+     */
+    let ticket: TicketOutcome = { state: "off" };
+    if (result.ok) {
+      ticket = await createTicketForSr({
+        requestId: result.requestId,
+        caseLabel: result.requestIdFormatted,
+        track: readTrack(body.track),
+        titleKo: typeof body.titleKo === "string" ? body.titleKo : "",
+        subjectEn: subject,
+        bodyKo: typeof body.bodyKo === "string" ? body.bodyKo : "",
+        bodyEn: content,
+        productName: typeof body.productName === "string" ? body.productName : "",
+        componentName: typeof body.componentName === "string" ? body.componentName : "",
+      });
+      /*
+       * 감사 로그에 **온전했는지까지** 남긴다.
+       *
+       * 키만 남기면 라벨·에픽이 빠진 티켓과 온전한 티켓을 나중에 구별할 수 없고,
+       * 연결 저장이 실패한 건은 "왜 자동 댓글이 안 달렸나" 를 설명할 수 없다.
+       * "모른다"(타임아웃) 는 실패와 따로 남긴다 — 사람이 Jira 를 먼저 봐야 한다.
+       */
+      if (ticket.state === "ok") {
+        const notes = [
+          ticket.key,
+          ticket.dropped.length > 0 ? `dropped:${ticket.dropped.join("+")}` : "",
+          ticket.linked ? "" : "unlinked",
+        ].filter((n) => n !== "").join(" ");
+        await recordWriteAudit({
+          actor, teamId, action: "jira_ticket", requestId: result.requestId,
+          result: "ok", detail: notes.slice(0, 200),
+        });
+      } else if (ticket.state === "unknown") {
+        await recordWriteAudit({
+          actor, teamId, action: "jira_ticket", requestId: result.requestId,
+          result: "failed:unknown", detail: ticket.message.slice(0, 200),
+        });
+      } else if (ticket.state === "failed") {
+        await recordWriteAudit({
+          actor, teamId, action: "jira_ticket", requestId: result.requestId,
+          result: "failed:error", detail: ticket.message.slice(0, 200),
+        });
+      }
+    }
+
     await recordWriteAudit({
       actor, teamId, action: "create_sr",
       requestId: result.ok ? result.requestId : null,
       result: result.ok ? "ok" : `failed:${result.code}`,
     });
 
-    return NextResponse.json(result, { status: result.ok ? 200 : 409 });
+    // 티켓 결과를 **함께** 돌려준다. 성공/실패를 응답에 싣지 않으면 화면이 티켓이
+    // 만들어졌는지 알 수 없고, 사람은 Jira 를 열어 봐야 한다.
+    return NextResponse.json({ ...result, jira: ticket }, { status: result.ok ? 200 : 409 });
   } catch (error) {
     // 여기 닿는 것은 createCase 자체(또는 fetchClient 생성)가 던진, 진짜 예상 못한
     // 오류뿐이다 — 세션 없음은 위에서 이미 걸렀다.

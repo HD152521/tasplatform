@@ -16,6 +16,10 @@ import { COLOR, Card, RADIUS, controlStyle } from "../ui.tsx";
 import { Select } from "../Select.tsx";
 import { Composer, type ComposeMode } from "./Composer.tsx";
 import { ReleasePicker, type PickedRelease } from "./ReleasePicker.tsx";
+import { TrackPicker } from "./TrackPicker.tsx";
+import {
+  DEFAULT_TRACK, guessTrack, hasHangul, koTitleFrom, type SrTrack,
+} from "../../lib/jiraSrTicket.ts";
 import { SubmitBar } from "./SubmitBar.tsx";
 
 /**
@@ -109,6 +113,24 @@ export function DraftForm({
    * 보내지 않는다.
    */
   const [release, setRelease] = useState<PickedRelease | null>(null);
+
+  /**
+   * ## Jira 티켓에 쓸 값들
+   *
+   * 티켓 제목·본문은 **한글이어야 한다** — 우리 팀이 목록에서 읽기 때문이다. 그런데
+   * 포털에 올라가는 SR 은 영문이라(한국어로 적으면 번역해서 올린다), 번역이 입력칸을
+   * 갈아끼우는 순간 한글이 사라진다. 되돌리기용으로 Composer 가 한 단계 들고 있지만
+   * 그건 화면 안에서만 쓰는 값이다.
+   *
+   * 그래서 번역 **직전** 글을 여기 따로 붙잡아 둔다. 영문으로 바로 쓴 경우에는 한글이
+   * 아예 없고, 그때는 영문으로 떨어진다(lib/jiraSrTicket.ts).
+   */
+  const [koOriginal, setKoOriginal] = useState("");
+  const [track, setTrack] = useState<SrTrack>(DEFAULT_TRACK);
+  /** 사람이 구분을 직접 골랐는가. 골랐으면 **덮어쓰지 않는다.** */
+  const [trackPicked, setTrackPicked] = useState(false);
+  /** 티켓 제목(한글). 비워 두면 원문 첫 줄에서 뽑는다. */
+  const [titleKo, setTitleKo] = useState("");
   const [stage, setStage] = useState<"write" | "confirm">("write");
   const [busy, setBusy] = useState(false);
   /** 돌고 있는 작업. 없으면 null. */
@@ -126,6 +148,21 @@ export function DraftForm({
   async function compose(mode: ComposeMode): Promise<void> {
     setComposing(mode);
     setComposeError("");
+    /*
+     * 번역은 한국어를 영문으로 **갈아끼운다.** 그 전 글이 Jira 티켓에 쓸 한글이므로
+     * 여기서 붙잡아 둔다. "정리(tidy)" 는 영문을 다듬는 것이라 한글이 아니다.
+     *
+     * **한글일 때만 붙잡는다.** 번역을 두 번 누르면 두 번째에는 입력칸에 영문이 들어
+     * 있는데, 그걸 "한글 원문" 으로 잡으면 티켓 본문이 영문으로 떨어진다 — 티켓을
+     * 한글로 쓰려는 이유가 사라진다.
+     */
+    if (mode === "translate" && hasHangul(d.content)) {
+      setKoOriginal(d.content);
+      // 제목과 구분은 **비어 있거나 아직 안 고른 경우에만** 채운다. 사람이 고른 값을
+      // 번역 버튼이 덮으면, 고친 줄도 모르고 틀린 구분으로 올라간다.
+      if (titleKo.trim() === "") setTitleKo(koTitleFrom(d.content));
+      if (!trackPicked) setTrack(guessTrack(d.content));
+    }
     try {
       const response = await fetch("/api/draft/compose", {
         method: "POST",
@@ -162,7 +199,14 @@ export function DraftForm({
     }
   }
   const [error, setError] = useState("");
-  const [created, setCreated] = useState<{ id: string; num: number } | null>(null);
+  /** 등록 결과. Jira 티켓 결과도 함께 들고 있다 — 실패를 조용히 넘기지 않으려는 것이다. */
+  const [created, setCreated] = useState<{
+    id: string; num: number;
+    jira?: {
+      state?: string; key?: string; url?: string; message?: string;
+      dropped?: string[]; linked?: boolean;
+    };
+  } | null>(null);
   const router = useRouter();
 
   const set = (k: keyof SrDraft) => (
@@ -196,14 +240,27 @@ export function DraftForm({
           // 분류(categoryId)는 보내지 않는다. 서버가 제품에서 되찾는다 —
           // 화면이 둘을 따로 보내면 한쪽만 고쳐졌을 때 짝이 어긋난다(lib/releasePair.ts).
           releaseId: release?.releaseId,
+          // Jira 티켓용. 스위치가 꺼져 있으면 서버가 쓰지 않는다.
+          track,
+          titleKo,
+          bodyKo: koOriginal,
+          productName, componentName,
         }),
       });
       const data = (await response.json()) as {
         ok?: boolean; code?: string; message?: string;
         requestId?: number; requestIdFormatted?: string;
+        jira?: {
+          state?: string; key?: string; url?: string; message?: string;
+          dropped?: string[]; linked?: boolean;
+        };
       };
       if (data.ok === true && typeof data.requestId === "number") {
-        setCreated({ id: data.requestIdFormatted ?? String(data.requestId), num: data.requestId });
+        setCreated({
+          id: data.requestIdFormatted ?? String(data.requestId),
+          num: data.requestId,
+          jira: data.jira,
+        });
         // 올린 뒤에는 **반드시** 지운다. 남기면 다음에 열 때 이미 올린 SR 이
         // 되살아나 같은 건을 두 번 등록하게 된다.
         clearDraft(DRAFT_KEY);
@@ -245,6 +302,61 @@ export function DraftForm({
         <div style={{ fontSize: 13, marginTop: 4, opacity: 0.9 }}>
           다음 수집 때 목록에 나타납니다.
         </div>
+
+        {/*
+          티켓 결과를 **반드시 보여 준다.**
+
+          티켓 생성이 실패해도 SR 등록은 성공이다(뒤집으면 사람이 재시도해서 중복
+          케이스가 생긴다). 그래서 실패는 값으로 돌아오는데, 화면이 말하지 않으면
+          아무도 모른다 — 티켓이 없으면 SR 이 끝난 뒤 결과를 적을 곳도 없다.
+        */}
+        {created.jira?.state === "ok" && (
+          <>
+            <div style={{ fontSize: 13, marginTop: 6 }}>
+              {"Jira 티켓 "}
+              <a href={created.jira.url} target="_blank" rel="noreferrer"
+                 style={{ color: COLOR.ok, fontWeight: 600 }}>
+                {created.jira.key}
+              </a>
+              {" 을 함께 만들었습니다."}
+            </div>
+            {/*
+              티켓은 만들었지만 **온전하지 않은** 경우를 말해 준다. 조용히 넘기면
+              라벨이나 에픽이 빠진 티켓이 정상처럼 보이고, 연결이 없으면 SR 이 끝난 뒤
+              자동 댓글 대상에서 빠진다.
+            */}
+            {(created.jira.dropped?.length ?? 0) > 0 && (
+              <JiraWarn>
+                {`일부 칸은 Jira 가 받지 않아 빼고 만들었습니다 — ${created.jira.dropped?.join(", ")}. `
+                  + "티켓에서 직접 채워 주세요."}
+              </JiraWarn>
+            )}
+            {created.jira.linked === false && (
+              <JiraWarn>
+                {"티켓은 만들었지만 이 SR 과의 연결을 저장하지 못했습니다. "
+                  + "SR 이 끝난 뒤 결과가 자동으로 달리지 않습니다."}
+              </JiraWarn>
+            )}
+          </>
+        )}
+        {/*
+          **"모른다" 를 "실패" 와 가른다.** 타임아웃·망 오류는 티켓이 이미 만들어졌을
+          수 있다. 거기에 "직접 만드세요" 라고 쓰면 티켓이 두 개 된다.
+        */}
+        {created.jira?.state === "unknown" && (
+          <JiraWarn>
+            {"Jira 티켓이 만들어졌는지 확인하지 못했습니다 — "}
+            {created.jira.message ?? ""}
+            {" Jira 에서 먼저 확인하세요. 바로 새로 만들면 두 개가 됩니다."}
+          </JiraWarn>
+        )}
+        {created.jira?.state === "failed" && (
+          <JiraWarn>
+            {"SR 은 등록됐지만 Jira 티켓은 만들지 못했습니다 — "}
+            {created.jira.message ?? "이유를 알 수 없습니다."}
+            {" 티켓은 Jira 에서 직접 만들어 주세요."}
+          </JiraWarn>
+        )}
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <a href={`/cases/${created.num}`} style={{ ...controlStyle, textDecoration: "none", padding: "8px 14px" }}>
             케이스 열기
@@ -319,6 +431,32 @@ export function DraftForm({
           </Field>
           <Field label="Serial Number" hint="비워도 됩니다">
             <input value={d.serial} onChange={set("serial")} placeholder="" style={inputStyle} />
+          </Field>
+        </Row>
+
+        {/*
+          Jira 티켓에 쓸 값들. 등록과 함께 티켓이 하나 끊긴다.
+
+          여기 적는 한글이 티켓 제목이 된다 — 포털에 올라가는 영문 제목으로는 Jira
+          목록에서 무슨 일인지 읽히지 않기 때문이다. 번역 버튼을 누르면 그 직전 글에서
+          제목과 구분을 미리 채워 둔다.
+        */}
+        <Row>
+          <Field label="Jira 제목 (한글)"
+                 hint="비워 두면 한글 원문 첫 줄을 씁니다. 티켓 목록에 이 글자가 보입니다">
+            <input
+              value={titleKo}
+              onChange={(e) => setTitleKo(e.target.value)}
+              placeholder="예: 노드 재시작 원인 문의"
+              style={inputStyle}
+            />
+          </Field>
+          <Field label="구분" hint="티켓 제목의 대괄호가 됩니다. 모르면 운영">
+            <TrackPicker
+              value={track}
+              onChange={(next) => { setTrack(next); setTrackPicked(true); }}
+              disabled={busy}
+            />
           </Field>
         </Row>
 
@@ -400,6 +538,19 @@ function Field({
           {hint}
         </div>
       )}
+    </div>
+  );
+}
+
+/** 티켓이 온전하지 않을 때 쓰는 경고 줄. 성공 화면 안에서 쓴다. */
+function JiraWarn({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      marginTop: 10, padding: "9px 12px", fontSize: 12.5, lineHeight: 1.6,
+      color: COLOR.warn, background: COLOR.warnBg,
+      border: "1px solid #f0d69a", borderRadius: RADIUS.control,
+    }}>
+      {children}
     </div>
   );
 }

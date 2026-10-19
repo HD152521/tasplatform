@@ -10,6 +10,8 @@ import {
 import { COLOR, Notice, RADIUS, controlStyle } from "../ui.tsx";
 import { Select } from "../Select.tsx";
 import { ReleasePicker, type PickedRelease } from "./ReleasePicker.tsx";
+import { TrackPicker } from "./TrackPicker.tsx";
+import { DEFAULT_TRACK, guessTrack, koTitleFrom, type SrTrack } from "../../lib/jiraSrTicket.ts";
 
 /**
  * 간단히 올리기.
@@ -104,9 +106,23 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
    * 한 셈이다(lib/releasePair.ts 머리말).
    */
   const [release, setRelease] = useState<PickedRelease | null>(null);
+  /*
+   * Jira 티켓용. 여기서는 **사람이 적은 글이 곧 한글 원문**이라 따로 붙잡아 둘 것이
+   * 없다(작성 폼은 번역이 입력칸을 갈아끼워서 직전 값을 보관해야 한다).
+   * 제목과 구분은 그 글에서 미리 채워 두고, 확인 화면에서 고칠 수 있게 한다.
+   */
+  const [track, setTrack] = useState<SrTrack>(DEFAULT_TRACK);
+  const [titleKo, setTitleKo] = useState("");
   const [busy, setBusy] = useState<"compose" | "create" | null>(null);
   const [error, setError] = useState("");
-  const [created, setCreated] = useState<{ id: string; num: number } | null>(null);
+  /** 등록 결과. Jira 티켓 결과도 함께 — 실패를 조용히 넘기지 않는다. */
+  const [created, setCreated] = useState<{
+    id: string; num: number;
+    jira?: {
+      state?: string; key?: string; url?: string; message?: string;
+      dropped?: string[]; linked?: boolean;
+    };
+  } | null>(null);
   const box = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -149,6 +165,9 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
       setRelease(parsed.releaseId > 0
         ? { releaseId: parsed.releaseId, releaseDesc: parsed.releaseDesc }
         : null);
+      // 적은 글에서 제목·구분을 미리 골라 둔다. 확정이 아니라 기본값 제안이다.
+      setTitleKo(koTitleFrom(text));
+      setTrack(guessTrack(text));
     } catch (e) {
       setError(e instanceof Error ? e.message : "정리하지 못했습니다.");
     } finally {
@@ -174,6 +193,12 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
           // 고른 값만 보낸다. 없으면 서버가 400 으로 거절한다 — 아래 버튼이 이미
           // 막고 있지만, 막는 곳이 한 군데면 그 한 군데가 깨질 때 조용히 뚫린다.
           releaseId: release?.releaseId ?? 0,
+          // 적은 글이 그대로 한글 원문이다.
+          track,
+          titleKo,
+          bodyKo: text,
+          productName: ready.productName,
+          componentName: ready.componentName,
         }),
       });
       const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
@@ -182,7 +207,14 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
         setError(text2(body.message) || `등록하지 못했습니다 (HTTP ${response.status}).`);
         return;
       }
-      setCreated({ id: text2(body.requestIdFormatted) || String(requestId), num: requestId });
+      setCreated({
+        id: text2(body.requestIdFormatted) || String(requestId),
+        num: requestId,
+        jira: body.jira as {
+          state?: string; key?: string; url?: string; message?: string;
+          dropped?: string[]; linked?: boolean;
+        } | undefined,
+      });
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "등록하지 못했습니다.");
@@ -223,7 +255,42 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
 
         {created !== null ? (
           <div style={{ marginTop: 16 }}>
-            <Notice tone="ok">{`${created.id} 로 등록했습니다.`}</Notice>
+            <Notice tone="ok">
+              {`${created.id} 로 등록했습니다.`}
+              {created.jira?.state === "ok" && created.jira.key !== undefined
+                ? ` Jira 티켓 ${created.jira.key} 도 만들었습니다.`
+                : ""}
+            </Notice>
+            {/*
+              티켓 실패를 **반드시 말한다.** SR 은 올라갔고 티켓만 실패한 상태라,
+              화면이 조용하면 아무도 모른다 — SR 이 끝난 뒤 결과를 적을 곳이 없다.
+            */}
+            {(created.jira?.dropped?.length ?? 0) > 0 && (
+              <Notice tone="warn">
+                {`일부 칸은 Jira 가 받지 않아 빼고 만들었습니다 — ${created.jira?.dropped?.join(", ")}.`}
+              </Notice>
+            )}
+            {created.jira?.state === "ok" && created.jira.linked === false && (
+              <Notice tone="warn">
+                {"티켓은 만들었지만 이 SR 과의 연결을 저장하지 못했습니다. "
+                  + "SR 이 끝난 뒤 결과가 자동으로 달리지 않습니다."}
+              </Notice>
+            )}
+            {/* "모른다" 에 "직접 만드세요" 라고 쓰면 티켓이 두 개 된다. */}
+            {created.jira?.state === "unknown" && (
+              <Notice tone="warn">
+                {"Jira 티켓이 만들어졌는지 확인하지 못했습니다 — "}
+                {created.jira.message ?? ""}
+                {" Jira 에서 먼저 확인하세요. 바로 새로 만들면 두 개가 됩니다."}
+              </Notice>
+            )}
+            {created.jira?.state === "failed" && (
+              <Notice tone="warn">
+                {"Jira 티켓은 만들지 못했습니다 — "}
+                {created.jira.message ?? "이유를 알 수 없습니다."}
+                {" Jira 에서 직접 만들어 주세요."}
+              </Notice>
+            )}
             <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
               <a href={`/cases/${created.num}`} style={primary}>케이스 보기</a>
               <button type="button" onClick={onClose} style={ghost}>닫기</button>
@@ -309,6 +376,31 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
               </div>
             )}
             {ready.reason !== "" && <Row label="고른 이유">{ready.reason}</Row>}
+
+            {/*
+              Jira 티켓 제목에 쓸 한글. 적은 글 첫 줄로 채워 두고 고칠 수 있게 한다 —
+              포털에 올라가는 영문 제목으로는 티켓 목록에서 무슨 일인지 읽히지 않는다.
+            */}
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12, color: COLOR.muted, marginBottom: 4 }}>
+                Jira 제목 (한글)
+              </div>
+              <input
+                value={titleKo}
+                onChange={(e) => setTitleKo(e.target.value)}
+                aria-label="Jira 제목"
+                style={{
+                  width: "100%", boxSizing: "border-box", padding: "8px 11px",
+                  fontSize: 13, fontFamily: "inherit", color: COLOR.ink,
+                  border: `1px solid ${COLOR.field}`, borderRadius: RADIUS.control,
+                  outline: "none",
+                }}
+              />
+            </div>
+            <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ fontSize: 12, color: COLOR.muted }}>구분</div>
+              <TrackPicker value={track} onChange={setTrack} disabled={busy !== null} />
+            </div>
             <Row label="심각도">{severity}</Row>
             <Row label="제목">{ready.subject}</Row>
 
