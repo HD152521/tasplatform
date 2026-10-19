@@ -133,6 +133,7 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: string 
   { table: "attachment_jobs", column: "team_id", ddl: "TEXT NOT NULL DEFAULT ''" },
   // sr_jira_links 는 이미 배포돼 있으므로(PR #62) ALTER 로 더한다.
   { table: "sr_jira_links", column: "publish_tries", ddl: "INTEGER NOT NULL DEFAULT 0" },
+  { table: "sr_jira_links", column: "comment_tries", ddl: "INTEGER NOT NULL DEFAULT 0" },
 ];
 
 /** 테이블의 현재 컬럼 이름 집합(방언별 조회). */

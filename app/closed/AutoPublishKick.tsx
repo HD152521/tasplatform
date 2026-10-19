@@ -30,7 +30,13 @@ interface Result {
   state?: string;
   published?: number;
   failed?: number;
-  details?: { failed?: Array<{ caseLabel: string; message: string }> };
+  /** 티켓에 결과를 남긴 건수. 게시와 **따로** 센다 — 둘 중 하나만 실패할 수 있다. */
+  commented?: number;
+  commentFailed?: number;
+  details?: {
+    failed?: Array<{ caseLabel: string; message: string }>;
+    commentFailed?: Array<{ caseLabel: string; message: string }>;
+  };
 }
 
 export function AutoPublishKick() {
@@ -69,7 +75,8 @@ export function AutoPublishKick() {
           router.refresh();
           return;
         }
-        if ((data.failed ?? 0) > 0) setResult(data);
+        // 게시는 0 건이어도 댓글이 실패했으면 말한다.
+        if ((data.failed ?? 0) > 0 || (data.commentFailed ?? 0) > 0) setResult(data);
       } catch (problem) {
         // 망 오류는 흔하고 다음에 열 때 다시 부른다. 화면을 어지럽히지 않되 흔적은 남긴다.
         console.error("[autopublish] 깨우기 실패", problem);
@@ -97,16 +104,32 @@ export function AutoPublishKick() {
 
   const published = result.published ?? 0;
   const failed = result.failed ?? 0;
-  const tone = failed > 0 ? COLOR.warn : COLOR.ok;
+  const warn = failed > 0 || (result.commentFailed ?? 0) > 0;
+  const tone = warn ? COLOR.warn : COLOR.ok;
 
   return (
     <div style={{
       marginBottom: 14, padding: "10px 13px", fontSize: 12.5, lineHeight: 1.6,
-      color: tone, background: failed > 0 ? COLOR.warnBg : COLOR.okBg,
-      border: `1px solid ${failed > 0 ? "#f0d69a" : "#b9e6cd"}`,
+      color: tone, background: warn ? COLOR.warnBg : COLOR.okBg,
+      border: `1px solid ${warn ? "#f0d69a" : "#b9e6cd"}`,
       borderRadius: RADIUS.control,
     }}>
-      {published > 0 && <div>{`끝난 SR ${published}건의 정리 문서를 Confluence 에 올렸습니다.`}</div>}
+      {published > 0 && (
+        <div>
+          {`끝난 SR ${published}건의 정리 문서를 Confluence 에 올렸습니다.`}
+          {(result.commented ?? 0) > 0 && ` Jira 티켓 ${result.commented}건에 결과를 남겼습니다.`}
+        </div>
+      )}
+      {/*
+        **게시는 됐는데 댓글만 실패한 경우를 구분해 말한다.** 뭉쳐서 "실패" 라고 하면
+        사람이 문서를 다시 올리려 하는데, 문서는 이미 올라가 있다.
+      */}
+      {(result.commentFailed ?? 0) > 0 && (
+        <div style={{ marginTop: published > 0 ? 4 : 0 }}>
+          {`문서는 올렸지만 Jira 티켓 ${result.commentFailed}건에는 결과를 남기지 못했습니다 — `}
+          {(result.details?.commentFailed ?? []).map((f) => `${f.caseLabel}: ${f.message}`).join(" / ")}
+        </div>
+      )}
       {failed > 0 && (
         <div>
           {`${failed}건은 올리지 못했습니다 — `}

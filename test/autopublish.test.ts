@@ -13,10 +13,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, type Db } from "../lib/db.ts";
 import { isoNow } from "../lib/dates.ts";
-import { saveSrJiraLink } from "../lib/jiraLinkStore.ts";
+import { markSrJiraCommented, saveSrJiraLink } from "../lib/jiraLinkStore.ts";
 import {
-  LOCK_KEY, SINCE_KEY, bumpPublishTries, claimRun, countGivenUp, findPublishable,
-  readSince, refundPublishTries, releaseRun,
+  LOCK_KEY, SINCE_KEY, bumpCommentTries, bumpPublishTries, claimRun, countCommentGivenUp,
+  countGivenUp, findCommentable, findPublishable, readSince, refundPublishTries, releaseRun,
 } from "../lib/autopublish.ts";
 import { getAppState, setAppState } from "../lib/appState.ts";
 
@@ -282,5 +282,92 @@ test("상한에 닿아 포기한 건수를 센다", async () => {
   await putCase(db, { id: 1013, status: "Closed", createdMs: AFTER, published: true });
   for (let i = 0; i < 3; i += 1) await bumpPublishTries(db, 1013);
   assert.equal(await countGivenUp(db, SINCE), 1, "이미 올린 건을 포기로 셌다");
+  await db.close();
+});
+
+/* ------------------------------------------------------------------ *
+ * 게시는 됐는데 **댓글만** 못 단 건
+ *
+ * 게시가 성공하면 `confluence_published` 행이 생기고, 그 뒤로 그 SR 은 게시 대상 조회에서
+ * 빠진다. 그래서 그때 댓글이 실패하면 **영구히 누락됐다** — 다시 집는 조회가 없었다.
+ * 알림도 그 순간 화면을 연 사람에게만 보이고 새로고침하면 사라졌다.
+ * ------------------------------------------------------------------ */
+
+/** 게시까지 끝난 상태로 심는다. */
+async function putPublished(db: Db, o: {
+  id: number; url?: string; summary?: string; commented?: boolean;
+}): Promise<void> {
+  await putCase(db, { id: o.id, status: "Closed", createdMs: AFTER, published: true });
+  await db.run(
+    "UPDATE case_summaries SET content = ? WHERE request_id = ? AND kind = 'confluence_published'",
+    [o.url ?? "https://conf.test/wiki/x", o.id],
+  );
+  if (o.summary !== undefined) {
+    await db.run(
+      `INSERT INTO case_summaries (request_id, kind, content, source, generated_at)
+       VALUES (?, 'confluence', ?, 'ai', ?)`,
+      [o.id, o.summary, isoNow()],
+    );
+  }
+  if (o.commented === true) await markSrJiraCommented(db, o.id);
+}
+
+test("게시됐고 댓글만 안 달린 건을 집는다", async () => {
+  const db = await freshDb();
+  await putPublished(db, { id: 2001, summary: "### 조치\n해소했습니다." });
+
+  // 게시 대상에서는 빠져 있어야 한다(이미 올렸으므로).
+  assert.deepEqual(await findPublishable(db, SINCE), []);
+
+  const behind = await findCommentable(db, SINCE);
+  assert.equal(behind.length, 1, "영구 누락되던 자리다");
+  assert.equal(behind[0]?.issueKey, "PRJ-2001");
+  assert.equal(behind[0]?.pageUrl, "https://conf.test/wiki/x", "댓글에 넣을 링크");
+  assert.match(behind[0]?.summary ?? "", /해소했습니다/, "결과를 뽑을 본문");
+  await db.close();
+});
+
+test("이미 댓글을 단 건은 집지 않는다", async () => {
+  const db = await freshDb();
+  await putPublished(db, { id: 2002, commented: true });
+  assert.deepEqual(await findCommentable(db, SINCE), []);
+  await db.close();
+});
+
+test("아직 게시되지 않은 건은 댓글 대상이 아니다", async () => {
+  const db = await freshDb();
+  await putCase(db, { id: 2003, status: "Closed", createdMs: AFTER });
+  assert.deepEqual(await findCommentable(db, SINCE), []);
+  await db.close();
+});
+
+// 과거 SR 은 여기서도 빠져야 한다. 울타리가 한 곳만 있으면 새는 길이 생긴다.
+test("기준 시각 전에 생성된 건은 댓글 대상도 아니다", async () => {
+  const db = await freshDb();
+  await putCase(db, { id: 2004, status: "Closed", createdMs: BEFORE, published: true });
+  assert.deepEqual(await findCommentable(db, SINCE), []);
+  await db.close();
+});
+
+test("댓글 시도 횟수가 상한에 닿으면 포기하고, 그 건수를 센다", async () => {
+  const db = await freshDb();
+  await putPublished(db, { id: 2005 });
+  assert.equal(await countCommentGivenUp(db, SINCE), 0);
+  for (let i = 0; i < 3; i += 1) {
+    assert.equal((await findCommentable(db, SINCE, 10, 3)).length, 1, `${i}번째`);
+    await bumpCommentTries(db, 2005);
+  }
+  assert.deepEqual(await findCommentable(db, SINCE, 10, 3), []);
+  assert.equal(await countCommentGivenUp(db, SINCE, 3), 1);
+  await db.close();
+});
+
+// 요약이 없어도 댓글은 단다 — 결과 줄이 빠지고 링크만 남는다. 없는 것보다 낫다.
+test("요약이 없어도 대상이고 summary 는 빈 문자열이다", async () => {
+  const db = await freshDb();
+  await putPublished(db, { id: 2006 });
+  const behind = await findCommentable(db, SINCE);
+  assert.equal(behind.length, 1);
+  assert.equal(behind[0]?.summary, "");
   await db.close();
 });

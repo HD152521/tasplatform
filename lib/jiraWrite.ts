@@ -201,6 +201,43 @@ export async function createSrIssue(
   }
 }
 
+/**
+ * 그 티켓에 **이미** 이 문서 링크를 담은 댓글이 있는가.
+ *
+ * ## 왜 쓰기 모듈에 읽기가 들어오나
+ *
+ * 쓰기를 **안전하게 다시 시도하기 위한** 읽기다. 댓글은 보냈는지 모르는 상태로 실패할
+ * 수 있다 — 타임아웃·5xx 는 서버가 이미 받아 처리했는데 응답만 못 받은 경우일 수 있고,
+ * 보내기는 성공했는데 "달았다" 표시만 실패할 수도 있다. 그 둘을 "안 달렸다" 로 보고
+ * 다시 보내면 **같은 티켓에 댓글이 두 번** 달린다.
+ *
+ * 그래서 다시 보내기 전에 물어본다. 문서 주소는 그 SR 에만 쓰는 값이라 표식으로 알맞다.
+ *
+ * 못 물어보면(망 오류 등) **false 로 둔다.** 그러면 한 번 더 보낼 수 있는데, 댓글 하나가
+ * 더 달리는 것이 결과가 영영 안 달리는 것보다 가볍다.
+ */
+export async function hasCommentWithLink(
+  config: JiraSrConfig,
+  issueKey: string,
+  pageUrl: string,
+): Promise<boolean> {
+  if (pageUrl === "") return false;
+  try {
+    const response = await fetch(
+      `${config.base}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment?maxResults=50`,
+      {
+        headers: { Authorization: authHeader(config), Accept: "application/json" },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      },
+    );
+    if (!response.ok) return false;
+    // ADF 를 뜯지 않는다. 주소가 글자로 들어 있으면(링크 마크의 href 든 본문이든) 그것이다.
+    return (await response.text()).includes(pageUrl);
+  } catch {
+    return false;
+  }
+}
+
 /** 티켓 한 건에 댓글 하나. */
 export async function addSrComment(
   config: JiraSrConfig,

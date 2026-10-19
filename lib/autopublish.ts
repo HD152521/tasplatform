@@ -224,3 +224,107 @@ export async function claimRun(db: Db, staleMs = LOCK_STALE_MS): Promise<boolean
 export async function releaseRun(db: Db): Promise<void> {
   await setAppState(db, LOCK_KEY, "");
 }
+
+/* ------------------------------------------------------------------ *
+ * 게시는 됐는데 **댓글만** 못 단 건
+ *
+ * 게시가 성공하면 `confluence_published` 행이 생기고, 그 뒤로 그 SR 은 위 대상 조회에서
+ * 빠진다. 그래서 그때 댓글이 실패하면 **영구히 누락된다** — 다시 집는 조회가 없었다.
+ * 알림도 그 순간 화면을 연 사람에게만 보이고 새로고침하면 사라진다.
+ *
+ * 그래서 두 번째 조회를 둔다. 올릴 때 저장한 문서 주소가 `confluence_published.content`
+ * 에 있으므로, 댓글에 쓸 링크도 여기서 함께 가져온다.
+ * ------------------------------------------------------------------ */
+
+export const MAX_COMMENT_TRIES = Number(process.env.SR_AUTOCOMMENT_TRIES ?? 3);
+
+export interface Commentable {
+  readonly requestId: number;
+  readonly caseLabel: string;
+  readonly issueKey: string;
+  /** 올릴 때 받은 문서 주소. 댓글에 링크로 넣는다. */
+  readonly pageUrl: string;
+  /**
+   * 그 SR 의 정리 문서 본문. 여기서 결과 두세 줄을 뽑는다.
+   *
+   * 같은 조회에서 가져온다 — 따로 읽으면 왕복이 하나 늘고, 다시 만들면(getSummary)
+   * 댓글 하나 달려고 AI 를 부르는 꼴이 된다.
+   */
+  readonly summary: string;
+  readonly tries: number;
+}
+
+interface CommentRow {
+  request_id: number;
+  request_id_formatted: string;
+  issue_key: string;
+  page_url: string;
+  summary_text: string | null;
+  comment_tries: number;
+}
+
+/** 게시는 끝났고 결과 댓글만 남은 건. */
+export async function findCommentable(
+  db: Db,
+  sinceMs: number,
+  limit = MAX_PER_RUN,
+  maxTries = MAX_COMMENT_TRIES,
+): Promise<Commentable[]> {
+  const rows = (await db.all(
+    `SELECT c.request_id, c.request_id_formatted, l.issue_key,
+            p.content AS page_url, s.content AS summary_text, l.comment_tries
+       FROM cases c
+       JOIN sr_jira_links l ON l.request_id = c.request_id
+       JOIN case_summaries p
+         ON p.request_id = c.request_id AND p.kind = 'confluence_published'
+       LEFT JOIN case_summaries s
+         ON s.request_id = c.request_id AND s.kind = 'confluence'
+      WHERE l.commented_at = ''
+        AND l.issue_key <> ''
+        AND c.created_on_ms IS NOT NULL
+        AND c.created_on_ms > ?
+        AND l.comment_tries < ?
+      ORDER BY c.last_updated_ms ASC
+      LIMIT ?`,
+    [sinceMs, maxTries, limit],
+  )) as CommentRow[];
+
+  return rows.map((row) => ({
+    requestId: row.request_id,
+    caseLabel: row.request_id_formatted,
+    issueKey: row.issue_key,
+    pageUrl: row.page_url,
+    // 요약이 없어도 댓글은 단다 — 결과 줄이 빠지고 링크만 남는다. 없는 것보다 낫다.
+    summary: row.summary_text ?? "",
+    tries: row.comment_tries,
+  }));
+}
+
+export async function bumpCommentTries(db: Db, requestId: number): Promise<void> {
+  await db.run(
+    "UPDATE sr_jira_links SET comment_tries = comment_tries + 1 WHERE request_id = ?",
+    [requestId],
+  );
+}
+
+/** 상한에 닿아 **댓글을 포기한** 건수. 보이지 않으면 조용히 멈춘 것을 아무도 모른다. */
+export async function countCommentGivenUp(
+  db: Db,
+  sinceMs: number,
+  maxTries = MAX_COMMENT_TRIES,
+): Promise<number> {
+  const row = await db.get<{ n: number }>(
+    `SELECT COUNT(*) AS n
+       FROM cases c
+       JOIN sr_jira_links l ON l.request_id = c.request_id
+       JOIN case_summaries p
+         ON p.request_id = c.request_id AND p.kind = 'confluence_published'
+      WHERE l.commented_at = ''
+        AND l.issue_key <> ''
+        AND c.created_on_ms IS NOT NULL
+        AND c.created_on_ms > ?
+        AND l.comment_tries >= ?`,
+    [sinceMs, maxTries],
+  );
+  return Number(row?.n ?? 0);
+}
