@@ -48,6 +48,9 @@ interface Ready {
   /** 글에서 찾은 릴리스. 못 찾으면 0 / 빈 문자열이고, 버전 없이 등록된다. */
   readonly releaseId: number;
   readonly releaseDesc: string;
+  /** Jira 티켓에 쓸 한글 제목·본문. AI 가 쓴다. 비면 코드가 원문에서 뽑는다. */
+  readonly jiraTitle: string;
+  readonly jiraBody: string;
   readonly reason: string;
   readonly fallback: boolean;
 }
@@ -85,6 +88,8 @@ function readReady(body: Record<string, unknown>): Ready | null {
     // 버전은 **없어도 올릴 수 있다.** 그래서 제품·컴포넌트처럼 거부 조건에 넣지 않는다.
     releaseId: posInt(body.releaseId),
     releaseDesc: text2(body.releaseDesc),
+    jiraTitle: text2(body.jiraTitle).trim(),
+    jiraBody: text2(body.jiraBody).trim(),
     reason: text2(body.reason).trim(),
     // 모르면 **폴백으로 본다.** 경고를 띄우고 마는 쪽이, 조용히 "AI 가 골랐다" 고
     // 보여 주는 쪽보다 낫다.
@@ -165,8 +170,12 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
       setRelease(parsed.releaseId > 0
         ? { releaseId: parsed.releaseId, releaseDesc: parsed.releaseDesc }
         : null);
-      // 적은 글에서 제목·구분을 미리 골라 둔다. 확정이 아니라 기본값 제안이다.
-      setTitleKo(koTitleFrom(text));
+      /*
+       * 제목은 **AI 가 쓴 것**을 쓴다. 코드가 첫 줄을 자르면 문장이 그대로 제목이 돼
+       * `[운영] 앱 두 개가 계속 crash 납니다 진행` 같은 말이 된다. 모델이 안 줬을
+       * 때만 첫 줄로 떨어진다.
+       */
+      setTitleKo(parsed.jiraTitle !== "" ? parsed.jiraTitle : koTitleFrom(text));
       setTrack(guessTrack(text));
     } catch (e) {
       setError(e instanceof Error ? e.message : "정리하지 못했습니다.");
@@ -193,10 +202,10 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
           // 고른 값만 보낸다. 없으면 서버가 400 으로 거절한다 — 아래 버튼이 이미
           // 막고 있지만, 막는 곳이 한 군데면 그 한 군데가 깨질 때 조용히 뚫린다.
           releaseId: release?.releaseId ?? 0,
-          // 적은 글이 그대로 한글 원문이다.
           track,
           titleKo,
-          bodyKo: text,
+          // AI 가 간추린 한글 본문. 없으면 적은 글 자체가 한글 원문이다.
+          bodyKo: ready.jiraBody !== "" ? ready.jiraBody : text,
           productName: ready.productName,
           componentName: ready.componentName,
         }),
@@ -401,6 +410,25 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
               <div style={{ fontSize: 12, color: COLOR.muted }}>구분</div>
               <TrackPicker value={track} onChange={setTrack} disabled={busy !== null} />
             </div>
+
+            {/*
+              티켓 본문도 **보여 준다.** AI 가 쓴 글이 우리 팀 추적 기록으로 남으므로,
+              올리기 전에 눈으로 볼 수 있어야 한다. 영문 본문은 고객에게 가고 이쪽은
+              사내에 남는다 — 둘을 같은 화면에서 구별해 보여 준다.
+            */}
+            {ready.jiraBody !== "" && (
+              <>
+                <div style={{ marginTop: 12, fontSize: 12, color: COLOR.muted }}>
+                  Jira 티켓 본문 (사내 기록)
+                </div>
+                <pre style={{
+                  margin: "6px 0 0", padding: 12, background: COLOR.ground,
+                  border: `1px solid ${COLOR.line}`, borderRadius: RADIUS.control,
+                  fontSize: 12.5, lineHeight: 1.65, whiteSpace: "pre-wrap",
+                  maxHeight: 160, overflowY: "auto",
+                }}>{ready.jiraBody}</pre>
+              </>
+            )}
             <Row label="심각도">{severity}</Row>
             <Row label="제목">{ready.subject}</Row>
 

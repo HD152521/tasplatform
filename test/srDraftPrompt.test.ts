@@ -229,3 +229,81 @@ test("두 프롬프트 모두 대괄호를 지어내지 말라고 못박는다",
     assert.match(prompt, /추측해서 만들지/);
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * Jira 티켓용 한글 (JIRA_TITLE / JIRA_BODY)
+ *
+ * 코드가 원문 첫 줄을 자르던 때는 `[운영] 앱 두 개가 계속 crash 납니다 진행` 같은
+ * 제목이 나왔다. 첫 줄이 문장이면 뒤에 "진행" 이 붙어 말이 되지 않는다. 그래서 같은
+ * 호출에서 모델에게 받는다 — 추가 대기 없이.
+ * ------------------------------------------------------------------ */
+
+const ANSWER_WITH_JIRA = lines(
+  "[SUBJECT]",
+  "[TPCF 10.4.2] Apps keep crashing",
+  "",
+  "[CONTENT]",
+  "Hello Support Team,",
+  "",
+  "Two apps keep crashing.",
+  "",
+  "Thanks,",
+  "",
+  "[MISSING]",
+  "- 발생 시각",
+  "",
+  "[JIRA_TITLE]",
+  "TPCF 10.4.2 앱 반복 crash 원인 분석",
+  "",
+  "[JIRA_BODY]",
+  "질문",
+  "- OOM 으로 보이는 반복 crash 의 원인과 조치 방법",
+  "",
+  "배경",
+  "- TPCF 10.4.2 운영, Diego cell 재시작 후에도 재현",
+);
+
+test("Jira 제목·본문을 함께 뽑는다", () => {
+  const got = parseComposed(ANSWER_WITH_JIRA);
+  assert.equal(got.jiraTitle, "TPCF 10.4.2 앱 반복 crash 원인 분석");
+  assert.match(got.jiraBody, /^질문/);
+  assert.match(got.jiraBody, /배경/);
+  // 앞 덩어리들이 망가지지 않아야 한다 — 표식 목록에 새 이름을 빼먹으면 섞인다.
+  assert.equal(got.subject, "[TPCF 10.4.2] Apps keep crashing");
+  assert.match(got.content, /Thanks,$/);
+  assert.deepEqual(got.missing, ["발생 시각"]);
+  assert.doesNotMatch(got.missing.join(" "), /JIRA/, "다음 머리글이 섞였다");
+  assert.doesNotMatch(got.content, /JIRA/);
+});
+
+/*
+ * 대괄호와 꼬리말은 **코드가** 붙인다. 모델이 같이 붙여 오면 두 번 붙으므로 걷어낸다
+ * — 실측으로 모델은 이런 지시를 꽤 자주 어긴다.
+ */
+test("모델이 붙여 온 대괄호와 '진행' 은 걷어낸다", () => {
+  for (const given of [
+    "[운영] 앱 반복 crash 원인 분석 진행",
+    "[개발] 앱 반복 crash 원인 분석",
+    "앱 반복 crash 원인 분석 진행",
+    "[AWS] 앱 반복 crash 원인 분석 진행",
+  ]) {
+    const got = parseComposed(lines("[CONTENT]", "x", "", "[JIRA_TITLE]", given));
+    assert.equal(got.jiraTitle, "앱 반복 crash 원인 분석", `입력: ${given}`);
+  }
+});
+
+// 모델이 두 덩어리를 빠뜨려도 나머지는 멀쩡해야 한다. 그때는 부르는 쪽이 원문에서 뽑는다.
+test("Jira 덩어리가 없으면 빈 문자열이다", () => {
+  const got = parseComposed(ANSWER);
+  assert.equal(got.jiraTitle, "");
+  assert.equal(got.jiraBody, "");
+  assert.equal(got.subject, "[TPCF 10.4] Resource sizing for enabling OpenTelemetry");
+});
+
+// 표식이 하나도 없는 응답도 지금처럼 전부 본문으로 본다.
+test("표식이 없으면 Jira 값도 비어 있다", () => {
+  const got = parseComposed("Hello Support Team,\n\nJust prose.\n\nThanks,");
+  assert.equal(got.jiraTitle, "");
+  assert.equal(got.jiraBody, "");
+  assert.match(got.content, /Just prose/);
+});
