@@ -1,6 +1,7 @@
 import { listCasesSplit, countSummaries, type CaseListRow } from "../../lib/queries.ts";
 import { CaseList } from "../CaseList.tsx";
 import { COLOR, Card, Notice } from "../ui.tsx";
+import { AutoPublishKick } from "./AutoPublishKick.tsx";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,13 @@ export default async function ClosedCasesPage() {
           {"  ·  케이스를 열면 원문과 정리하기를 볼 수 있습니다"}
         </p>
       </header>
+
+      {/*
+        끝난 SR 의 정리 문서를 자동으로 올린다. 이 화면이 그 방아쇠다 — 웹은 스스로
+        깨어나지 않으므로(app/api/autopublish 머리말). 올릴 것이 없으면 아무것도 그리지
+        않는다.
+      */}
+      <AutoPublishKick />
 
       {loadError !== null && <Notice tone="error">DB를 읽지 못했습니다: {loadError}</Notice>}
 

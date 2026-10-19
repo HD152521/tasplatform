@@ -211,7 +211,10 @@ CREATE TABLE IF NOT EXISTS sr_jira_links (
   track        TEXT    NOT NULL DEFAULT '',
   title_ko     TEXT    NOT NULL DEFAULT '',
   created_at   TEXT    NOT NULL,
-  commented_at TEXT    NOT NULL DEFAULT ''
+  commented_at TEXT    NOT NULL DEFAULT '',
+  -- 자동 게시를 몇 번 시도했나. 조건으로 대상을 고르는 구조라(스스로 낫는 대신)
+  -- 영구히 실패하는 건을 매번 다시 집어 AI 를 때린다. 상한을 두려고 센다.
+  publish_tries INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS case_reads (

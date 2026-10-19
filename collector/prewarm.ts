@@ -65,7 +65,13 @@ async function main(): Promise<void> {
     const now = Date.now();
     const stored = await initAppState(db, WATERMARK_KEY, String(now));
     const sinceMs = Number(stored);
-    if (!Number.isFinite(sinceMs)) {
+    /*
+     * `isFinite` 만으로는 모자라다. `Number("")` 와 `Number(" ")` 는 0 이고 `isFinite(0)`
+     * 은 참이다. 워터마크가 빈 문자열이나 `0` 으로 남아 있으면 멀쩡한 값으로 통과하고,
+     * `last_updated_ms > 0` 은 **모든 종료 건에 참**이 된다 — 이 파일이 막으려던 바로
+     * 그 일(처음 재 봤을 때 287건)이 일어난다.
+     */
+    if (!Number.isFinite(sinceMs) || sinceMs <= 0) {
       console.error(`[prewarm] 워터마크가 이상합니다: ${stored}`);
       process.exitCode = 1;
       return;
