@@ -227,6 +227,10 @@ async function handle(request: Request): Promise<Response> {
       // 못 찾으면 0/빈 값으로 보낸다. 화면이 "버전 없이 등록됩니다" 를 말한다.
       releaseId: release?.releaseId ?? 0,
       releaseDesc: release?.releaseDesc ?? "",
+      // Jira 티켓에 쓸 한글. 같은 호출에서 받으므로 추가 대기가 없다
+      // (lib/srDraftPrompt.ts 의 JIRA_BLOCK).
+      jiraTitle: composed.jiraTitle,
+      jiraBody: composed.jiraBody,
       reason: classified.reason,
       fallback: classified.fallback,
     });

@@ -129,8 +129,17 @@ export function DraftForm({
   const [track, setTrack] = useState<SrTrack>(DEFAULT_TRACK);
   /** 사람이 구분을 직접 골랐는가. 골랐으면 **덮어쓰지 않는다.** */
   const [trackPicked, setTrackPicked] = useState(false);
-  /** 티켓 제목(한글). 비워 두면 원문 첫 줄에서 뽑는다. */
+  /** 티켓 제목(한글). AI 가 채우고, 사람이 고칠 수 있다. */
   const [titleKo, setTitleKo] = useState("");
+  /**
+   * 티켓 본문(한글). **AI 가 쓴다.**
+   *
+   * 한때 한글 원문의 앞 문단을 잘라 썼는데, 티켓에 고객에게 보낼 말투의 긴 글이
+   * 그대로 들어가 추적용으로 읽히지 않았다. 지금은 번역·정리 호출에서 "질문·배경"
+   * 두 줄머리로 간추린 것을 같이 받는다(lib/srDraftPrompt.ts 의 JIRA_BLOCK).
+   * 비어 있으면(AI 를 한 번도 안 부른 경우) 한글 원문으로 떨어진다.
+   */
+  const [jiraBody, setJiraBody] = useState("");
   const [stage, setStage] = useState<"write" | "confirm">("write");
   const [busy, setBusy] = useState(false);
   /** 돌고 있는 작업. 없으면 null. */
@@ -158,9 +167,11 @@ export function DraftForm({
      */
     if (mode === "translate" && hasHangul(d.content)) {
       setKoOriginal(d.content);
-      // 제목과 구분은 **비어 있거나 아직 안 고른 경우에만** 채운다. 사람이 고른 값을
-      // 번역 버튼이 덮으면, 고친 줄도 모르고 틀린 구분으로 올라간다.
-      if (titleKo.trim() === "") setTitleKo(koTitleFrom(d.content));
+      // 구분은 **아직 안 고른 경우에만** 채운다. 사람이 고른 값을 번역 버튼이 덮으면,
+      // 고친 줄도 모르고 틀린 구분으로 올라간다.
+      //
+      // 제목은 여기서 채우지 않는다 — 조금 뒤 AI 응답이 더 나은 것을 준다. 모델이
+      // 안 줬을 때만 원문 첫 줄로 떨어진다(아래 응답 처리부).
       if (!trackPicked) setTrack(guessTrack(d.content));
     }
     try {
@@ -180,6 +191,7 @@ export function DraftForm({
       });
       const data = (await response.json()) as {
         ok?: boolean; message?: string; subject?: string; content?: string; missing?: string[];
+        jiraTitle?: string; jiraBody?: string;
       };
       if (data.ok !== true || typeof data.content !== "string") {
         setComposeError(data.message ?? `정리에 실패했습니다 (HTTP ${response.status}).`);
@@ -192,6 +204,18 @@ export function DraftForm({
         subject: prev.subject.trim() === "" ? (data.subject ?? "").slice(0, SUBJECT_LIMIT) : prev.subject,
       }));
       setGaps(data.missing ?? []);
+      /*
+       * Jira 티켓에 쓸 한글을 **AI 가 준 것으로** 채운다.
+       *
+       * 제목은 사람이 이미 고쳐 둔 것을 덮지 않는다 — 고친 줄 모르고 바뀌면 다음에
+       * 눈으로 확인할 자리가 없다. 본문은 추적용 요약이라 매번 최신으로 둔다.
+       */
+      if (titleKo.trim() === "") {
+        setTitleKo((data.jiraTitle ?? "") !== ""
+          ? (data.jiraTitle ?? "")
+          : koTitleFrom(koOriginal !== "" ? koOriginal : d.content));
+      }
+      if ((data.jiraBody ?? "") !== "") setJiraBody(data.jiraBody ?? "");
     } catch (e) {
       setComposeError(e instanceof Error ? e.message : "정리 중 오류가 발생했습니다.");
     } finally {
@@ -243,7 +267,8 @@ export function DraftForm({
           // Jira 티켓용. 스위치가 꺼져 있으면 서버가 쓰지 않는다.
           track,
           titleKo,
-          bodyKo: koOriginal,
+          // AI 가 간추린 한글이 있으면 그것을 보낸다. 없으면 한글 원문으로 떨어진다.
+          bodyKo: jiraBody !== "" ? jiraBody : koOriginal,
           productName, componentName,
         }),
       });

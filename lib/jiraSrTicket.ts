@@ -156,7 +156,8 @@ export function srTicketBody(input: SrTicketInput): AdfDoc {
   return adfDoc([
     adfHeading(3, `Case ${input.caseLabel}`),
     ...(story === "" ? [] : adfLines(story)),
-    adfParagraph(),
+    // 빈 문단을 일부러 넣지 않는다 — Jira 는 문단 사이를 이미 벌려 그리므로,
+    // 넣으면 본문에 빈 줄이 두 칸 생긴다.
     ...(where === "" ? [] : [adfParagraph(`제품/컴포넌트: ${where}`)]),
     input.caseUrl === "" ? null : adfParagraph("케이스: ", adfLink(input.caseLabel, input.caseUrl)),
   ]);

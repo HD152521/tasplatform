@@ -38,6 +38,48 @@ export const QUESTIONS_HEADING = "Questions";
 /** 원문에 없어 채울 수 없는 자리. 지어내는 것보다 비워 두는 편이 낫다. */
 export const UNKNOWN_MARK = "(to be confirmed)";
 
+/**
+ * Jira 티켓(우리 팀 추적용)에 쓸 **한글 제목·본문**을 같은 호출에서 같이 받는다.
+ *
+ * ## 왜 같은 호출인가
+ *
+ * 따로 부르면 7~8초가 한 번 더 붙는다. SR 등록은 사람이 화면 앞에서 기다리는 구간이라
+ * 그 대가가 크다. 번역·정리는 어차피 원문을 읽고 있으므로, 두 덩어리를 더 받는 쪽은
+ * 공짜에 가깝다.
+ *
+ * ## 왜 코드가 자르지 않나
+ *
+ * 처음에는 한글 원문의 **첫 줄**을 제목으로, 앞 문단을 본문으로 잘라 썼다. 결과가
+ * 이랬다 — `[운영] 앱 두 개가 계속 crash 납니다 진행`. 첫 줄이 문장이면 뒤에 "진행" 이
+ * 붙어 말이 되지 않는다. 기존 티켓들은 `[운영] GemFire 비정상 VM 원인 분석 SR 진행`
+ * 처럼 **명사구**다. 문장을 명사구로 바꾸는 것은 규칙으로 할 일이 아니다.
+ *
+ * 대괄호(`[운영]`)와 꼬리말(`진행`)은 **코드가 붙인다**(lib/jiraSrTicket.ts). 모델이
+ * 같이 붙이면 두 번 붙는다.
+ */
+const JIRA_BLOCK = [
+  "[JIRA_TITLE]",
+  "(우리 팀 Jira 티켓에 쓸 **한글 제목 한 줄**. 목록에서 무슨 일인지 읽히게 씁니다.",
+  " - **명사구로 씁니다.** 문장으로 쓰지 않습니다.",
+  "   좋음: `Diego cell 앱 반복 crash 원인 분석`",
+  "   나쁨: `앱 두 개가 계속 crash 납니다`",
+  " - 제품·버전이 원문에 있으면 앞에 넣습니다. 예: `TPCF 10.4.2 앱 반복 crash 원인 분석`",
+  " - `[운영]`·`[개발]` 같은 대괄호와 끝의 `진행` 은 **붙이지 않습니다.** 코드가 붙입니다.",
+  " - 40자 안쪽으로 씁니다.)",
+  "",
+  "[JIRA_BODY]",
+  "(같은 티켓의 **한글 본문**. 우리 팀이 나중에 이 티켓만 보고 무슨 건이었는지 알 만큼",
+  " 짧게 씁니다. 고객에게 보내는 글이 아닙니다.",
+  " - `질문` 과 `배경` 두 줄머리로 나눠, 각 1~3줄.",
+  "   `질문` 은 **우리가 Broadcom 에 묻는 것**입니다. 원문에 없어 담당자가 채워야 할",
+  "   정보를 여기 적지 않습니다 — 그건 [MISSING] 자리입니다. 실측으로 모델이 이 둘을",
+  "   섞어, 티켓의 질문 칸에 \"발생 시각 정보가 필요합니다\" 가 들어간 적이 있습니다.",
+  "   물어볼 것이 원문에 없으면 `질문` 줄머리를 비워 둡니다.",
+  " - 원문에 없는 사실을 지어내지 않습니다.",
+  " - 에러 문구·명령어·버전은 원문 그대로 옮깁니다.",
+  " - 영문 본문을 그대로 옮겨 적지 않습니다 — 한글로 간추립니다.)",
+].join("\n");
+
 export const DRAFT_SYSTEM_PROMPT = [
   "당신은 VMware Tanzu / Cloud Foundry 를 운영하는 한국 기술지원팀의 엔지니어입니다.",
   "담당자가 한국어로 적은 내용을 Broadcom 지원팀에 보낼 영문 SR 본문으로 정리합니다.",
@@ -61,7 +103,7 @@ export const DRAFT_SYSTEM_PROMPT = [
   "- 고객사 이름은 쓰지 않습니다. 이미 계정으로 식별됩니다.",
   "",
   "# 출력 형식",
-  "아래 세 덩어리만 이 순서로 출력합니다. 다른 말은 붙이지 않습니다.",
+  "아래 다섯 덩어리만 이 순서로 출력합니다. 다른 말은 붙이지 않습니다.",
   "",
   "[SUBJECT]",
   "(영문 제목 한 줄.",
@@ -77,6 +119,8 @@ export const DRAFT_SYSTEM_PROMPT = [
   "[MISSING]",
   "(Broadcom 이 되물을 법한데 원문에 없는 정보를 한국어로 한 줄에 하나씩.",
   " 없으면 이 덩어리를 비워 둡니다.)",
+  "",
+  JIRA_BLOCK,
 ].join("\n");
 
 /**
@@ -106,7 +150,7 @@ export const TIDY_SYSTEM_PROMPT = [
   "- 에러 문구·로그·명령어·경로·설정값·제품 버전은 **한 글자도 바꾸지 않습니다.**",
   "",
   "# 출력 형식",
-  "아래 세 덩어리만 이 순서로 출력합니다. 다른 말은 붙이지 않습니다.",
+  "아래 다섯 덩어리만 이 순서로 출력합니다. 다른 말은 붙이지 않습니다.",
   "",
   "[SUBJECT]",
   "(영문 제목 한 줄.",
@@ -122,6 +166,8 @@ export const TIDY_SYSTEM_PROMPT = [
   "[MISSING]",
   "(Broadcom 이 되물을 법한데 원문에 없는 정보를 한국어로 한 줄에 하나씩.",
   " 없으면 이 덩어리를 비워 둡니다.)",
+  "",
+  JIRA_BLOCK,
 ].join("\n");
 
 /** 무엇을 시킬 것인가. */
@@ -189,6 +235,13 @@ export interface ComposedDraft {
   content: string;
   /** 원문에 없어 담당자가 채워야 할 것들. */
   missing: string[];
+  /**
+   * Jira 티켓에 쓸 한글 제목. 모델이 안 주면 빈 문자열이고, 그때는 부르는 쪽이
+   * 원문 첫 줄에서 뽑는다(lib/jiraSrTicket.ts 의 koTitleFrom).
+   */
+  jiraTitle: string;
+  /** 같은 티켓의 한글 본문. 비면 부르는 쪽이 한글 원문을 쓴다. */
+  jiraBody: string;
 }
 
 /**
@@ -207,11 +260,13 @@ export function parseComposed(text: string): ComposedDraft {
     subject: find("SUBJECT"),
     content: find("CONTENT"),
     missing: find("MISSING"),
+    jiraTitle: find("JIRA_TITLE"),
+    jiraBody: find("JIRA_BODY"),
   };
 
   // 표식이 하나도 없으면 전부 본문이다.
   if (starts.subject === -1 && starts.content === -1) {
-    return { subject: "", content: clean, missing: [] };
+    return { subject: "", content: clean, missing: [], jiraTitle: "", jiraBody: "" };
   }
 
   /** from 에서 시작해, 뒤따르는 다른 표식 앞까지. */
@@ -221,7 +276,9 @@ export function parseComposed(text: string): ComposedDraft {
     const end = after.length > 0 ? Math.min(...after) : clean.length;
     // 다음 표식 줄 자체를 잘라낸다.
     const raw = clean.slice(from, end);
-    return raw.replace(/\n\s*\[?(SUBJECT|CONTENT|MISSING)\]?\s*:?\s*$/i, "").trim();
+    return raw
+      .replace(/\n\s*\[?(SUBJECT|CONTENT|MISSING|JIRA_TITLE|JIRA_BODY)\]?\s*:?\s*$/i, "")
+      .trim();
   };
 
   const missing = slice(starts.missing)
@@ -229,11 +286,26 @@ export function parseComposed(text: string): ComposedDraft {
     .map((l) => l.replace(/^\s*[-*•]\s*/, "").trim())
     .filter((l) => l !== "" && !/^\(?(없음|none)\)?\.?$/i.test(l));
 
+  /**
+   * 모델이 지시를 어기고 대괄호나 꼬리말을 붙여 오는 경우를 걷어낸다.
+   *
+   * 코드가 `[운영] … 진행` 으로 감싸므로(lib/jiraSrTicket.ts), 모델이 같이 붙이면
+   * `[운영] [운영] … 진행 진행` 이 된다. 지시를 지킬 것이라는 전제 위에 모양을 쌓지
+   * 않는다 — 이 파일의 parseComposed 자체가 그 원칙으로 쓰여 있다.
+   */
+  const cleanJiraTitle = (line: string): string =>
+    line
+      .replace(/^\s*\[(운영|개발|AWS)\]\s*/i, "")
+      .replace(/\s*진행\s*$/, "")
+      .trim();
+
   return {
     // 제목이 여러 줄로 오면 첫 줄만 쓴다.
     subject: (slice(starts.subject).split("\n")[0] ?? "").trim(),
     content: slice(starts.content),
     missing,
+    jiraTitle: cleanJiraTitle(slice(starts.jiraTitle).split("\n")[0] ?? ""),
+    jiraBody: slice(starts.jiraBody),
   };
 }
 
