@@ -14,7 +14,7 @@
  */
 import { openDb } from "./db.ts";
 import { isoNow } from "./dates.ts";
-import { chat } from "./aiChat.ts";
+import { chatLong } from "./aiChat.ts";
 import {
   CONFLUENCE_SECTIONS,
   CONFLUENCE_USER_PREFIX,
@@ -110,10 +110,17 @@ function writeSection(
     ? CONFLUENCE_USER_PREFIX + source
     : `${CONFLUENCE_USER_PREFIX}${source}\n\n=== 이미 작성된 앞 섹션 (되풀이하지 말 것) ===\n${context}`;
 
-  // maxTokens 를 넘기지 않는 것은 의도다 — summaryPrompt.ts 의 설명 참고.
-  return chat(sectionSystemPrompt(section), user, {
+  /*
+   * maxTokens 를 넘기지 않는 것은 의도다 — summaryPrompt.ts 의 설명 참고.
+   *
+   * 대신 상한에 걸려 끊기면 **이어받는다**(chatLong). 마감을 이 섹션 몫으로 주어
+   * 이어받기가 **새 예산을 쓰지 않게** 한다 — 섹션 다섯이 라우트 예산(300초)을 이미
+   * 꽉 채우고 있어서다. 첫 호출이 오래 걸렸으면 이어받지 않고 그대로 끝낸다.
+   */
+  return chatLong(sectionSystemPrompt(section), user, {
     temperature: 0,
     timeoutMs: SECTION_TIMEOUT_MS,
+    deadlineMs: Date.now() + SECTION_TIMEOUT_MS,
   });
 }
 

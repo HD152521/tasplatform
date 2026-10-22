@@ -49,6 +49,17 @@ export interface ChatOptions {
   timeoutMs?: number;
 }
 
+/**
+ * 한 번 주고받은 결과.
+ *
+ * `truncated` 는 출력 상한에 걸려 **중간에서 끊겼다**는 뜻이다(`finish_reason: "length"`).
+ * 이걸 안 보면 끊긴 글이 조용히 문서가 된다 — 실제로 그랬다(lib/chatContinue.ts).
+ */
+export interface ChatResult {
+  readonly text: string;
+  readonly truncated: boolean;
+}
+
 const DEFAULT_TIMEOUT_MS = 180_000;
 const TOKEN_TIMEOUT_MS = 15_000;
 /** 만료 직전에 새로 받도록 남기는 여유(초). 시계 오차·지연을 흡수한다. */
@@ -158,12 +169,12 @@ function chatUrl(config: LlmConfig): string {
  *   (리포트처럼 긴 출력이 필요한 호출은 자기 maxTokens 를 넘겨 512 기본값을 넘어선다).
  * - 설정에 시스템 지침(systemPrompt)이 있으면 호출자의 system 앞에 덧붙인다.
  */
-export async function chatWithConfig(
+export async function chatOnceWithConfig(
   config: LlmConfig,
   system: string,
   user: string,
   options: ChatOptions = {},
-): Promise<string> {
+): Promise<ChatResult> {
   const authorization = await authHeader(config);
   const mergedSystem = config.systemPrompt.trim() === ""
     ? system
@@ -198,15 +209,29 @@ export async function chatWithConfig(
   const raw = await response.text();
   if (!response.ok) throw new LlmError(response.status, raw.slice(0, 200));
 
-  let parsed: { choices?: Array<{ message?: { content?: string } }> };
+  let parsed: {
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+  };
   try {
     parsed = JSON.parse(raw) as typeof parsed;
   } catch {
     throw new LlmError(response.status, "응답을 해석하지 못했습니다.");
   }
-  const out = parsed.choices?.[0]?.message?.content ?? "";
+  const choice = parsed.choices?.[0];
+  const out = choice?.message?.content ?? "";
   if (out.trim() === "") throw new LlmError(response.status, "빈 응답");
-  return out.trim();
+  // 잘렸는지는 응답이 말해 준다. 길이로 짐작하지 않는다(lib/chatContinue.ts 머리말).
+  return { text: out.trim(), truncated: choice?.finish_reason === "length" };
+}
+
+/** 잘렸는지 모르고 글만 받는 호출부용. 기존 동작 그대로다. */
+export async function chatWithConfig(
+  config: LlmConfig,
+  system: string,
+  user: string,
+  options: ChatOptions = {},
+): Promise<string> {
+  return (await chatOnceWithConfig(config, system, user, options)).text;
 }
 
 export interface TestResult {

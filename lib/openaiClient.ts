@@ -35,11 +35,11 @@ export function hasOpenAi(): boolean {
  * 기본 타임아웃은 보고서 기준(3분)이다. 수집기처럼 기다릴 수 없는 쪽은
  * timeoutMs 를 줄여서 부른다.
  */
-export async function chat(
+export async function chatOnce(
   system: string,
   user: string,
   options: { maxTokens?: number; temperature?: number; timeoutMs?: number } = {},
-): Promise<string> {
+): Promise<{ readonly text: string; readonly truncated: boolean }> {
   const key = (process.env.OPENAI_API_KEY ?? "").trim();
   if (key === "") throw new OpenAiError(0, ".env 에 OPENAI_API_KEY 가 필요합니다.");
 
@@ -61,13 +61,25 @@ export async function chat(
   const raw = await response.text();
   if (!response.ok) throw new OpenAiError(response.status, raw.slice(0, 200));
 
-  let parsed: { choices?: Array<{ message?: { content?: string } }> };
+  let parsed: {
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+  };
   try {
     parsed = JSON.parse(raw) as typeof parsed;
   } catch {
     throw new OpenAiError(response.status, "응답을 해석하지 못했습니다.");
   }
-  const out = parsed.choices?.[0]?.message?.content ?? "";
+  const choice = parsed.choices?.[0];
+  const out = choice?.message?.content ?? "";
   if (out.trim() === "") throw new OpenAiError(response.status, "빈 응답");
-  return out.trim();
+  return { text: out.trim(), truncated: choice?.finish_reason === "length" };
+}
+
+/** 잘렸는지 모르고 글만 받는 호출부용. 기존 동작 그대로다. */
+export async function chat(
+  system: string,
+  user: string,
+  options: { maxTokens?: number; temperature?: number; timeoutMs?: number } = {},
+): Promise<string> {
+  return (await chatOnce(system, user, options)).text;
 }

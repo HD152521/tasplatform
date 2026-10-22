@@ -14,8 +14,11 @@
  */
 import { openDb } from "./db.ts";
 import { getLlmConfig } from "./llmConfig.ts";
-import { chatWithConfig, type ChatOptions } from "./llmClient.ts";
-import { OpenAiError, chat as openaiChat, hasOpenAi as hasOpenAiKey } from "./openaiClient.ts";
+import { chatOnceWithConfig, chatWithConfig, type ChatOptions } from "./llmClient.ts";
+import {
+  OpenAiError, chat as openaiChat, chatOnce as openaiChatOnce, hasOpenAi as hasOpenAiKey,
+} from "./openaiClient.ts";
+import { runWithContinuation, type ContinuationLimits } from "./chatContinue.ts";
 
 // 기존 호출부가 catch(OpenAiError) / hasOpenAi() 를 쓰므로 그대로 재노출한다.
 export { OpenAiError } from "./openaiClient.ts";
@@ -63,6 +66,60 @@ export async function chat(system: string, user: string, options: ChatOptions = 
   if (config) return chatWithConfig(config, system, user, options);
   if (hasOpenAiKey()) return openaiChat(system, user, options);
   throw new OpenAiError(0, "LLM 연결이 설정되지 않았습니다 (설정 > LLM 또는 OPENAI_API_KEY).");
+}
+
+/**
+ * 잘리면 **이어받아 가며** 한 덩이를 완성한다.
+ *
+ * 출력 상한(사내 엔드포인트 기본 512 토큰)에 걸려 문장 중간에서 끊긴 글이 그대로
+ * 문서가 되는 것을 막는다. 잘렸는지는 응답의 `finish_reason` 으로 안다 — 길이로
+ * 짐작하지 않는다(lib/chatContinue.ts).
+ *
+ * 백엔드는 `chat()` 과 같은 우선순위로 고르고, **한 번만 고른다** — 이어받을 때마다
+ * DB 를 다시 열 이유가 없다.
+ *
+ * 끝까지 못 쓴 경우는 **로그로 남긴다.** 조용히 짧은 글을 돌려주면 상한 문제가 다시
+ * 보이지 않게 된다 — 이 기능을 만든 이유가 그것이다.
+ */
+export async function chatLong(
+  system: string,
+  user: string,
+  options: ChatOptions & ContinuationLimits = {},
+): Promise<string> {
+  const db = await openDb();
+  let config;
+  try {
+    config = await getLlmConfig(db);
+  } finally {
+    await db.close();
+  }
+
+  const shared = { maxTokens: options.maxTokens, temperature: options.temperature };
+  const withTimeout = (timeoutMs: number | undefined) =>
+    timeoutMs === undefined ? shared : { ...shared, timeoutMs };
+
+  const chosen = config;
+  const call = chosen !== null
+    ? (u: string, timeoutMs: number | undefined) =>
+      chatOnceWithConfig(chosen, system, u, withTimeout(timeoutMs))
+    : hasOpenAiKey()
+      ? (u: string, timeoutMs: number | undefined) =>
+        openaiChatOnce(system, u, withTimeout(timeoutMs))
+      : null;
+  if (call === null) {
+    throw new OpenAiError(0, "LLM 연결이 설정되지 않았습니다 (설정 > LLM 또는 OPENAI_API_KEY).");
+  }
+
+  const outcome = await runWithContinuation(call, user, options);
+  if (outcome.error !== undefined) {
+    console.error(`[llm] 이어받기가 실패해 받은 만큼만 씁니다: ${outcome.error}`);
+  } else if (outcome.truncated) {
+    console.error(
+      `[llm] 출력 상한에 걸려 끝까지 쓰지 못했습니다(호출 ${outcome.calls}회). `
+      + "설정 > LLM 의 max_tokens 를 올리면 줄어듭니다.",
+    );
+  }
+  return outcome.text;
 }
 
 /**
