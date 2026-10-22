@@ -63,7 +63,7 @@ async function main(): Promise<void> {
   const db = await openDb();
   try {
     const now = Date.now();
-    const stored = await initAppState(db, WATERMARK_KEY, String(now));
+    const { value: stored, inserted } = await initAppState(db, WATERMARK_KEY, String(now));
     const sinceMs = Number(stored);
     /*
      * `isFinite` 만으로는 모자라다. `Number("")` 와 `Number(" ")` 는 0 이고 `isFinite(0)`
@@ -77,7 +77,9 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (stored === String(now)) {
+    // 첫 실행인지는 initAppState 가 답한다. 시각 비교로 추측하면 같은 밀리초에 두 번
+    // 불렸을 때 틀린다(lib/appState.ts 머리말).
+    if (inserted) {
       // 첫 실행. 이미 끝나 있던 건은 대상이 아니라는 것을 분명히 남긴다.
       console.log("[prewarm] 워터마크를 지금으로 박았습니다. 이전에 종료된 건은 건너뜁니다.");
       return;

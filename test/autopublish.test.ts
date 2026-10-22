@@ -156,6 +156,30 @@ test("처음 읽으면 지금으로 박고 first 를 알린다", async () => {
   await db.close();
 });
 
+/*
+ * **같은 밀리초에 두 번 읽어도 두 번째는 처음이 아니다.**
+ *
+ * 한때 `first` 를 `stored === String(Date.now())` 로 판정했다. 두 호출이 같은 밀리초에
+ * 떨어지면 그 비교가 참이 되어 두 번째도 "첫 실행" 이 된다 — 그러면 그 회차는 아무것도
+ * 올리지 않고 넘어간다. 느린 PC 에서는 안 걸리고 빠른 CI 러너(911건 11초)에서만 깨졌다.
+ * 시계를 멈춰 결정적으로 확인한다.
+ */
+test("같은 밀리초에 두 번 읽어도 두 번째는 처음이 아니다", async () => {
+  const db = await freshDb();
+  const realNow = Date.now;
+  const frozen = realNow.call(Date);
+  Date.now = () => frozen;
+  try {
+    assert.equal((await readSince(db)).first, true);
+    const again = await readSince(db);
+    assert.equal(again.first, false, "같은 밀리초인데 두 번째도 처음이 됐다");
+    assert.equal(again.sinceMs, frozen, "기준이 밀렸다 — 과거가 열린다");
+  } finally {
+    Date.now = realNow;
+    await db.close();
+  }
+});
+
 // 값이 깨져 있으면 과거를 열어 주는 쪽으로 기울지 않는다.
 test("기준 값이 깨져 있으면 지금으로 다시 박는다", async () => {
   const db = await freshDb();

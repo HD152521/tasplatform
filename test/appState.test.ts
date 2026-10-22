@@ -49,8 +49,8 @@ test("같은 키에 다시 넣으면 덮어쓴다", async () => {
 // 워터마크의 핵심 성질 — 처음 한 번만 정해지고 그 뒤로는 안 바뀐다.
 test("initAppState 는 처음 값만 남기고 이후 호출은 기존 값을 돌려준다", async () => {
   await withDb(async (db) => {
-    assert.equal(await initAppState(db, "watermark", "100"), "100");
-    assert.equal(await initAppState(db, "watermark", "999"), "100");
+    assert.deepEqual(await initAppState(db, "watermark", "100"), { value: "100", inserted: true });
+    assert.deepEqual(await initAppState(db, "watermark", "999"), { value: "100", inserted: false });
     assert.equal(await getAppState(db, "watermark"), "100");
   });
 });
@@ -60,6 +60,21 @@ test("빈 문자열도 설정된 값으로 본다", async () => {
   await withDb(async (db) => {
     await setAppState(db, "k", "");
     assert.equal(await getAppState(db, "k"), "");
-    assert.equal(await initAppState(db, "k", "나중값"), "");
+    assert.deepEqual(await initAppState(db, "k", "나중값"), { value: "", inserted: false });
+  });
+});
+
+/*
+ * ## 같은 값으로 두 번 불러도 두 번째는 **내가 넣은 것이 아니다**
+ *
+ * 호출부가 "첫 실행인가" 를 `stored === String(Date.now())` 로 추측하던 때, 두 호출이
+ * 같은 밀리초에 떨어지면 두 번째도 첫 실행으로 보고됐다. 느린 PC 에서는 안 걸리고 빠른
+ * CI 러너에서만 깨졌다(911건 11초). 같은 값을 두 번 넣어 보는 것이 그 상황이다 —
+ * 시계와 무관하게 재현된다.
+ */
+test("같은 값으로 다시 불러도 inserted 가 아니다", async () => {
+  await withDb(async (db) => {
+    assert.deepEqual(await initAppState(db, "watermark", "100"), { value: "100", inserted: true });
+    assert.deepEqual(await initAppState(db, "watermark", "100"), { value: "100", inserted: false });
   });
 });

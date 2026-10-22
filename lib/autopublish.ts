@@ -195,13 +195,17 @@ export async function readSince(
     return { sinceMs: Number(existing), first: false, initialized: true };
   }
 
-  const stored = await initAppState(db, SINCE_KEY, String(now));
+  /*
+   * `first` 를 시각 비교로 추측하지 않는다. 넣었는지는 initAppState 가 안다 —
+   * 같은 밀리초에 두 번 불리면 추측이 틀린다(lib/appState.ts 머리말).
+   */
+  const { value: stored, inserted } = await initAppState(db, SINCE_KEY, String(now));
   if (!usableSince(stored)) {
     // 값이 깨졌다. 지금으로 다시 박는다 — 과거를 열어 주는 쪽으로 기울지 않는다.
     await setAppState(db, SINCE_KEY, String(now));
     return { sinceMs: now, first: true, initialized: true };
   }
-  return { sinceMs: Number(stored), first: stored === String(now), initialized: true };
+  return { sinceMs: Number(stored), first: inserted, initialized: true };
 }
 
 /**
