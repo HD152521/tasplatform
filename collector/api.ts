@@ -130,6 +130,34 @@ export async function fetchThreads(
 }
 
 /**
+ * 케이스 하나의 **현재 상태**.
+ *
+ * 진행중 목록 조회는 `End Customer Status != Closed` 로 걸러서, 닫힌 건은 결과에서
+ * 그냥 **빠진다**(collector/payloads/search.json). 그래서 사라진 건의 실제 상태는
+ * 따로 물어봐야 안다. 목록과 같은 칸(`statusAliasName`)을 돌려주므로 DB 값과 바로
+ * 비교된다.
+ *
+ * 빈 문자열은 **모른다**는 뜻이다 — 호출부는 그때 상태를 건드리지 않는다. 조회가
+ * 실패했다는 이유로 멀쩡한 케이스를 닫으면 안 된다.
+ *
+ * 섹션은 REQUEST_MASTER 만 요청한다(전체를 부르면 응답이 60KB 를 넘는다).
+ */
+export async function fetchCaseStatus(client: ApiClient, requestId: number): Promise<string> {
+  const url =
+    `${API_ORIGIN}/request/specific_request_details` +
+    `?requestId=${requestId}&sections=REQUEST_MASTER`;
+  try {
+    const envelope = await getJson<{
+      RequestDetails?: { requestMasterVO?: { statusAliasName?: string } };
+    }>(client, url);
+    return envelope.data?.RequestDetails?.requestMasterVO?.statusAliasName ?? "";
+  } catch (error) {
+    if (error instanceof SessionExpiredError) throw error;
+    return "";
+  }
+}
+
+/**
  * 케이스 본문(우리가 최초 등록할 때 쓴 내용).
  *
  * 스레드가 아니라 descDetailsVO.descLarge 에 따로 들어 있어서 별도로 가져와야 한다.

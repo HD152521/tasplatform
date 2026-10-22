@@ -28,6 +28,41 @@ export function selectChangedCases(
   return changes;
 }
 
+/** 한 회차에 상태를 다시 확인할 상한. 한 건마다 상세 조회 한 번이 나간다. */
+export const MAX_VANISHED_PER_RUN = 20;
+
+/**
+ * 조회 결과에서 **사라진** 진행중 케이스.
+ *
+ * 포털의 진행중 조회는 `End Customer Status != Closed` 로 거른다
+ * (collector/payloads/search.json). 그래서 케이스가 닫히면 "상태가 Closed 로 바뀐 행"
+ * 이 오는 게 아니라 **결과에서 빠진다.** 수집기는 조회로 받은 건만 쓰므로, 빠진 건은
+ * 마지막으로 본 상태로 영영 굳는다 — 그러면 자동 게시 대상 조회
+ * (`status IN ('closed','resolved')`, lib/autopublish.ts)에 영영 들어오지 않는다.
+ *
+ * 여기서는 **집기만** 한다. 사라졌다는 사실로 상태를 단정하지 않고, 호출부가 그 건의
+ * 상세를 따로 조회해 실제 상태를 읽는다. 사라지는 이유가 종료만은 아니기 때문이다
+ * (담당 이관·고객사 변경 등).
+ *
+ * **조회 결과가 비면 아무것도 집지 않는다.** 조회가 통째로 실패한 회차에 "전부
+ * 사라졌다" 고 보면 살아 있는 케이스를 모두 닫아 버린다.
+ */
+export function selectVanishedCases(
+  openIds: readonly number[],
+  fetched: readonly Pick<SearchResultItem, "requestId">[],
+  limit = MAX_VANISHED_PER_RUN,
+): number[] {
+  if (fetched.length === 0) return [];
+  const seen = new Set(fetched.map((item) => item.requestId));
+  const vanished: number[] = [];
+  for (const id of new Set(openIds)) {
+    if (seen.has(id)) continue;
+    vanished.push(id);
+    if (vanished.length >= limit) break;
+  }
+  return vanished;
+}
+
 /**
  * 이 스레드를 우리가 작성했는가?
  *  - creatorFlag 가 true면 케이스 생성자(=우리)

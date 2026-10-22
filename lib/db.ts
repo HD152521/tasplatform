@@ -184,6 +184,46 @@ export async function getExistingCaseIndex(db: Db): Promise<Map<number, string>>
   return new Map(rows.map((r) => [r.request_id, r.last_updated]));
 }
 
+/**
+ * 아직 **진행중**으로 남아 있는 케이스와 그 상태. 오래된 것부터.
+ *
+ * 포털의 진행중 조회에서 사라진 건을 찾는 데 쓴다(lib/diff.ts selectVanishedCases).
+ *
+ * 화면 분류(lib/queries.ts isClosedStatus)와 **같은 기준**이어야 한다 — 거기서 종료로
+ * 보는 건을 여기서 진행중으로 집으면 매 회차 쓸데없이 상세를 다시 조회한다. SQL 안에서
+ * 그 함수를 부를 수 없어 같은 세 낱말을 LIKE 로 본다.
+ *
+ * 오래된 것부터 돌려준다 — 상한에 걸려 잘릴 때 밀린 것이 계속 뒤로 밀리지 않게.
+ */
+export async function getOpenCases(db: Db): Promise<Array<{ requestId: number; status: string }>> {
+  const rows = await db.all<{ request_id: number; status: string }>(
+    `SELECT request_id, status FROM cases
+      WHERE lower(status) NOT LIKE '%closed%'
+        AND lower(status) NOT LIKE '%resolved%'
+        AND lower(status) NOT LIKE '%cancel%'
+      ORDER BY last_updated_ms ASC`,
+  );
+  return rows.map((r) => ({ requestId: r.request_id, status: r.status }));
+}
+
+/**
+ * 상태 한 칸만 갱신한다.
+ *
+ * 목록에서 사라진 건은 조회 줄(SearchResultItem)이 없어 upsertCase 를 쓸 수 없다.
+ * `last_fetched_at` 도 같이 올려 "이 회차에 확인했다" 를 남긴다.
+ */
+export async function updateCaseStatus(
+  db: Db,
+  requestId: number,
+  status: string,
+  fetchedAt: string,
+): Promise<void> {
+  await db.run(
+    "UPDATE cases SET status = ?, last_fetched_at = ? WHERE request_id = ?",
+    [status, fetchedAt, requestId],
+  );
+}
+
 export async function getKnownThreadIds(db: Db, requestId: number): Promise<Set<number>> {
   const rows = await db.all<{ thread_id: number }>(
     "SELECT thread_id FROM threads WHERE request_id = ?",

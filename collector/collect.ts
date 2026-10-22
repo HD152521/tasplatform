@@ -25,14 +25,16 @@ import { loginContextOptions } from "../lib/browserIdentity.ts";
 import { OtpRequiredError, performCredentialLogin, saveSession } from "./autoLogin.ts";
 import { isoNow } from "../lib/dates.ts";
 import {
-  finishRun, getExistingCaseIndex, getKnownThreadIds, inTransaction,
-  openDb, startRun, upsertAttachment, upsertCase, upsertThread, type Db,
+  finishRun, getExistingCaseIndex, getKnownThreadIds, getOpenCases, inTransaction,
+  openDb, startRun, updateCaseStatus, upsertAttachment, upsertCase, upsertThread, type Db,
 } from "../lib/db.ts";
 import {
-  dedupeReplies, htmlToText, selectChangedCases, selectNewReplies,
+  dedupeReplies, htmlToText, selectChangedCases, selectNewReplies, selectVanishedCases,
 } from "../lib/diff.ts";
 import type { SearchResultItem } from "../lib/types.ts";
-import { fetchCaseDescription, fetchCaseList, fetchThreads, type CaseDetail } from "./api.ts";
+import {
+  fetchCaseDescription, fetchCaseList, fetchCaseStatus, fetchThreads, type CaseDetail,
+} from "./api.ts";
 import { toAttachmentRows, toCaseRow, toThreadRow } from "../lib/rowMappers.ts";
 import { acquireLock } from "./lock.ts";
 import { REPLY_LIMIT, formatFailure, formatReplies, hasWebhook, send } from "../lib/notify.ts";
@@ -210,6 +212,81 @@ async function acquireSession(teamId: string = DEFAULT_TEAM_ID): Promise<Collect
   };
 }
 
+/**
+ * 진행중 목록에서 **사라진** 케이스의 상태를 다시 읽어 맞춘다.
+ *
+ * 진행중 조회는 `End Customer Status != Closed` 로 거른다(payloads/search.json). 그래서
+ * 케이스가 닫히면 "상태가 Closed 로 바뀐 줄"이 오는 게 아니라 **결과에서 빠진다.** 위의
+ * upsert 는 조회로 받은 줄만 쓰므로, 빠진 건은 마지막으로 본 상태로 영영 굳는다.
+ * 실측: 포털에서 Closed 인 건이 우리 화면 진행중에 8건 남아 있었다. 그러면 자동 게시가
+ * 영영 안 돈다 — 대상 조회가 `status IN ('closed','resolved')` 를 본다(lib/autopublish.ts).
+ *
+ * **사라졌다는 사실로 상태를 단정하지 않는다.** 종료 말고도 사라지는 이유가 있을 수 있어
+ * (담당 이관·고객사 변경), 그 건의 상세를 따로 조회해 실제 상태를 읽는다. 조회가 상태를
+ * 모른다고 답하면(빈 문자열) 건드리지 않는다.
+ *
+ * 던지지 않는다. 세션 만료만 올려 보낸다 — 그건 이 건의 문제가 아니라 회차 전체의 문제다.
+ */
+async function reconcileVanished(
+  db: Db,
+  client: ApiClient,
+  cases: readonly SearchResultItem[],
+  now: string,
+): Promise<number> {
+  const open = await getOpenCases(db);
+  const vanished = selectVanishedCases(open.map((row) => row.requestId), cases);
+  if (vanished.length === 0) return 0;
+
+  const previous = new Map(open.map((row) => [row.requestId, row.status]));
+  let changed = 0;
+  for (const requestId of vanished) {
+    let status: string;
+    try {
+      status = await fetchCaseStatus(client, requestId);
+    } catch (error) {
+      if (error instanceof SessionExpiredError) throw error;
+      console.error(`[수집] ${requestId} 상태 재확인 실패(계속 진행):`, error);
+      continue;
+    }
+    await sleep(REQUEST_DELAY_MS);
+    // 모른다 — 건드리지 않는다. 조회 실패로 멀쩡한 케이스를 닫으면 안 된다.
+    if (status === "") continue;
+    if (status === previous.get(requestId)) continue;
+    if (!DRY_RUN) await updateCaseStatus(db, requestId, status, now);
+    changed += 1;
+    console.log(`[수집] 목록에서 빠진 건의 상태를 맞췄습니다: ${requestId} → ${status}`);
+
+    /*
+     * **닫히는 순간의 마지막 답변도 함께 받는다.**
+     *
+     * 위의 변경 감지(selectChangedCases)는 목록의 lastUpdated 로 돈다. 케이스가 닫히면
+     * lastUpdated 가 바뀌는 동시에 목록에서 빠지므로, 그 회차의 마지막 답변을 받을
+     * 기회가 사라진다. 그 답변이 보통 **결론**이고, 자동 게시가 만드는 정리 문서는
+     * 스레드로 쓴다 — 빠지면 결론 없는 문서가 올라간다.
+     *
+     * 알림은 보내지 않는다. 밀려 있던 건을 처음 맞추는 회차에 여러 건이 한꺼번에
+     * 쏟아지는 쪽이 더 나쁘다.
+     */
+    try {
+      const threads = await fetchThreads(client, requestId);
+      if (!DRY_RUN) {
+        await inTransaction(db, async (tx) => {
+          for (const thread of threads) {
+            await upsertThread(tx, toThreadRow(thread, now));
+            for (const doc of toAttachmentRows(thread, now)) await upsertAttachment(tx, doc);
+          }
+        });
+      }
+      await sleep(REQUEST_DELAY_MS);
+    } catch (error) {
+      if (error instanceof SessionExpiredError) throw error;
+      // 상태는 이미 맞췄다. 답변은 다음 기회에 — 여기서 회차를 세우지 않는다.
+      console.error(`[수집] ${requestId} 마지막 답변 수집 실패(상태는 맞춤):`, error);
+    }
+  }
+  return changed;
+}
+
 async function main(): Promise<void> {
   const release = acquireLock();
   if (release === null) {
@@ -284,6 +361,10 @@ async function main(): Promise<void> {
         }
       });
     }
+    // 진행중 목록에서 빠진 건의 상태를 맞춘다(머리말). 조회가 비면 아무것도 하지 않는다.
+    const reconciled = await reconcileVanished(db, session.client, cases, now);
+    if (reconciled > 0) console.log(`[수집] 상태를 맞춘 건: ${reconciled}건`);
+
     // 수집 도중에도 쿠키가 갱신되므로 마지막 상태를 한 번 더 저장한다.
     await session.persist();
     // 회전된 세션·기기신뢰를 DB 로 백업한다(재시작 후 hydrate 로 복원). 실패해도 수집은 성공.
