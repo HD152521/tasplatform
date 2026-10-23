@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  MAX_CONTINUATIONS, continuationUser, runWithContinuation, stitchContinuation,
+  MAX_CONTINUATIONS, continuationUser, looksLikeRestart, runWithContinuation, stitchContinuation,
 } from "../lib/chatContinue.ts";
 
 test("겹침이 없으면 그대로 붙인다", () => {
@@ -45,8 +45,36 @@ test("처음부터 다시 쓴 응답은 다시 쓴 쪽을 택한다", () => {
 
 test("다시 쓴 쪽이 더 짧으면 앞 글을 지킨다", () => {
   const soFar = "### 조치\n메모리 쿼터를 올렸고 적용 후 해소됐습니다. 재발은 없었습니다.";
-  const chunk = "### 조치\n메모리 쿼터를";
+  const chunk = "### 조치\n메모리 쿼터를 올렸고 적용 후";
   assert.equal(stitchContinuation(soFar, chunk), soFar);
+});
+
+/*
+ * **조금씩 고쳐 쓴 다시 쓰기.** 모델은 다시 쓸 때 글자를 그대로 두지 않는다 — 조사
+ * 하나, 어순 하나를 바꾼다. 글자가 똑같은지로만 보면 이게 안 걸려서 그대로 붙었고,
+ * 같은 단락이 세 번 들어간 문서가 실제로 나갔다.
+ */
+test("조사만 바꿔 다시 쓴 응답도 다시 쓴 것으로 본다", () => {
+  const soFar = "발생 현상: 백업 실패 원인이 디스크 용량 고갈로 확인되었으며, "
+    + "캐시 디렉터리가 용량 대부분을 차지하고 있었습니다. 다음으로";
+  const chunk = "발생 현상: 백업 실패 원인으로 디스크 용량 고갈이 확인되었으며, "
+    + "캐시 디렉터리가 용량 대부분을 차지하고 있었습니다. 다음으로 정리 절차를 적용했습니다.";
+  assert.equal(looksLikeRestart(soFar, chunk), true);
+  assert.equal(stitchContinuation(soFar, chunk), chunk, "붙이면 같은 단락이 두 번 나온다");
+});
+
+/*
+ * 닮음으로 보는 판정은 **반대로도 틀릴 수 있다.** 진짜 이어 쓴 조각을 다시 쓴 것으로
+ * 보면 앞 글이나 조각 하나가 통째로 사라진다. 같은 사건을 다루니 낱말은 겹치지만
+ * 머리 내용은 다르다.
+ */
+test("진짜 이어 쓴 조각은 다시 쓴 것으로 보지 않는다", () => {
+  const soFar = "발생 현상: 백업 실패 원인이 디스크 용량 고갈로 확인되었으며, "
+    + "캐시 디렉터리가 용량 대부분을 차지하고 있었습니다. 조치는";
+  const chunk = " 디스크를 늘리고 만료된 산출물을 정리하는 순서로 적용했습니다. "
+    + "적용 뒤 사용률이 내려간 것을 확인했습니다.";
+  assert.equal(looksLikeRestart(soFar, chunk), false);
+  assert.equal(stitchContinuation(soFar, chunk), soFar + chunk);
 });
 
 /*
@@ -74,7 +102,8 @@ test("이어 쓰기 지시에는 꼬리만 넣는다", () => {
   assert.ok(got.includes("원래 지시"));
   assert.ok(got.includes("끝부분입니다"));
   assert.ok(!got.includes("가".repeat(100)), "앞 글 전체가 들어갔다");
-  assert.match(got, /이어서 써라/);
+  assert.match(got, /중간에서 끊겼다/);
+  assert.match(got, /그대로 가져다 쓰지 말 것/, "되풀이 금지가 지시에 남아야 한다");
 });
 
 /* ------------------------------------------------------------------ *
@@ -111,7 +140,7 @@ test("잘렸으면 이어받아 붙인다", async () => {
   assert.equal(got.text, "앞부분입니다. 그리고 뒷부분입니다.");
   assert.equal(got.truncated, false);
   assert.equal(got.calls, 2);
-  assert.match(seen[1] ?? "", /이어서 써라/, "두 번째는 이어 쓰기 지시여야 한다");
+  assert.match(seen[1] ?? "", /중간에서 끊겼다/, "두 번째는 이어 쓰기 지시여야 한다");
 });
 
 // 끝없이 부르지 않는다. 상한에 걸리면 truncated 로 알린다.
@@ -126,6 +155,28 @@ test("이어받기 상한을 넘기지 않는다", async () => {
   assert.equal(seen.length, 3, "처음 + 이어받기 두 번");
   assert.equal(got.calls, 3);
   assert.equal(got.truncated, true, "끝까지 못 썼다는 사실이 남아야 한다");
+});
+
+/*
+ * **다시 써 오면 거기서 끝낸다.** 더 부르면 횟수만큼 같은 단락이 쌓인다 — 상한을 8로
+ * 올린 뒤에는 아홉 번이다. 사람이 읽는 문서라 이게 제일 먼저 눈에 띈다.
+ */
+test("다시 써 오면 더 이어받지 않는다", async () => {
+  let calls = 0;
+  const rewriter = async (): Promise<{ text: string; truncated: boolean }> => {
+    calls += 1;
+    const text = calls === 1
+      ? "발생 현상: 백업 실패 원인이 디스크 용량 고갈로 확인되었으며, 정리 절차를"
+      : "발생 현상: 백업 실패 원인으로 디스크 용량 고갈이 확인되었으며, 정리 절차를";
+    return { text, truncated: true };
+  };
+  const got = await runWithContinuation(rewriter, "지시");
+  assert.equal(calls, 2, "다시 써 온 것을 알았으면 더 부를 이유가 없다");
+  assert.equal(got.truncated, true, "끝까지 못 쓴 것은 사실이다");
+  assert.equal(
+    got.text.split("발생 현상").length - 1, 1,
+    "같은 단락이 두 번 들어갔다",
+  );
 });
 
 /*

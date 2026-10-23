@@ -33,16 +33,82 @@ const MAX_OVERLAP = 400;
  */
 const MIN_OVERLAP = 6;
 
-/** 다시 쓴 것인지 판단할 때 비교하는 머리 길이. */
-const RESTART_HEAD = 40;
+/** 다시 쓴 것인지 판단할 때 비교하는 머리 길이(정규화 후 글자 수). */
+const RESTART_HEAD = 60;
 
 /**
- * 다시 쓴 것으로 보려면 머리가 이만큼은 같아야 한다.
+ * 다시 쓴 것으로 보려면 머리가 이만큼은 있어야 한다(정규화 후 글자 수).
  *
- * 겹침 경계보다 길게 둔다 — 이 판정이 틀리면 조각 하나를 통째로 버리거나 앞 글을
- * 통째로 버린다. 겹침을 잘못 떼는 것보다 손실이 크다.
+ * 짧은 글에는 판정하지 않는다 — 두세 낱말은 우연히 닮는다. `첫 문장입니다` 와
+ * `둘째 문장입니다` 는 앞 여섯 글자만 보면 닮음이 0.75 로 나온다. 둘은 이어 쓴
+ * 조각이지 다시 쓴 것이 아니다.
  */
 const MIN_RESTART_HEAD = 12;
+
+/**
+ * 다시 쓴 것으로 볼 머리 닮음 정도(0~1).
+ *
+ * **글자가 똑같은지로 보면 놓친다.** 모델은 다시 쓸 때 **조금씩 고쳐 쓴다** —
+ * 실측으로 `원인이 … 고갈로 확인되었으며` 가 다음 회차에 `원인으로 … 고갈이
+ * 확인되었으며` 로 왔다. 조사 하나가 달라 머리 비교가 어긋났고, 이어 쓴 것으로 보고
+ * 그대로 붙여서 **같은 단락이 세 번 들어간 문서가 나갔다.** 그래서 닮음 정도로 본다.
+ *
+ * 0.65 로 둔다. 진짜 이어 쓴 조각의 머리는 글 중간 내용이라 앞 글의 머리와 거의 안
+ * 닮는다(실측 0.3 아래). 고쳐 쓴 경우는 낱말이 대부분 그대로라 0.8 을 넘는다. 사이가
+ * 넓어서 경계를 어디에 두어도 되지만, 놓치는 쪽(중복)이 사람 눈에 먼저 띄므로 낮게 둔다.
+ */
+const RESTART_SIMILARITY = 0.65;
+
+/** 비교용으로 글자만 남긴다. 공백·기호·대소문자 차이로 닮음이 흔들리지 않게. */
+function normalizeForCompare(text: string): string {
+  return text.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+}
+
+/**
+ * 두 글의 닮음 정도(Dice, 글자 2-gram). 0~1.
+ *
+ * 2-gram 으로 보는 이유는 한국어에 낱말 경계가 또렷하지 않아서다. 공백으로 자르면
+ * 조사가 붙은 낱말이 전부 다른 것으로 세어져 고쳐 쓴 글을 못 알아본다.
+ */
+function headSimilarity(a: string, b: string): number {
+  if (a.length < 2 || b.length < 2) return 0;
+  const counts = new Map<string, number>();
+  for (let i = 0; i + 1 < a.length; i += 1) {
+    const gram = a.slice(i, i + 2);
+    counts.set(gram, (counts.get(gram) ?? 0) + 1);
+  }
+  let shared = 0;
+  for (let i = 0; i + 1 < b.length; i += 1) {
+    const gram = b.slice(i, i + 2);
+    const left = counts.get(gram) ?? 0;
+    if (left > 0) {
+      counts.set(gram, left - 1);
+      shared += 1;
+    }
+  }
+  return (2 * shared) / ((a.length - 1) + (b.length - 1));
+}
+
+/**
+ * 이어 쓴 것이 아니라 **처음부터 다시 쓴** 응답인가.
+ *
+ * 붙이면 같은 글이 두 번 나오므로, 이걸 놓치면 문서가 눈에 보이게 망가진다.
+ * 호출부는 이 판정이 참이면 **더 이어받지 않는다** — 지시를 안 듣는 중이라 더 불러도
+ * 같은 일이 반복된다.
+ */
+export function looksLikeRestart(soFar: string, chunk: string): boolean {
+  const left = normalizeForCompare(soFar);
+  const right = normalizeForCompare(chunk);
+
+  /*
+   * **길이를 양쪽 중 짧은 쪽에 맞춘다.** 다시 쓴 조각이 앞 글보다 짧을 수 있다 —
+   * 상한에 더 일찍 걸린 회차다. 긴 쪽 머리를 통째로 비교하면 길이 차이 때문에 닮음이
+   * 떨어져 그 경우를 놓친다.
+   */
+  const head = Math.min(RESTART_HEAD, left.length, right.length);
+  if (head < MIN_RESTART_HEAD) return false;
+  return headSimilarity(left.slice(0, head), right.slice(0, head)) >= RESTART_SIMILARITY;
+}
 
 /**
  * 이어받은 조각을 앞 글에 붙인다.
@@ -54,16 +120,8 @@ export function stitchContinuation(soFar: string, chunk: string): string {
   if (chunk.trim() === "") return soFar;
   if (soFar === "") return chunk;
 
-  /*
-   * 처음부터 다시 쓴 응답. 긴 쪽을 택한다 — 붙이면 같은 글이 두 번 나온다.
-   *
-   * **둘 중 짧은 쪽 길이로 비교한다.** 다시 쓴 조각이 앞 글보다 짧을 수 있어
-   * (상한에 더 일찍 걸린 회차), 앞 글의 머리 40자로만 비교하면 그 경우를 놓친다.
-   */
-  const headLen = Math.min(RESTART_HEAD, soFar.length, chunk.length);
-  if (headLen >= MIN_RESTART_HEAD && chunk.slice(0, headLen) === soFar.slice(0, headLen)) {
-    return chunk.length >= soFar.length ? chunk : soFar;
-  }
+  // 처음부터 다시 쓴 응답. 긴 쪽을 택한다 — 붙이면 같은 글이 두 번 나온다.
+  if (looksLikeRestart(soFar, chunk)) return chunk.length >= soFar.length ? chunk : soFar;
 
   const limit = Math.min(MAX_OVERLAP, soFar.length, chunk.length);
   for (let n = limit; n >= MIN_OVERLAP; n -= 1) {
@@ -80,15 +138,23 @@ export function stitchContinuation(soFar: string, chunk: string): string {
  */
 export function continuationUser(originalUser: string, soFar: string, tailChars = 300): string {
   const tail = soFar.slice(-tailChars);
-  return `${originalUser}
+  return `아래는 **이미 작성이 끝난 글의 뒷부분을 채우는 작업**이다. 새 글을 쓰는 것이 아니다.
 
-=== 지금까지 쓴 글의 끝부분 ===
+=== 원래 지시(참고용. 다시 답하지 말 것) ===
+${originalUser}
+
+=== 이미 쓴 글의 끝부분 ===
 ${tail}
 
-위 글이 상한에 걸려 **중간에서 끊겼다.** 끊긴 바로 다음부터 이어서 써라.
-- 인사말·머리말·요약을 새로 쓰지 말 것
-- 이미 쓴 내용을 되풀이하지 말 것
-- 끊긴 문장이 있으면 그 문장부터 이어서 끝낼 것`;
+위 글이 출력 상한에 걸려 **중간에서 끊겼다.** 네 답의 **첫 글자**가 끊긴 자리의 다음
+글자여야 한다.
+
+지켜야 할 것:
+- 처음부터 다시 쓰지 말 것. 고쳐 쓰거나 바꿔 쓰는 것도 다시 쓰는 것이다.
+- 이미 쓴 문장을 한 번이라도 되풀이하지 말 것. 표현을 바꿔 되풀이하는 것도 안 된다.
+- 머리말·제목·요약·인사말을 새로 붙이지 말 것.
+- 끊긴 문장이 있으면 그 문장의 남은 부분부터 이어서 끝낼 것.
+- 이미 쓴 내용은 **참고만** 할 것. 그대로 가져다 쓰지 말 것.`;
 }
 
 /**
@@ -184,8 +250,19 @@ export async function runWithContinuation(
       };
     }
     calls += 1;
+
+    /*
+     * **처음부터 다시 써 온 경우는 여기서 끝낸다.**
+     *
+     * 더 불러도 같은 일이 반복된다 — 지시를 안 듣는 중이고, 횟수만큼 같은 단락이
+     * 쌓인다(실측: 세 번 부르고 같은 단락이 세 번 들어간 문서가 나갔다). 긴 쪽을
+     * 남기고 멈추되 `truncated` 는 그대로 둔다 — 끝까지 못 쓴 것은 사실이고, 그 사실이
+     * 로그에 남아야 상한을 올릴 판단을 할 수 있다.
+     */
+    const restarted = looksLikeRestart(text, next.text);
     text = stitchContinuation(text, next.text);
     truncated = next.truncated;
+    if (restarted) return { text, truncated: true, calls };
   }
 
   return { text, truncated, calls };
