@@ -207,6 +207,24 @@ export interface ConfluenceSection {
   heading: string;
   /** 이번 호출에서 무엇만 쓸 것인가. */
   focus: string;
+  /**
+   * 이 섹션이 쓰는 `라벨:` 들. 다른 섹션의 라벨이 본문에 나오면 남의 몫을 침범한 것이다.
+   *
+   * ## 왜 필요한가
+   *
+   * 섹션 제목을 되쓰는 것은 `HEADING_ECHO` 가 걷어낸다. 그런데 실측에서 모델은
+   * **제목 없이 라벨만** 써서 남의 섹션을 채웠다 — `문제` 섹션 하나가 `발생 현상` ·
+   * `상세 내용` 다음에 `운영 환경` · `진단 내역` · `원인 분석` 까지 이어 썼다. 그
+   * 뒤에 `환경 및 진단 내역` 섹션과 `원인 분석` 섹션이 제 몫을 또 쓰니, 읽는 사람에게는
+   * **같은 내용이 두 번** 나온다. 보고 "왜 같은 말이 또 있냐" 가 되는 자리다.
+   *
+   * 프롬프트로 막는 것만으로는 부족했다(이미 "다른 섹션의 내용을 덧붙이지 않습니다"
+   * 가 들어 있었다). 그래서 코드가 자른다.
+   *
+   * 자유 라벨은 막지 않는다 — `원인 분석` 섹션은 `라벨: 내용` 항목을 스스로 짓는다.
+   * **다른 섹션이 자기 것이라고 밝힌 라벨만** 침범으로 본다.
+   */
+  owns?: readonly string[];
 }
 
 /** 출력 골격의 섹션. 배열 순서가 곧 문서 순서다. */
@@ -248,6 +266,7 @@ export const CONFLUENCE_SECTIONS: readonly ConfluenceSection[] = [
       "증상이 언제·어디서(로그인 시, 특정 메뉴·화면에서) 나타나는지가 원문에 있으면 함께 적고, 화면에 뜬 경고·에러 문구는 큰따옴표로 원문 그대로 인용합니다. 뜻만 풀어 요약하지 않습니다.",
       "이어서 `상세 내용:` 아래에 무엇이 제약이었는지, 무엇을 확인·요청했는지를 항목으로 나눠 씁니다. 고객 요청의 구체 항목(예: \"정상 동작 여부 확인 요청\")은 표현을 바꾸거나 빼지 않습니다.",
     ].join("\n"),
+    owns: ["발생 현상", "상세 내용"],
   },
   {
     id: "diagnosis",
@@ -258,6 +277,7 @@ export const CONFLUENCE_SECTIONS: readonly ConfluenceSection[] = [
       "수집·조회·재현 등 진단으로 한 일을 항목으로 적습니다.",
       "진단에 쓴 명령이나 조회 구문이 원문에 있으면 코드 블록으로 그대로 옮깁니다.",
     ].join("\n"),
+    owns: ["운영 환경", "진단 내역", "수집 및 진단 내역"],
   },
   {
     id: "cause",
@@ -273,6 +293,7 @@ export const CONFLUENCE_SECTIONS: readonly ConfluenceSection[] = [
       "",
       "`라벨: 내용` 항목 2~4개로 씁니다. 동작 원리 설명이 필요하면 항목 앞에 문단으로 덧붙입니다.",
     ].join("\n"),
+    owns: ["원인 분석"],
   },
   {
     id: "solution",
@@ -284,8 +305,58 @@ export const CONFLUENCE_SECTIONS: readonly ConfluenceSection[] = [
       "우회 조치와 영구 수정을 구분하고, 영구 수정이 예정된 버전이 있으면 그 버전을 적습니다.",
       "참고한 공식 문서나 KB 가 있으면 `참고 공식 문서:` 항목으로 남깁니다.",
     ].join("\n"),
+    owns: ["조치 방안", "조치 효과", "참고 공식 문서"],
   },
 ];
+
+/** 이 섹션 말고 다른 섹션이 자기 것이라고 밝힌 라벨들. */
+function foreignLabels(section: ConfluenceSection): readonly string[] {
+  const mine = new Set(section.owns ?? []);
+  return CONFLUENCE_SECTIONS.flatMap((s) => s.owns ?? []).filter((label) => !mine.has(label));
+}
+
+/** `- **운영 환경:**` 처럼 글머리와 강조가 붙어도 라벨 줄로 알아본다. */
+function labelLine(labels: readonly string[]): RegExp {
+  const alt = labels.map((l) => l.replace(/\s+/g, "\\s*")).join("|");
+  return new RegExp(`^\\s*(?:[-•*]\\s*)*[*_]{0,2}(?:${alt})[*_]{0,2}\\s*[:：]`);
+}
+
+/**
+ * 남의 섹션 몫이 시작되는 자리에서 본문을 자른다.
+ *
+ * 한 섹션이 문서 뒷부분까지 써 버리면, 뒤 섹션이 제 몫을 또 써서 **같은 내용이 두 번**
+ * 나온다(ConfluenceSection.owns 의 실측 참고). 모델에게 맡기지 않고 여기서 끊는다.
+ *
+ * ## 자르지 않는 경우
+ *
+ * 자를 자리 앞에 쓸 만한 내용이 없으면 **그냥 둔다.** 모델이 라벨 순서를 바꿔 썼을 때
+ * 섹션을 통째로 비우는 것보다, 지저분한 섹션이 낫다. 빈 섹션은 조립에서 사라져
+ * (assembleConfluenceDoc) 사람이 보고도 뭐가 빠졌는지 모른다.
+ *
+ * 코드 블록 안은 보지 않는다. 진단 명령에 `운영 환경:` 같은 글자가 올 수 있다.
+ */
+const MIN_KEEP_BEFORE_CUT = 40;
+
+export function cutForeignSections(section: ConfluenceSection, text: string): string {
+  const foreign = foreignLabels(section);
+  if (foreign.length === 0) return text;
+  const pattern = labelLine(foreign);
+
+  const lines = text.split("\n");
+  let inFence = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || !pattern.test(line)) continue;
+
+    const kept = lines.slice(0, i).join("\n").trim();
+    return kept.length >= MIN_KEEP_BEFORE_CUT ? kept : text;
+  }
+  return text;
+}
 
 /* ------------------------------------------------------------------ *
  * 표 4행. 팀 양식(Confluence "SR 현행화 양식")이 정한 고정 형식이다.
@@ -418,8 +489,24 @@ export function sectionSystemPrompt(section: ConfluenceSection): string {
   return [
     confluenceSystemPrompt(),
     FACT_RULES,
-    `# 이번 호출\n${section.focus}\n섹션 제목 줄은 출력하지 않습니다. 다른 섹션의 제목이나 내용을 덧붙이지 않습니다.`,
+    `# 이번 호출\n${section.focus}\n섹션 제목 줄은 출력하지 않습니다. 다른 섹션의 제목이나 내용을 덧붙이지 않습니다.${forbiddenLabelRule(section)}`,
   ].join("\n\n");
+}
+
+/**
+ * 남의 섹션 라벨을 쓰지 말라고 **이름을 들어** 못박는다.
+ *
+ * "다른 섹션의 내용을 덧붙이지 않습니다" 만으로는 안 먹혔다 — 실측에서 `문제` 섹션이
+ * `운영 환경` · `진단 내역` · `원인 분석` 까지 이어 썼다. 막아야 할 라벨을 그대로
+ * 적어 준다. 그래도 어기면 cutForeignSections 가 자른다 — 프롬프트는 1차 방어선이고
+ * 코드가 2차다.
+ */
+function forbiddenLabelRule(section: ConfluenceSection): string {
+  const foreign = foreignLabels(section);
+  if (foreign.length === 0) return "";
+  return `\n아래 항목은 **다른 섹션이 쓸 것이므로 이번 출력에 넣지 않습니다.** 내용이 원문에 있어도 여기서는 쓰지 않습니다: ${
+    foreign.map((l) => `\`${l}:\``).join(" · ")
+  }`;
 }
 
 /** 모델이 지시를 어기고 섹션 제목을 되쓴 경우를 걷어낸다. */
@@ -439,10 +526,11 @@ const TITLE_ECHO = /^\s*\[[^\]]+\]\s*\S/;
  *
  * 코드 블록 안은 건드리지 않는다. 진단 명령과 설정 구문을 그대로 옮기게 되어 있다.
  */
-export function cleanSectionText(text: string): string {
+export function cleanSectionText(text: string, section?: ConfluenceSection): string {
+  const scoped = section === undefined ? text : cutForeignSections(section, text);
   const out: string[] = [];
   let inFence = false;
-  for (const line of text.split("\n")) {
+  for (const line of scoped.split("\n")) {
     if (/^\s*```/.test(line)) {
       inFence = !inFence;
       out.push(line);
@@ -492,7 +580,7 @@ export function assembleConfluenceDoc(input: {
 
   for (const { section, text } of input.sections) {
     if (section.heading === "") continue; // 제목·meta 는 위에서 따로 다뤘다.
-    const body = cleanSectionText(text);
+    const body = cleanSectionText(text, section);
     if (body === "") continue;
     blocks.push(`### ${section.heading}\n\n${body}`);
   }

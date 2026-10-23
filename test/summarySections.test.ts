@@ -14,6 +14,7 @@ import {
   buildDocTitle,
   buildMetaTable,
   cleanSectionText,
+  cutForeignSections,
   firstLine,
   formatSrDate,
   parseMeta,
@@ -253,4 +254,112 @@ test("빈 섹션은 제목째로 뺀다", () => {
   });
   assert.ok(doc.includes("### 문제"));
   assert.ok(!doc.includes("### 원인 분석"), doc);
+});
+
+/* ------------------------------------------------------------------ *
+ * 섹션 범위 — 한 섹션이 다른 섹션 몫까지 쓰는 것을 자른다.
+ *
+ * 실측에서 `문제` 섹션 하나가 `발생 현상` · `상세 내용` 다음에 `운영 환경` ·
+ * `진단 내역` · `원인 분석` 까지 이어 썼다. 뒤 섹션이 제 몫을 또 쓰니 읽는 사람에게는
+ * 같은 내용이 두 번 나온다. 프롬프트로는 안 막혀서 코드가 자른다.
+ * ------------------------------------------------------------------ */
+
+test("문제 섹션이 뒤 섹션 라벨까지 쓰면 거기서 자른다", () => {
+  const got = cutForeignSections(
+    byId("problem"),
+    lines(
+      "발생 현상: 백업이 실패했고 원인은 용량 고갈로 확인되었습니다.",
+      "상세 내용: 만료분이 지워지지 않고 남아 있었습니다.",
+      "운영 환경: 사내 플랫폼 10.4",
+      "진단 내역: 사용량을 확인했습니다.",
+      "원인 분석: 삭제 요청이 타임아웃으로 실패했습니다.",
+    ),
+  );
+  assert.ok(got.includes("발생 현상"));
+  assert.ok(got.includes("상세 내용"));
+  assert.ok(!got.includes("운영 환경"), got);
+  assert.ok(!got.includes("진단 내역"), got);
+  assert.ok(!got.includes("원인 분석"), got);
+});
+
+test("글머리와 강조가 붙은 라벨도 알아본다", () => {
+  const got = cutForeignSections(
+    byId("problem"),
+    lines(
+      "발생 현상: 백업이 실패했고 원인은 공유 저장소 용량 고갈로 확인되었습니다.",
+      "- **운영 환경:** 사내 플랫폼 10.4",
+    ),
+  );
+  assert.equal(got, "발생 현상: 백업이 실패했고 원인은 공유 저장소 용량 고갈로 확인되었습니다.");
+});
+
+// 자기 라벨은 자르지 않는다. 안 그러면 섹션이 통째로 빈다.
+test("자기 섹션 라벨은 자르지 않는다", () => {
+  const text = lines("운영 환경: 사내 플랫폼 10.4", "진단 내역: 사용량을 확인했습니다.");
+  assert.equal(cutForeignSections(byId("diagnosis"), text), text);
+});
+
+/*
+ * `원인 분석` 섹션은 `라벨: 내용` 항목을 스스로 짓는다. 모르는 라벨을 자르면 본문이
+ * 사라진다 — 다른 섹션이 자기 것이라고 밝힌 라벨만 침범으로 본다.
+ */
+test("자유 라벨은 자르지 않는다", () => {
+  const text = lines(
+    "용량 고갈로 삭제 작업이 중단됨: 재시도 한계에 도달한 뒤 대기열에 남았습니다.",
+    "만료 표시와 실제 파일의 불일치: 표시만 바뀌고 파일은 남았습니다.",
+  );
+  assert.equal(cutForeignSections(byId("cause"), text), text);
+});
+
+/*
+ * 자를 자리 앞에 쓸 만한 내용이 없으면 그냥 둔다. 빈 섹션은 조립에서 사라져
+ * 사람이 보고도 무엇이 빠졌는지 모른다 — 지저분한 쪽이 낫다.
+ */
+test("앞에 내용이 없으면 자르지 않는다", () => {
+  const text = lines("운영 환경: 사내 플랫폼 10.4", "발생 현상: 백업이 실패했습니다.");
+  assert.equal(cutForeignSections(byId("problem"), text), text);
+});
+
+// 코드 블록 안의 명령에 남의 라벨과 같은 글자가 올 수 있다.
+test("코드 블록 안은 자르지 않는다", () => {
+  const text = lines(
+    "발생 현상: 백업이 실패했고 원인은 용량 고갈로 확인되었습니다.",
+    "```",
+    "운영 환경: $(uname -a)",
+    "```",
+  );
+  assert.equal(cutForeignSections(byId("problem"), text), text);
+});
+
+test("조립할 때 섹션 범위가 적용된다", () => {
+  const doc = assembleConfluenceDoc({
+    title: "",
+    table: "",
+    sections: [
+      {
+        section: byId("problem"),
+        text: lines(
+          "발생 현상: 백업이 실패했고 원인은 공유 저장소 용량 고갈로 확인되었습니다.",
+          "상세 내용: 만료 표시만 되고 지워지지 않은 산출물이 남아 있었습니다.",
+          "진단 내역: 사용량을 확인했습니다.",
+        ),
+      },
+      { section: byId("diagnosis"), text: "진단 내역: 사용량을 확인했습니다." },
+    ],
+  });
+  // 섹션 제목("환경 및 진단 내역")에도 같은 글자가 있으므로 라벨만 센다.
+  assert.equal(doc.split("진단 내역:").length - 1, 1, doc);
+});
+
+// 막아야 할 라벨을 이름을 들어 적어 준다. 프롬프트가 1차 방어선이다.
+test("시스템 프롬프트가 남의 라벨을 이름으로 금지한다", () => {
+  const prompt = sectionSystemPrompt(byId("problem"));
+  const banned = prompt.slice(prompt.indexOf("이번 출력에 넣지 않습니다"));
+  assert.ok(banned !== "", prompt);
+  assert.ok(banned.includes("`진단 내역:`"), banned);
+  assert.ok(banned.includes("`원인 분석:`"), banned);
+  assert.ok(banned.includes("`조치 방안:`"), banned);
+  // 자기 라벨을 금지 목록에 넣으면 쓸 것이 없어진다.
+  assert.ok(!banned.includes("`발생 현상:`"), banned);
+  assert.ok(!banned.includes("`상세 내용:`"), banned);
 });

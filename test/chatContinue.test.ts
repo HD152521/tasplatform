@@ -7,8 +7,31 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  MAX_CONTINUATIONS, continuationUser, looksLikeRestart, runWithContinuation, stitchContinuation,
+  MAX_CONTINUATIONS, continuationUser, looksLikeReemission, looksLikeRestart,
+  runWithContinuation, stitchContinuation,
 } from "../lib/chatContinue.ts";
+
+/**
+ * 실측에서 깨진 모양을 줄인 것. `문제` 섹션이 네 라벨까지 쓰다 끊겼고, 이어받은 조각이
+ * **세 번째 라벨부터** 다시 시작했다. 머리는 `발생 현상` 이라 머리끼리 비교로는 안 잡힌다.
+ */
+const CUT_MID_DOC = [
+  "발생 현상: 백업이 실패했고 원인은 디스크 용량 고갈로 확인되었습니다.",
+  "상세 내용: 만료 상태인데 지워지지 않은 산출물이 다수 남아 있었습니다.",
+  "운영 환경: 사내 플랫폼 10.4, 공유 저장소 사용.",
+  "진단 내역: 제공된 화면으로 디스크 사용량과 디렉터리 구조를 확인했습니다.",
+  "정리 작업이 입출력 오류로 중단되었음을 추정했습니다.",
+  "만료 처리 로직과 체크섬 비교 과정이 저장소에 부하를 줄 수 있음을 확인했습니다.",
+  "삭제 요청이 재시도 한계에 도달한 뒤 대기열에 영구히 남은 것으로 분석했습니다.",
+  "저장소에는 만료 표시만 되고 실제 파일은 남아 있는 상태였음을",
+].join("\n");
+
+/** 끊긴 자리가 아니라 `진단 내역:` 부터 다시 쓴 조각. */
+const REEMITTED = [
+  "진단 내역: 제공된 화면으로 디스크 사용량과 디렉터리 구조를 확인했습니다.",
+  "정리 작업이 입출력 오류로 중단되었음을 추정했습니다.",
+  "원인 분석: 용량이 가득 찬 상태에서 삭제 요청이 타임아웃으로 실패했습니다.",
+].join("\n");
 
 test("겹침이 없으면 그대로 붙인다", () => {
   assert.equal(stitchContinuation("앞부분입니다.", "뒷부분입니다."), "앞부분입니다.뒷부분입니다.");
@@ -61,6 +84,43 @@ test("조사만 바꿔 다시 쓴 응답도 다시 쓴 것으로 본다", () => 
     + "캐시 디렉터리가 용량 대부분을 차지하고 있었습니다. 다음으로 정리 절차를 적용했습니다.";
   assert.equal(looksLikeRestart(soFar, chunk), true);
   assert.equal(stitchContinuation(soFar, chunk), chunk, "붙이면 같은 단락이 두 번 나온다");
+});
+
+/*
+ * **글 중간부터 다시 쓴 조각.** 머리끼리 비교로는 안 잡힌다 — 앞 글의 머리는
+ * `발생 현상` 이고 조각의 머리는 `진단 내역` 이다. 그래서 앞 글 안쪽도 훑는다.
+ * 이걸 놓쳐서 한 섹션에 `진단 내역` 이 두 번 실린 문서가 나갔다.
+ */
+test("글 중간부터 다시 쓴 조각은 버리고 앞 글을 지킨다", () => {
+  assert.equal(looksLikeRestart(CUT_MID_DOC, REEMITTED), false, "머리끼리는 안 닮는다");
+  assert.equal(looksLikeReemission(CUT_MID_DOC, REEMITTED), true);
+  assert.equal(stitchContinuation(CUT_MID_DOC, REEMITTED), CUT_MID_DOC);
+});
+
+test("되풀이 조각을 받으면 더 이어받지 않는다", async () => {
+  let calls = 0;
+  const call = async (): Promise<{ text: string; truncated: boolean }> => {
+    calls += 1;
+    return { text: calls === 1 ? CUT_MID_DOC : REEMITTED, truncated: true };
+  };
+  const got = await runWithContinuation(call, "지시");
+  assert.equal(calls, 2);
+  assert.equal(got.text, CUT_MID_DOC);
+  assert.equal(
+    got.text.split("진단 내역").length - 1, 1,
+    "`진단 내역` 이 두 번 들어갔다",
+  );
+});
+
+/*
+ * **꼬리를 되짚고 이어 쓴 조각은 되풀이가 아니다.** 겹침 비교가 먼저 돌아야 한다 —
+ * 순서가 뒤바뀌면 정상 조각을 버린다.
+ */
+test("꼬리를 되짚고 이어 쓴 조각은 버리지 않는다", () => {
+  const chunk = " 확인했습니다. 조치로 저장소 용량을 늘렸습니다.";
+  const got = stitchContinuation(CUT_MID_DOC, chunk);
+  assert.ok(got.startsWith(CUT_MID_DOC), "앞 글이 그대로 남아야 한다");
+  assert.ok(got.includes("조치로 저장소 용량을 늘렸습니다"), "이어 쓴 내용이 사라졌다");
 });
 
 /*
