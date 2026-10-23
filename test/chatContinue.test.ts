@@ -6,7 +6,9 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { continuationUser, runWithContinuation, stitchContinuation } from "../lib/chatContinue.ts";
+import {
+  MAX_CONTINUATIONS, continuationUser, runWithContinuation, stitchContinuation,
+} from "../lib/chatContinue.ts";
 
 test("겹침이 없으면 그대로 붙인다", () => {
   assert.equal(stitchContinuation("앞부분입니다.", "뒷부분입니다."), "앞부분입니다.뒷부분입니다.");
@@ -123,6 +125,22 @@ test("이어받기 상한을 넘기지 않는다", async () => {
   const got = await runWithContinuation(call, "지시", { maxContinuations: 2 });
   assert.equal(seen.length, 3, "처음 + 이어받기 두 번");
   assert.equal(got.calls, 3);
+  assert.equal(got.truncated, true, "끝까지 못 썼다는 사실이 남아야 한다");
+});
+
+/*
+ * **마감이 없는 호출부도 끝난다.** 멈추는 쪽은 보통 마감이지만, 마감을 안 넘기는
+ * 호출부에서 끝이 안 나는 글을 만나면 횟수 상한이 받아야 한다. 이게 없으면 영원히 돈다.
+ */
+test("마감이 없으면 기본 횟수 상한에서 멈춘다", async () => {
+  let calls = 0;
+  const endless = async () => {
+    calls += 1;
+    return { text: `조각${calls}`, truncated: true };
+  };
+  const got = await runWithContinuation(endless, "지시");
+  assert.equal(calls, MAX_CONTINUATIONS + 1, "처음 한 번 + 이어받기 상한만큼");
+  assert.equal(got.calls, MAX_CONTINUATIONS + 1);
   assert.equal(got.truncated, true, "끝까지 못 썼다는 사실이 남아야 한다");
 });
 
