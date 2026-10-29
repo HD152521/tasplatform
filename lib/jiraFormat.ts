@@ -54,9 +54,9 @@ export function dateOf(iso: string | null): string | null {
  */
 export function spanLabel(startDate: string, endDate: string | null): string {
   const start = shortDate(startDate);
-  if (endDate === null || endDate === "") return `${start} –`;
+  if (endDate === null || endDate === "") return `${start} ~`;
   const end = shortDate(endDate);
-  return start === end ? start : `${start} – ${end}`;
+  return start === end ? start : `${start} ~ ${end}`;
 }
 
 /* ------------------------------------------------------------------ *

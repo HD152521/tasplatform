@@ -36,7 +36,7 @@ export interface WorkRow {
    * 전산센터가 하나뿐일 때만 법인이 합쳐진다 — lib/jiraFormat.ts 의 mergeRows 참고.
    */
   corp: string;
-  /** "08/03 – 08/14" 또는 "08/03". 미종료면 "08/03 –". */
+  /** "08/03 ~ 08/14" 또는 "08/03". 미종료면 "08/03 ~". */
   span: string;
   title: string;
   /** 늘 "방문" */
