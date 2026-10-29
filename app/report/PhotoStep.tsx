@@ -21,6 +21,7 @@ import {
   photoSeatLabel,
   layoutPhotoSlides,
 } from "../../lib/reportPhotoLayout.ts";
+import { dropTargetSlots, splitByPhotoMime } from "../../lib/reportPhotoDrop.ts";
 
 /**
  * 4단계 · 정기점검 사진 (건너뛰기 가능).
@@ -33,6 +34,12 @@ import {
  * 슬라이드에서 3.9×5.5인치밖에 차지하지 않는데 요즘 휴대폰 사진은 한 장이 5MB 다.
  * 원본을 DB 에 담을 이유가 없어서 긴 변 1600px 로 줄여 보낸다. 서버에 이미지 라이브러리를
  * 새로 들이지 않으려는 것이기도 하다 — 자세한 근거는 lib/reportPhotoLimits.ts 머리말에 있다.
+ *
+ * ## 끌어다 놓기
+ *
+ * 네 장을 한 번에 끌어다 놓는 것이 이 화면의 보통 쓰임이다. 칸 아무 데나 놓으면
+ * **빈 자리부터** 채우고, 특정 자리 위에 놓으면 그 자리부터 채운다(이미 든 사진도
+ * 바꿔치운다 — 자리를 집어 놓은 것은 "여기에 이걸" 이라는 뜻이다).
  *
  * ## 왜 "건너뛰기" 를 눌러야 하나
  *
@@ -150,6 +157,11 @@ async function rotate90(file: File): Promise<File> {
   }
 }
 
+/** 끌고 있는 것이 파일인가. 글자나 링크를 끌어와도 반응하지 않게 한다. */
+function draggingFiles(data: DataTransfer): boolean {
+  return Array.from(data.types).includes("Files");
+}
+
 export function PhotoStep({
   month, photos, skipped,
 }: {
@@ -164,6 +176,8 @@ export function PhotoStep({
   const [busySlot, setBusySlot] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
+  /** 지금 사진을 끌고 있는 자리. null 이면 안 끌고 있고, 0 은 칸 바깥(빈 자리부터). */
+  const [overSlot, setOverSlot] = useState<number | null>(null);
   const inputs = useRef<Record<number, HTMLInputElement | null>>({});
   /**
    * 만들어 둔 미리보기 주소.
@@ -186,6 +200,23 @@ export function PhotoStep({
     urls.current = {};
   }, []);
 
+  /*
+   * 칸을 살짝 벗어나 놓아도 브라우저가 그 사진을 **열어 버리지 않게** 막는다.
+   * 열리면 지금 화면이 사진으로 바뀌어, 넣던 작업과 앞 단계에서 고른 것이 날아간다.
+   * 이 단계 화면에 있는 동안만 막는다.
+   */
+  useEffect(() => {
+    function block(e: DragEvent): void {
+      if (e.dataTransfer !== null && draggingFiles(e.dataTransfer)) e.preventDefault();
+    }
+    window.addEventListener("dragover", block);
+    window.addEventListener("drop", block);
+    return () => {
+      window.removeEventListener("dragover", block);
+      window.removeEventListener("drop", block);
+    };
+  }, []);
+
   const filled = seats.filter((s) => s.meta !== null);
   const slides = layoutPhotoSlides(filled.length).length;
   const busy = busySlot !== null;
@@ -204,12 +235,14 @@ export function PhotoStep({
    *
    * 돌리기는 화면에 있는 사진을 다시 올리는 일이라 고르기와 저장 경로가 같아야 한다.
    * 따로 두면 한쪽만 고쳤을 때 조용히 갈라진다.
+   *
+   * 실패를 화면에 바로 쓰지 않고 **문구로 돌려준다**(성공이면 null). 끌어다 놓기는
+   * 여러 장을 차례로 올리므로, 부른 쪽이 "몇 장째에서 멈췄다" 를 함께 말해야 한다.
+   * 화면 새로 받기(router.refresh)도 부른 쪽이 한다 — 네 장을 넣을 때 장마다 새로
+   * 받으면 그만큼 서버를 다시 때린다.
    */
-  async function save(slot: number, small: File): Promise<boolean> {
-    if (small.size > MAX_PHOTO_BYTES) {
-      setError(PHOTO_TOO_LARGE_MESSAGE);
-      return false;
-    }
+  async function save(slot: number, small: File): Promise<string | null> {
+    if (small.size > MAX_PHOTO_BYTES) return PHOTO_TOO_LARGE_MESSAGE;
 
     // 사진은 본문에 그대로 싣고 이름·자리는 주소에 둔다 — 라우트가 본문을 스트림으로
     // 읽으며 상한에서 끊기 때문이다(app/api/report/photos/route.ts 머리말).
@@ -223,8 +256,7 @@ export function PhotoStep({
       ok?: boolean; message?: string; fileName?: string; bytes?: number; mime?: string;
     };
     if (!response.ok || body.ok !== true) {
-      setError(body.message ?? `사진을 넣지 못했습니다 (HTTP ${response.status}).`);
-      return false;
+      return body.message ?? `사진을 넣지 못했습니다 (HTTP ${response.status}).`;
     }
 
     const url = URL.createObjectURL(small);
@@ -243,9 +275,7 @@ export function PhotoStep({
     }));
     // 사진을 넣었으면 건너뜀은 없어진다(서버도 같이 지운다).
     setSkip(false);
-    // 위쪽 단계 표시가 서버에서 그려지므로 새로 받아야 체크가 바뀐다.
-    router.refresh();
-    return true;
+    return null;
   }
 
   /** 그 자리 사진을 시계방향 90도 돌려 다시 저장한다. */
@@ -262,7 +292,13 @@ export function PhotoStep({
       const blob = await (await fetch(source)).blob();
       const name = seat?.meta?.fileName ?? `photo-${slot}.jpg`;
       const turned = await rotate90(new File([blob], name, { type: blob.type || "image/jpeg" }));
-      if (await save(slot, turned)) setNote("90도 돌렸습니다.");
+      const failed = await save(slot, turned);
+      if (failed !== null) setError(failed);
+      else {
+        setNote("90도 돌렸습니다.");
+        // 위쪽 단계 표시가 서버에서 그려지므로 새로 받아야 체크가 바뀐다.
+        router.refresh();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "사진을 돌리지 못했습니다.");
     } finally {
@@ -270,28 +306,120 @@ export function PhotoStep({
     }
   }
 
-  async function pick(slot: number, file: File): Promise<void> {
-    setError("");
-    setNote("");
+  /** 한 장을 줄여 그 자리에 넣는다. 실패하면 보일 문구를, 성공하면 null. */
+  async function putOne(slot: number, file: File): Promise<string | null> {
     // 여기서 재는 것은 **원본**이고, 상한도 원본용(MAX_ORIGINAL_BYTES)이다.
     // 저장 상한(4MB)으로 재면 휴대폰 사진은 줄여 보기도 전에 전부 거부당한다.
-    if (file.size > MAX_ORIGINAL_BYTES) {
-      setError(ORIGINAL_TOO_LARGE_MESSAGE);
+    if (file.size > MAX_ORIGINAL_BYTES) return ORIGINAL_TOO_LARGE_MESSAGE;
+    try {
+      return await save(slot, await shrink(file));
+    } catch (e) {
+      return e instanceof Error ? e.message : "사진을 넣는 중 오류가 발생했습니다.";
+    }
+  }
+
+  /**
+   * 받은 사진을 자리에 넣는다. 파일 고르기와 끌어다 놓기가 같이 쓴다.
+   *
+   * 한 장씩 **차례로** 올린다 — 라우트가 한 번에 한 장만 받고, 같이 보내면 어느
+   * 것이 실패했는지 사람에게 말해 줄 수 없다.
+   */
+  async function putMany(
+    files: readonly File[], rejected: readonly string[], firstSlot?: number,
+  ): Promise<void> {
+    setError("");
+    setNote("");
+
+    if (files.length === 0) {
+      setError(rejected.length === 0
+        ? "사진 파일을 끌어다 놓아 주세요."
+        : `JPEG 또는 PNG 만 넣을 수 있습니다. 받지 않은 것: ${rejected.join(", ")}`);
       return;
     }
 
-    setBusySlot(slot);
+    const targets = dropTargetSlots(
+      seats.map((s) => ({ slot: s.slot, filled: s.meta !== null })),
+      files.length,
+      firstSlot,
+    );
+    if (targets.length === 0) {
+      setError(`자리가 ${PHOTO_SLOT_COUNT}칸뿐입니다. 바꿀 자리 위에 직접 놓아 주세요.`);
+      return;
+    }
+
+    let saved = 0;
+    let failed: string | null = null;
     try {
-      const small = await shrink(file);
-      if (await save(slot, small)) setNote(`${small.name} 을 넣었습니다.`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "사진을 넣는 중 오류가 발생했습니다.");
+      for (const [i, slot] of targets.entries()) {
+        const file = files[i];
+        if (file === undefined) break;
+        setBusySlot(slot);
+        failed = await putOne(slot, file);
+        if (failed !== null) break;
+        saved += 1;
+      }
     } finally {
       setBusySlot(null);
+    }
+
+    // 한 장이라도 들어갔으면 위쪽 단계 표시를 새로 받는다. 끝에 한 번만 부른다.
+    if (saved > 0) router.refresh();
+
+    if (failed !== null) {
+      setError(saved === 0 ? failed : `${saved}장을 넣고 멈췄습니다 — ${failed}`);
+      return;
+    }
+
+    // 넣지 못한 것이 있으면 **조용히 넘기지 않는다.** 네 장 놓고 셋만 들어갔는데
+    // 아무 말이 없으면, 빠진 장은 보고서가 나온 뒤에야 드러난다.
+    const over = files.length - targets.length;
+    const aside = [
+      over > 0 ? `자리가 없어 ${over}장은 넣지 않았습니다.` : "",
+      rejected.length > 0 ? `JPEG·PNG 가 아니라 건너뛴 것: ${rejected.join(", ")}` : "",
+    ].filter((s) => s !== "").join(" ");
+    const tail = aside === "" ? "" : ` ${aside}`;
+    // 한 장이면 이름을 말한다 — 어느 파일이 들어갔는지가 바로 확인거리다.
+    const only = saved === 1 ? files[0] : undefined;
+    setNote(only === undefined
+      ? `${saved}장을 넣었습니다.${tail}`
+      : `${asJpegName(only.name)} 을 넣었습니다.${tail}`);
+  }
+
+  /** 파일 고르기 창에서 고른 한 장. 끌어다 놓기와 같은 경로를 쓴다. */
+  async function pick(slot: number, file: File): Promise<void> {
+    try {
+      await putMany([file], [], slot);
+    } finally {
       // 같은 파일을 다시 고를 수 있게 비운다. 비우지 않으면 onChange 가 안 뜬다.
       const input = inputs.current[slot];
       if (input) input.value = "";
     }
+  }
+
+  /** 사진을 받을 수 있는 상태인가. 건너뜀이거나 올리는 중이면 받지 않는다. */
+  const takesDrop = !skip && !busy;
+
+  /**
+   * 끌고 지나갈 때. slot 0 은 칸 바깥이다.
+   *
+   * preventDefault 를 **해야** 놓기(drop)가 일어난다. 빠뜨리면 브라우저가 기본
+   * 동작으로 그 사진을 열어 버리고 이 화면이 사라진다.
+   */
+  function onDragOver(e: React.DragEvent, slot: number): void {
+    if (!takesDrop || !draggingFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+    setOverSlot(slot);
+  }
+
+  function onDrop(e: React.DragEvent, slot: number): void {
+    if (!takesDrop || !draggingFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setOverSlot(null);
+    const { taken, left } = splitByPhotoMime(Array.from(e.dataTransfer.files));
+    void putMany(taken, left, slot === 0 ? undefined : slot);
   }
 
   async function clear(slot: number): Promise<void> {
@@ -397,14 +525,31 @@ export function PhotoStep({
           {`넣은 사진이 순서대로 채워집니다 — 중간을 비워도 빈 사진틀은 생기지 않습니다. `}
           {`슬라이드에는 ${PHOTO_WIDTH}×${PHOTO_HEIGHT}인치 자리에 들어가고, `}
           {`고른 사진은 긴 변 ${PHOTO_LONG_EDGE}px 로 줄여 보관합니다 (장당 ${MAX_PHOTO_LABEL} 까지).`}
+          <br />
+          <b>사진을 아래 칸에 그대로 끌어다 놓으면 올라갑니다</b>
+          {` — 여러 장을 한 번에 놓으면 빈 자리부터 채웁니다. 자리 하나를 집어 놓으면 그 자리부터 들어갑니다.`}
         </p>
 
-        <div style={{
-          display: "grid",
-          // 좁아지면 한 줄로 떨어진다. minmax(0,1fr) 이 없으면 미리보기가 칸을 밀어 가로 스크롤이 생긴다.
-          gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
-          gap: 14,
-        }}>
+        <div
+          onDragOver={(e) => onDragOver(e, 0)}
+          onDrop={(e) => onDrop(e, 0)}
+          onDragLeave={(e) => {
+            // 칸에서 칸으로 넘어갈 때도 dragleave 가 뜬다. 영역 안이면 무시한다 —
+            // 안 그러면 끌고 지나가는 동안 테두리가 깜박인다.
+            if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+            setOverSlot(null);
+          }}
+          style={{
+            display: "grid",
+            // 좁아지면 한 줄로 떨어진다. minmax(0,1fr) 이 없으면 미리보기가 칸을 밀어 가로 스크롤이 생긴다.
+            gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+            gap: 14,
+            // 끌고 있는 동안만 테두리를 보여 준다. 늘 보이면 칸이 하나 더 있는 것처럼 보인다.
+            outline: overSlot !== null ? `2px dashed ${COLOR.ok}` : "none",
+            outlineOffset: 9,
+            borderRadius: RADIUS.control,
+          }}
+        >
           {seats.map((seat) => {
             const index = seatIndex(seat.slot);
             const on = seat.meta !== null;
@@ -412,11 +557,17 @@ export function PhotoStep({
             return (
               <div
                 key={seat.slot}
+                onDragOver={(e) => onDragOver(e, seat.slot)}
+                onDrop={(e) => onDrop(e, seat.slot)}
                 style={{
-                  border: `1px solid ${on ? COLOR.line : COLOR.field}`,
+                  border: `1px solid ${
+                    overSlot === seat.slot ? COLOR.ok : on ? COLOR.line : COLOR.field
+                  }`,
                   borderRadius: RADIUS.control,
                   padding: 11,
-                  background: on ? COLOR.surface : COLOR.ground,
+                  background: overSlot === seat.slot
+                    ? COLOR.okBg
+                    : on ? COLOR.surface : COLOR.ground,
                   minWidth: 0,
                   boxSizing: "border-box",
                   opacity: skip ? 0.45 : 1,
