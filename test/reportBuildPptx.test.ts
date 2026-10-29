@@ -59,6 +59,17 @@ const PHOTO_3X4 =
   + "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq"
   + "8vP09fb3+Pn6/9oADAMBAAIRAxEAPwCnRRRXOeuf/9k=";
 
+/**
+ * 분석 칸에 들어가는 글. lib/srReportFormat.ts 가 내는 모양이다 —
+ * 제목 줄 두 개와 그 아래 줄글.
+ */
+const ANALYSIS = [
+  "질의 내용",
+  "마운트가 간헐적으로 끊긴다는 문의",
+  "진행 상황",
+  "로그 확인 후 재현 조건 정리",
+].join("\n");
+
 const MONTH = "2026-09";
 const TEMPLATE = "templates/monthly-report.pptx";
 
@@ -89,7 +100,11 @@ function makePayload(photoCount: number, srCount: number, openCount: number): un
     no: "CS0000000", openedOn: "2026-09-01", closedOn: "2026-09-10",
     title: "확인용", progress: "확인용", done: "완료",
     product: "Tanzu Application Service", severity: "3", status: "완료",
-    symptom: "확인용", analysis: "확인용", result: "확인용", open: "0",
+    symptom: "확인용",
+    // 분석 칸은 실제 파이프라인이 내는 모양 그대로 둔다 — 한 줄로 두면 "제목 줄만
+    // 굵게" 를 검사할 상대가 없어 그 시험이 조용히 통과한다.
+    analysis: ANALYSIS,
+    result: "확인용", open: "0",
   };
   return {
     template: TEMPLATE,
@@ -135,6 +150,7 @@ interface Described {
       left: number; top: number; width: number; bottom: number;
       columns: number[]; rows: number[];
       red: Array<{ row: number; col: number; text: string }>;
+      bold: Array<{ row: number; col: number; line: number; text: string }>;
     }>;
   }>;
 }
@@ -313,6 +329,29 @@ test("SR 상세의 구획 번호는 2-3 이다", { skip: skip ?? false }, () => 
     .map((s) => s.header.chip);
   assert.ok(chips.length > 0, "SR 상세 장을 찾지 못했습니다");
   assert.deepEqual([...new Set(chips)], ["2-3"]);
+});
+
+/*
+ * **분석 칸에서 굵게는 제목 줄만이다.**
+ *
+ * 양식의 그 칸은 첫 문단이 굵게다. set_text 는 첫 문단을 복제해 줄을 늘리므로,
+ * 끄지 않으면 줄글까지 전부 굵게 나간다 — 칸 전체가 굵은 보고서가 그렇게 나왔다.
+ * 어느 줄이 굵은지 눈이 아니라 줄번호로 잠근다.
+ */
+test("분석 칸은 제목 줄만 굵다", { skip: skip ?? false }, () => {
+  const report = buildAndDescribe(0);
+  const details = report.slides.filter((s) => s.header.title.startsWith("SR 상세 진행 현황"));
+  assert.ok(details.length > 0, "SR 상세 장을 찾지 못했습니다");
+
+  for (const slide of details) {
+    // 분석 칸 = 표의 (4,1). fill_sr_detail 이 쓰는 자리와 같다.
+    const inCell = (slide.tables[0]?.bold ?? []).filter((b) => b.row === 4 && b.col === 1);
+    assert.deepEqual(
+      inCell.map((b) => [b.line, b.text]),
+      [[0, "질의 내용"], [2, "진행 상황"]],
+      `분석 칸의 굵은 줄이 제목 둘이 아니다: ${JSON.stringify(inCell)}`,
+    );
+  }
 });
 
 /*

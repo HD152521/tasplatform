@@ -122,6 +122,24 @@ def red_cells(table) -> list:
     return found
 
 
+def bold_lines(table) -> list:
+    """굵게가 **직접 켜진** 문단. (행, 열, 줄번호, 글자)
+
+    SR 상세의 분석 칸은 제목 줄("질의 내용", "진행 상황")만 굵게여야 한다. 양식의
+    첫 문단이 굵게라서, 줄을 복제해 채우는 구조상 손대지 않으면 칸 전체가 굵게
+    나간다 — 실제로 그렇게 나갔다. 어느 줄이 굵은지 눈이 아니라 숫자로 본다.
+    """
+    found = []
+    for r in range(len(table.rows)):
+        for c in range(len(table.columns)):
+            cell = table.cell(r, c)
+            for i, paragraph in enumerate(cell.text_frame.paragraphs):
+                if any(run.font.bold for run in paragraph.runs):
+                    found.append({"row": r, "col": c, "line": i,
+                                  "text": paragraph.text.strip()})
+    return found
+
+
 def tables_of(slide) -> list:
     """표의 자리와 열 폭·행 높이. 장마다 미세하게 어긋나던 값들이다."""
     out = []
@@ -137,6 +155,7 @@ def tables_of(slide) -> list:
             "columns": [inches(c.width) for c in table.columns],
             "rows": [inches(r.height) for r in table.rows],
             "red": red_cells(table),
+            "bold": bold_lines(table),
         })
     return out
 

@@ -166,6 +166,16 @@ def analysis_bullet(line):
     return BULLET_HEAD if _is_heading(line) else BULLET_ITEM
 
 
+def analysis_bold(line):
+    """분석 칸의 한 줄을 굵게 쓸지. set_text 의 bold 인자로 넘긴다.
+
+    제목 줄("질의 내용", "진행 상황")만 굵게 두고 나머지는 보통 글씨로 돌린다.
+    양식의 첫 문단이 굵게라서, 명시로 꺼 주지 않으면 set_text 가 복제한 모든
+    줄이 굵게 나온다 — 칸 전체가 굵게 보이던 것이 그 때문이다.
+    """
+    return _is_heading(line)
+
+
 def apply_bullet(paragraph, spec):
     """문단의 글머리 기호를 지정한 것으로 바꾼다.
 
@@ -201,13 +211,24 @@ def apply_bullet(paragraph, spec):
         anchor.addprevious(bu_char)
 
 
-def set_text(frame, text, bullets=None):
+def apply_bold(paragraph, flag):
+    """문단의 run 전부에 굵게 여부를 **명시**한다.
+
+    False 를 명시하는 것이 요점이다. 비워 두면 양식에서 물려받은 굵게가 그대로
+    살아 있어, 복제로 만든 줄까지 모두 굵게 나온다.
+    """
+    for run in paragraph.runs:
+        run.font.bold = flag
+
+
+def set_text(frame, text, bullets=None, bold=None):
     """텍스트를 갈아끼우되 첫 run 의 서식(글꼴·크기·색)을 그대로 쓴다.
 
     한 칸이 수십 개 run 으로 쪼개져 있어도 첫 run 만 남기고 지운 뒤 채운다.
     여러 줄이면 첫 문단을 복제해 같은 서식을 유지한다.
 
     bullets 를 주면 줄마다 불러 글머리 기호를 정한다(줄 -> spec 또는 None).
+    bold 를 주면 줄마다 불러 굵게 여부를 정한다(줄 -> True/False).
     """
     from pptx.text.text import _Paragraph
 
@@ -246,12 +267,16 @@ def set_text(frame, text, bullets=None):
             if spec is not None:
                 apply_bullet(paragraph, spec)
 
+    if bold is not None:
+        for paragraph, line in zip(written, lines):
+            apply_bold(paragraph, bold(line))
 
-def cell_text(table, row, col, value, bullets=None):
+
+def cell_text(table, row, col, value, bullets=None, bold=None):
     """표의 한 칸을 채운다. 범위를 벗어나면 조용히 넘어가지 않고 알린다."""
     if row >= len(table.rows) or col >= len(table.columns):
         raise IndexError(f"표 범위를 벗어남: ({row},{col}) / {len(table.rows)}x{len(table.columns)}")
-    set_text(table.cell(row, col).text_frame, value, bullets)
+    set_text(table.cell(row, col).text_frame, value, bullets, bold)
 
 
 def color_cell(table, row, col, rgb):
@@ -569,7 +594,8 @@ def fill_sr_detail(slide, sr):
     cell_text(table, 2, 1, sr["title"])
     cell_text(table, 3, 1, sr["symptom"])
     # 제목 줄은 •, 그 아래 줄글은 체크(ü). 실제 보고서가 그렇게 돼 있다.
-    cell_text(table, 4, 1, sr["analysis"], analysis_bullet)
+    # 굵게도 제목 줄만이다 — 줄글까지 굵게 나오던 것을 끈다.
+    cell_text(table, 4, 1, sr["analysis"], analysis_bullet, analysis_bold)
     cell_text(table, 5, 1, sr["result"])
 
 
