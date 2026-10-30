@@ -15,7 +15,7 @@ import { dirname, join, resolve } from "node:path";
 import { DEFAULT_TEAM_ID, sessionFileForTeam } from "../lib/config.ts";
 import { listAudit, openDb } from "../lib/db.ts";
 import {
-  hasTeamSession, recordWriteAudit, resolveActorTeam, runSideEffect,
+  hasTeamSession, recordWriteAudit, resolveActorTeam, runSideEffect, sideEffectValue,
 } from "../lib/requestAudit.ts";
 
 function tempDbFile() {
@@ -345,3 +345,32 @@ test(
     }
   },
 );
+
+// ── sideEffectValue (값을 돌려주는 부수효과) ────────────────────────
+
+/*
+ * 화면에 **무엇을 말할지**가 부수효과 결과에 달린 경우가 있다 — 방금 쓴 글이 포털
+ * 조회에 실제로 잡혔는지(lib/refreshCase.ts). runSideEffect 처럼 삼키면 그걸 알 수
+ * 없어 화면이 늘 "다음 수집 때" 라고만 말한다.
+ */
+test("부수효과가 돌려준 값을 그대로 내보낸다", async () => {
+  assert.equal(await sideEffectValue("test-value", () => true, false), true);
+  assert.equal(await sideEffectValue("test-value", async () => 7, 0), 7);
+});
+
+// 실패를 응답으로 뒤집지 않는 규칙은 같다. 쓰기는 이미 끝났고 되돌릴 수 없다.
+test("터지면 fallback 을 돌려주고 예외를 올리지 않는다", async () => {
+  await assert.doesNotReject(async () => {
+    const got = await sideEffectValue("test-throw", () => {
+      throw new Error("포털 조회 실패");
+    }, false);
+    assert.equal(got, false);
+  });
+});
+
+test("거부된 약속도 삼키고 fallback 을 돌려준다", async () => {
+  const got = await sideEffectValue("test-reject", async () => {
+    throw new Error("망 오류");
+  }, "기본값");
+  assert.equal(got, "기본값");
+});

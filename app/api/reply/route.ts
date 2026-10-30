@@ -3,8 +3,14 @@ import { isClosedStatus, getCase } from "../../../lib/queries.ts";
 import { postReply } from "../../../lib/reply.ts";
 import { fetchClient } from "../../../collector/httpClient.ts";
 import { sessionFileForTeam } from "../../../lib/config.ts";
-import { refreshCaseThreads } from "../../../lib/refreshCase.ts";
-import { ensureTeamSession, recordWriteAudit, resolveActorTeam, runSideEffect } from "../../../lib/requestAudit.ts";
+import { reflectReply } from "../../../lib/refreshCase.ts";
+import {
+  ensureTeamSession,
+  recordWriteAudit,
+  resolveActorTeam,
+  runSideEffect,
+  sideEffectValue,
+} from "../../../lib/requestAudit.ts";
 import {
   persistTeamSessionToDb,
   refreshTeamSessionFromDb,
@@ -74,18 +80,24 @@ export async function POST(request: Request) {
     // 회전된 세션 쿠키를 DB 로 백업(재시작 후 hydrate 로 복원).
     await runSideEffect("reply session→db", () => persistTeamSessionToDb(teamId));
 
-    // 전송에 성공했으면 그 케이스만 즉시 다시 읽어 화면에 바로 보이게 한다.
-    // 정기 수집(15분)을 기다리면 자기가 방금 쓴 글이 안 보인다.
-    if (result.ok) {
-      await runSideEffect("reply refresh", () => refreshCaseThreads(client, requestId));
-    }
+    /*
+     * 전송에 성공했으면 그 케이스만 즉시 다시 읽어 **대화에 보이는 것까지** 확인한다.
+     * 정기 수집(15분)을 기다리면 자기가 방금 쓴 글이 안 보인다.
+     *
+     * 들어왔는지를 돌려받아 응답에 싣는다. 전에는 넣어 보기만 하고 결과를 버려서,
+     * 화면이 늘 "다음 수집 때 반영됩니다" 라고만 말했다 — 이미 보이는데도 그랬고,
+     * 담당자는 그 한 줄을 읽고 기다렸다.
+     */
+    const reflected = result.ok
+      ? await sideEffectValue("reply refresh", () => reflectReply(client, requestId), false)
+      : false;
 
     await recordWriteAudit({
       actor, teamId, action: "reply", requestId,
       result: result.ok ? "ok" : `failed:${result.code}`,
     });
 
-    return NextResponse.json(result, { status: result.ok ? 200 : 409 });
+    return NextResponse.json({ ...result, reflected }, { status: result.ok ? 200 : 409 });
   } catch (error) {
     // 여기 닿는 것은 postReply 자체(또는 fetchClient 생성)가 던진, 진짜 예상 못한
     // 오류뿐이다 — 세션 만료는 값(code:"session")으로 돌아오지 예외로 오지 않는다.

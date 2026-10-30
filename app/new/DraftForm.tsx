@@ -226,6 +226,13 @@ export function DraftForm({
   /** 등록 결과. Jira 티켓 결과도 함께 들고 있다 — 실패를 조용히 넘기지 않으려는 것이다. */
   const [created, setCreated] = useState<{
     id: string; num: number;
+    /**
+     * 목록에 **이미 올라왔는가**. 라우트가 포털에서 다시 받아 확인해 준 값이다.
+     *
+     * 전에는 묻지 않고 늘 "다음 수집 때 목록에 나타납니다" 를 띄웠다. 대개는 그
+     * 자리에서 이미 보이는데도 그랬고, 담당자는 그 한 줄을 읽고 기다렸다.
+     */
+    reflected: boolean;
     jira?: {
       state?: string; key?: string; url?: string; message?: string;
       dropped?: string[]; linked?: boolean;
@@ -274,7 +281,7 @@ export function DraftForm({
       });
       const data = (await response.json()) as {
         ok?: boolean; code?: string; message?: string;
-        requestId?: number; requestIdFormatted?: string;
+        requestId?: number; requestIdFormatted?: string; reflected?: boolean;
         jira?: {
           state?: string; key?: string; url?: string; message?: string;
           dropped?: string[]; linked?: boolean;
@@ -284,6 +291,7 @@ export function DraftForm({
         setCreated({
           id: data.requestIdFormatted ?? String(data.requestId),
           num: data.requestId,
+          reflected: data.reflected === true,
           jira: data.jira,
         });
         // 올린 뒤에는 **반드시** 지운다. 남기면 다음에 열 때 이미 올린 SR 이
@@ -325,7 +333,9 @@ export function DraftForm({
           {`케이스 번호 ${created.id}`}
         </div>
         <div style={{ fontSize: 13, marginTop: 4, opacity: 0.9 }}>
-          다음 수집 때 목록에 나타납니다.
+          {created.reflected
+            ? "진행 중 목록에 바로 올라왔습니다."
+            : "포털 조회에 아직 안 잡힙니다. 잠시 뒤 새로 고치거나, 다음 수집 때 나타납니다."}
         </div>
 
         {/*

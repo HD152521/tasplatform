@@ -86,10 +86,28 @@ export function hasTeamSession(teamId: string): boolean {
  * reply·create 라우트가 postReply/createCase 가 ok:true 를 반환한 뒤에만 부른다.
  */
 export async function runSideEffect(label: string, fn: () => unknown | Promise<unknown>): Promise<void> {
+  await sideEffectValue(label, async () => { await fn(); }, undefined);
+}
+
+/**
+ * 값을 돌려주는 부수효과. 터지면 fallback 이다.
+ *
+ * 화면에 **무엇을 말할지**가 부수효과 결과에 달린 경우에 쓴다. 방금 쓴 글이 포털
+ * 조회에 실제로 잡혔는지(lib/refreshCase.ts 의 reflect\*)가 그렇다 — 안내 문구가
+ * 갈린다. runSideEffect 처럼 삼키면 그걸 알 수 없어 늘 "다음 수집 때" 라고만 말한다.
+ *
+ * 실패를 응답으로 뒤집지 않는 규칙은 같다. 쓰기는 이미 끝났고, 되돌릴 수 없다.
+ */
+export async function sideEffectValue<T>(
+  label: string,
+  fn: () => T | Promise<T>,
+  fallback: T,
+): Promise<T> {
   try {
-    await fn();
+    return await fn();
   } catch (error) {
     console.error(`[audit] 부수효과 실패 (쓰기 자체는 이미 성공): ${label}`, error);
+    return fallback;
   }
 }
 

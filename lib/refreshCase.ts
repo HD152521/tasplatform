@@ -16,6 +16,7 @@ import { DEFAULT_TEAM_ID } from "./config.ts";
 import { isoNow } from "./dates.ts";
 import { inTransaction, openDb, upsertAttachment, upsertCase, upsertThread } from "./db.ts";
 import { toAttachmentRows, toCaseRow, toThreadRow } from "./rowMappers.ts";
+import { untilReflected } from "./reflectWait.ts";
 
 /** 답변 등록 후: 그 케이스의 스레드와 첨부만 새로 넣는다. */
 export async function refreshCaseThreads(client: ApiClient, requestId: number): Promise<boolean> {
@@ -95,4 +96,68 @@ export async function refreshOpenCases(
   } catch {
     return false;
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * 반영됐는지 **확인한다**
+ *
+ * 위 두 함수는 "한 번 받아 넣기" 까지만 한다. 그래서 받아 넣었는데도 방금 쓴 글이
+ * 없는 경우를 구분하지 못했다 — 포털이 글을 받아 두고 목록·스레드 조회에 바로
+ * 싣지 않는 순간이 있다. 화면은 성공이라 말하고 대화는 그대로니, 담당자는 "다음
+ * 수집 때 반영됩니다" 를 읽고 **15분을 기다렸다.**
+ *
+ * 그래서 넣은 뒤 **세어 본다.** 늘지 않았으면 잠깐 두고 다시 묻는다(lib/reflectWait.ts).
+ * 몇 번 물어도 안 보이면 거짓말하지 않고 그대로 돌려준다 — 화면이 "아직 안 보인다" 고
+ * 말할 근거가 된다. 사람이 앞에서 기다리는 구간이라 오래 끌지 않는다.
+ * ------------------------------------------------------------------ */
+
+/** 그 케이스에 쌓인 글 수. 새 글이 들어왔는지는 **수가 늘었는지**로 안다. */
+async function threadCount(requestId: number): Promise<number> {
+  const db = await openDb();
+  try {
+    const rows = (await db.all(
+      "SELECT COUNT(*) AS n FROM threads WHERE request_id = ?",
+      [requestId],
+    )) as Array<{ n: number }>;
+    return Number(rows[0]?.n ?? 0);
+  } finally {
+    await db.close();
+  }
+}
+
+/** 그 케이스 행이 생겼는가. */
+async function caseExists(requestId: number): Promise<boolean> {
+  const db = await openDb();
+  try {
+    const rows = await db.all("SELECT 1 FROM cases WHERE request_id = ?", [requestId]);
+    return rows.length > 0;
+  } finally {
+    await db.close();
+  }
+}
+
+/**
+ * 방금 보낸 답변이 화면에 보이게 될 때까지 끌어온다.
+ *
+ * 돌려주는 값은 **대화에 실제로 늘었는가**다. 화면이 "바로 보입니다" 와 "아직 포털에
+ * 안 보입니다" 중 무엇을 말할지 정하는 데 쓴다. 틀린 안내 한 줄이 15분을 버리게 한다.
+ */
+export async function reflectReply(client: ApiClient, requestId: number): Promise<boolean> {
+  const before = await threadCount(requestId);
+  return untilReflected(
+    () => refreshCaseThreads(client, requestId),
+    async () => (await threadCount(requestId)) > before,
+  );
+}
+
+/** 방금 만든 케이스가 목록에 잡힐 때까지 끌어온다. 돌려주는 값은 행이 생겼는가다. */
+export async function reflectNewCase(
+  client: ApiClient,
+  teamId: string,
+  requestId: number,
+): Promise<boolean> {
+  return untilReflected(
+    () => refreshOpenCases(client, teamId, requestId),
+    () => caseExists(requestId),
+  );
 }

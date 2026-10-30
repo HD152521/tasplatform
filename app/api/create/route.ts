@@ -5,8 +5,14 @@ import { readTrack } from "../../../lib/jiraSrTicket.ts";
 import { createTicketForSr, type TicketOutcome } from "../../../lib/srJiraTicketing.ts";
 import { fetchClient } from "../../../collector/httpClient.ts";
 import { sessionFileForTeam } from "../../../lib/config.ts";
-import { refreshOpenCases } from "../../../lib/refreshCase.ts";
-import { ensureTeamSession, recordWriteAudit, resolveActorTeam, runSideEffect } from "../../../lib/requestAudit.ts";
+import { reflectNewCase } from "../../../lib/refreshCase.ts";
+import {
+  ensureTeamSession,
+  recordWriteAudit,
+  resolveActorTeam,
+  runSideEffect,
+  sideEffectValue,
+} from "../../../lib/requestAudit.ts";
 import {
   persistTeamSessionToDb,
   refreshTeamSessionFromDb,
@@ -105,11 +111,20 @@ export async function POST(request: Request) {
     // 회전된 세션 쿠키를 DB 로 백업(재시작 후 hydrate 로 복원).
     await runSideEffect("create session→db", () => persistTeamSessionToDb(teamId));
 
-    // 새 케이스는 DB 에 행 자체가 없다. 진행중 목록을 한 번 받아 채워 넣고,
-    // 방금 만든 건은 본문·스레드까지 받아 둔다 — 안 그러면 열어도 내용이 비어 보인다.
-    if (result.ok) {
-      await runSideEffect("create refresh", () => refreshOpenCases(client, teamId, result.requestId));
-    }
+    /*
+     * 새 케이스는 DB 에 행 자체가 없다. 진행중 목록을 한 번 받아 채워 넣고, 방금 만든
+     * 건은 본문·스레드까지 받아 둔다 — 안 그러면 열어도 내용이 비어 보인다.
+     *
+     * 행이 **생겼는지**를 돌려받아 응답에 싣는다. 포털이 새 건을 목록 조회에 바로
+     * 싣지 않는 순간이 있어, 전에는 늘 "다음 수집 때 목록에 나타납니다" 라고만 말했다.
+     */
+    const reflected = result.ok
+      ? await sideEffectValue(
+        "create refresh",
+        () => reflectNewCase(client, teamId, result.requestId),
+        false,
+      )
+      : false;
 
     /*
      * Jira 티켓을 끊는다 — **SR 등록이 성공한 뒤에만.**
@@ -173,7 +188,7 @@ export async function POST(request: Request) {
 
     // 티켓 결과를 **함께** 돌려준다. 성공/실패를 응답에 싣지 않으면 화면이 티켓이
     // 만들어졌는지 알 수 없고, 사람은 Jira 를 열어 봐야 한다.
-    return NextResponse.json({ ...result, jira: ticket }, { status: result.ok ? 200 : 409 });
+    return NextResponse.json({ ...result, jira: ticket, reflected }, { status: result.ok ? 200 : 409 });
   } catch (error) {
     // 여기 닿는 것은 createCase 자체(또는 fetchClient 생성)가 던진, 진짜 예상 못한
     // 오류뿐이다 — 세션 없음은 위에서 이미 걸렀다.

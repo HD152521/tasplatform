@@ -51,6 +51,13 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
+  /**
+   * 보낸 글이 **대화에 이미 보이는가**. 라우트가 포털에서 다시 받아 확인해 준 값이다.
+   *
+   * 전에는 묻지 않고 늘 "다음 수집 때 반영됩니다" 를 띄웠다. 대개는 그 자리에서
+   * 이미 보이는데도 그랬고, 담당자는 그 한 줄을 읽고 15분을 기다렸다.
+   */
+  const [reflected, setReflected] = useState(false);
   /** 돌고 있는 변환. 없으면 null. */
   const [composing, setComposing] = useState<"translate" | "tidy" | null>(null);
   /** 변환 직전 글. 되돌리기 한 단계만 갖는다. */
@@ -95,9 +102,12 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ requestId, text }),
       });
-      const data = (await response.json()) as { ok?: boolean; code?: string; message?: string };
+      const data = (await response.json()) as {
+        ok?: boolean; code?: string; message?: string; reflected?: boolean;
+      };
       if (data.ok === true) {
         setDone(data.message ?? "답변을 등록했습니다.");
+        setReflected(data.reflected === true);
         // 보낸 뒤에는 보존해 둔 초안을 **반드시** 지운다. 남기면 다음에 열 때
         // 이미 보낸 글이 되살아나 같은 답변을 두 번 보내게 된다.
         clearDraft(draftKey("reply", requestId));
@@ -126,7 +136,9 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
       }}>
         <b>{done}</b>
         <div style={{ marginTop: 4, opacity: 0.9 }}>
-          다음 수집 때 이 대화에 반영됩니다.
+          {reflected
+            ? "위 대화에 바로 올라왔습니다."
+            : "포털 조회에 아직 안 잡힙니다. 잠시 뒤 새로 고치거나, 다음 수집 때 반영됩니다."}
         </div>
         <button type="button" onClick={() => setDone("")} style={{
           ...controlStyle, marginTop: 12, padding: "6px 12px", fontSize: 12,
