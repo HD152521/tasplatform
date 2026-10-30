@@ -3,7 +3,7 @@
  *
  * 다루는 것:
  *   - ``` 로 감싼 코드 블록 → Confluence code 매크로
- *   - `###` 로 시작하는 섹션 헤딩 → `<h2>`
+ *   - `###` 로 시작하는 섹션 헤딩 → `<h2>`, 그 아래 단계(`####`) → `<h3>`
  *   - `- ` / `* ` 로 시작하는 줄 → `<ul><li>`
  *   - 마크다운 파이프 표 → `<table>`
  *   - 나머지 줄: 문단
@@ -43,6 +43,21 @@ function isHeading(line: string): boolean {
 /** 헤딩 줄에서 `#` 과 공백을 떼어낸다. */
 function headingText(line: string): string {
   return line.trim().replace(/^#{1,6}\s*/, "");
+}
+
+/**
+ * `#` 개수 → Confluence 헤딩 단계.
+ *
+ * 섹션 제목(`###`)은 전부터 `<h2>` 다. 그 아래 단계를 쓰게 되면서(`#### 조치 방안`)
+ * 한 칸씩 내려 **안에 든 것으로 읽히게** 한다. 같은 `<h2>` 로 내보내면 조치 방안이
+ * 문제·원인 분석과 같은 급의 장처럼 보여, 갈라 보이게 하려던 것이 거꾸로 된다.
+ *
+ * `#`·`##` 도 `<h2>` 로 둔다 — 조립하는 쪽이 쓰지 않는 모양이고, 본문이 문서 제목급
+ * 헤딩을 갖는 것은 Confluence 에서 보기 흉하다.
+ */
+function headingTag(line: string): string {
+  const depth = (line.trim().match(/^#{1,6}/) ?? [""])[0].length;
+  return `h${Math.min(6, Math.max(2, depth - 1))}`;
 }
 
 /** 불릿 줄인가. `- ` 또는 `* ` 로 시작한다. */
@@ -206,7 +221,8 @@ export function toConfluenceStorage(text: string): string {
     // `#` 으로 시작하면 **이름을 따지지 않고** 헤딩이다(위 주석 참고).
     if (isHeading(line)) {
       flushPara();
-      out.push(`<h2>${escapeXml(headingText(line))}</h2>`);
+      const tag = headingTag(line);
+      out.push(`<${tag}>${escapeXml(headingText(line))}</${tag}>`);
       continue;
     }
 

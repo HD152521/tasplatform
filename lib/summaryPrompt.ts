@@ -17,6 +17,12 @@
  */
 import { parseWolkenDate } from "./dates.ts";
 import { promptOverride } from "./prompts.ts";
+import {
+  REFERENCE_HEADING,
+  promoteSubheadings,
+  renderReferences,
+  splitReferences,
+} from "./summarySolution.ts";
 
 const CONFLUENCE_SYSTEM_PROMPT_DEFAULT = `당신은 Broadcom TAC의 SR(Service Request) 대화 내역을 사내 기술 문서용 한국어 보고서로 정리하는 역할을 맡습니다.
 입력으로 주어지는 SR 원문(고객 문의, TAC 답변, 첨부 로그·설정 등)을 읽고 아래 형식에 맞춘 보고서를 작성하세요.
@@ -51,7 +57,11 @@ const CONFLUENCE_SYSTEM_PROMPT_DEFAULT = `당신은 Broadcom TAC의 SR(Service R
 
 ### 해결 제안 및 조치 방안
 
-(조치 방안과 효과)
+조치 방안: (무엇을 어떻게 했는지)
+
+조치 효과: (그래서 무엇이 달라졌는지)
+
+참고 공식 문서: (참고한 문서 주소. 없으면 쓰지 않습니다)
 
 # 출력하지 말아야 할 것
 - "## 제목", "## 환경 표", "## 본문 섹션" 같은 형식 설명용 제목은 절대 출력하지 않습니다. 위 골격에 있는 것만 씁니다.
@@ -114,7 +124,8 @@ const CONFLUENCE_SYSTEM_PROMPT_DEFAULT = `당신은 Broadcom TAC의 SR(Service R
 - 확정되지 않은 것은 "~로 추정됩니다" 로 명시합니다.
 
 # 해결 제안 및 조치 방안
-- 실제로 적용했거나 랩에서 검증한 조치를 \`조치 방안:\` · \`조치 효과:\` 같은 항목으로 씁니다.
+- 실제로 적용했거나 랩에서 검증한 조치를 \`조치 방안:\` 과 \`조치 효과:\` 두 덩어리로 나눠 씁니다.
+  \`조치 방안:\` 이 먼저고 \`조치 효과:\` 가 뒤입니다. 이 둘 사이에 다른 항목을 끼워 넣지 않습니다.
 - **원문에 설정 구문, 규칙, 설정 파일 내용, 명령 예시가 있으면 코드 블록으로 그대로 옮깁니다.**
   "예제를 제공했습니다", "스크립트를 안내했습니다" 처럼 언급만 하고 실물을 생략하면 안 됩니다.
   이 문서를 나중에 다시 보는 사람에게 가장 값어치 있는 부분이 그 구문입니다.
@@ -122,7 +133,8 @@ const CONFLUENCE_SYSTEM_PROMPT_DEFAULT = `당신은 Broadcom TAC의 SR(Service R
 - 고객사 IP·호스트명·계정 등 식별 정보는 \`<수집 서버 IP>\` 형태의 플레이스홀더로 치환합니다.
 - 검증 결과(정상 동작 확인 여부)와 확장 가능 범위를 함께 기재합니다.
 - 우회 조치와 영구 수정을 구분합니다. 영구 수정이 예정된 버전이 있으면 그 버전을 적습니다.
-- 참고한 공식 문서나 KB 가 있으면 \`참고 공식 문서:\` 항목으로 남깁니다.
+- 참고한 공식 문서나 KB 가 있으면 **섹션 맨 마지막에** \`참고 공식 문서:\` 를 한 번만 두고,
+  그 아래에 주소를 한 줄에 하나씩 적습니다. 조치 방안과 조치 효과 사이에 끼워 넣지 않습니다.
 - 선택지가 여러 개였던 경우, 최종적으로 어떤 방향을 택했고 그 판단 근거가 무엇이었는지 마지막에 정리합니다.
 
 # 사실 관계 규칙
@@ -225,6 +237,14 @@ export interface ConfluenceSection {
    * **다른 섹션이 자기 것이라고 밝힌 라벨만** 침범으로 본다.
    */
   owns?: readonly string[];
+  /**
+   * 이 섹션 안에서 `라벨: 내용` 이 아니라 **소제목**으로 올릴 라벨.
+   *
+   * 조치와 그 효과처럼 한 섹션 안에서 갈라 읽어야 하는 덩어리다. 글머리 항목으로
+   * 두면 같은 목록의 형제처럼 붙어서, 긴 조치 설명 끝에 효과가 묻힌다.
+   * 올리는 일은 lib/summarySolution.ts 의 promoteSubheadings 가 한다.
+   */
+  subheadings?: readonly string[];
 }
 
 /** 출력 골격의 섹션. 배열 순서가 곧 문서 순서다. */
@@ -300,12 +320,16 @@ export const CONFLUENCE_SECTIONS: readonly ConfluenceSection[] = [
     heading: "해결 제안 및 조치 방안",
     focus: [
       '"해결 제안 및 조치 방안" 섹션의 본문만 출력합니다.',
-      "`조치 방안:` · `조치 효과:` 같은 항목으로 씁니다.",
+      "`조치 방안:` 으로 시작하는 덩어리와 `조치 효과:` 로 시작하는 덩어리를 **이 순서로** 씁니다.",
       "원문에 설정 구문이나 명령 예시가 있으면 코드 블록으로 그대로 옮깁니다. 언급만 하고 생략하지 않습니다.",
       "우회 조치와 영구 수정을 구분하고, 영구 수정이 예정된 버전이 있으면 그 버전을 적습니다.",
-      "참고한 공식 문서나 KB 가 있으면 `참고 공식 문서:` 항목으로 남깁니다.",
+      // 실측에서 참고 문서가 조치 방안과 조치 효과 **사이에** 끼어 둘을 갈라놨다.
+      // 링크 뭉치를 지나 다시 효과를 읽게 된다. 맨 끝으로 못박고, 어겨도
+      // summarySolution.ts 가 끝으로 옮긴다 — 프롬프트는 1차 방어선이다.
+      "참고한 공식 문서나 KB 가 있으면 **본문 맨 마지막에** `참고 공식 문서:` 를 한 번만 쓰고 그 아래에 주소를 한 줄에 하나씩 적습니다. 조치 방안과 조치 효과 사이에 끼워 넣지 않습니다.",
     ].join("\n"),
     owns: ["조치 방안", "조치 효과", "참고 공식 문서"],
+    subheadings: ["조치 방안", "조치 효과"],
   },
 ];
 
@@ -563,9 +587,12 @@ export function firstLine(text: string): string {
 }
 
 /**
- * 문서를 조립한다. 골격(제목 → 표 → 네 섹션)은 코드가 정하므로 어긋날 수 없다.
+ * 문서를 조립한다. 골격(제목 → 표 → 네 섹션 → 참고 문서)은 코드가 정하므로 어긋날 수 없다.
  *
  * 지금까지는 모델이 내용과 골격을 동시에 맞춰야 했고, 어긋나면 문서가 깨졌다.
+ *
+ * 참고 문서는 **어느 섹션에 적혀 왔든** 떼어 내 맨 끝 한 곳에 모은다. 실측에서
+ * 조치 방안과 조치 효과 사이에 끼어 둘을 갈라놨다(summarySolution.ts 머리말).
  */
 export function assembleConfluenceDoc(input: {
   /** "[SR 37027473] ..." 한 줄. */
@@ -578,11 +605,17 @@ export function assembleConfluenceDoc(input: {
   if (input.title.trim() !== "") blocks.push(input.title.trim());
   if (input.table.trim() !== "") blocks.push(input.table.trim());
 
+  const references: string[] = [];
   for (const { section, text } of input.sections) {
     if (section.heading === "") continue; // 제목·meta 는 위에서 따로 다뤘다.
-    const body = cleanSectionText(text, section);
+    const split = splitReferences(cleanSectionText(text, section));
+    references.push(...split.references);
+    const body = promoteSubheadings(split.body, section.subheadings ?? []);
     if (body === "") continue;
     blocks.push(`### ${section.heading}\n\n${body}`);
+  }
+  if (references.length > 0) {
+    blocks.push(`### ${REFERENCE_HEADING}\n\n${renderReferences(references)}`);
   }
   return blocks.join("\n\n");
 }

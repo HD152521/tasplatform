@@ -16,8 +16,11 @@
  * 가 글자 그대로 찍혔다(lib/confluenceStorage.ts 머리말). 이름으로 판별하면 프롬프트가
  * 바뀔 때 **조용히** 깨진다.
  *
- * 그래서 **모양**으로 찾는다 — 마지막 헤딩의 본문이 결론이다. 섹션 이름이 무엇으로
- * 바뀌어도 "마지막 섹션" 은 따라온다. 캐시에 남아 있는 옛 모양의 요약에도 통한다.
+ * 그래서 **모양**으로 찾는다 — 뒤에서부터 세어 **말이 든** 헤딩의 본문이 결론이다.
+ * 섹션 이름이 무엇으로 바뀌어도 따라온다. 캐시에 남아 있는 옛 모양의 요약에도 통한다.
+ *
+ * "말이 든" 을 따지는 이유는 문서 맨 끝이 참고 문서 섹션이 됐기 때문이다
+ * (lib/summarySolution.ts). 마지막 헤딩만 보면 댓글이 URL 목록이 된다.
  */
 
 /** 댓글에 넣을 길이. 두세 줄이면 충분하고, 자세한 것은 링크가 맡는다. */
@@ -63,29 +66,10 @@ function fenceMask(lines: readonly string[]): boolean[] {
 }
 
 /**
- * 결과로 쓸 두세 줄.
- *
- * 헤딩이 하나도 없으면 **맨 끝 문단**을 쓴다. 요약이 어떤 모양이든 끝부분이 결론일
- * 가능성이 가장 높고, 빈 댓글을 남기는 것보다 낫다.
+ * 쓸 만한 줄만 남긴다. 코드 블록 안은 이미 빠진 상태로 들어온다.
  */
-export function resultExcerpt(summary: string, maxChars = MAX_CHARS): string {
-  const lines = summary.replace(/\r\n/g, "\n").split("\n");
-
-  // 마지막 헤딩 자리를 찾는다. 코드 블록 안의 `#` 은 주석이지 제목이 아니다.
-  const inside = fenceMask(lines);
-  let lastHeading = -1;
-  for (let i = 0; i < lines.length; i += 1) {
-    if (!inside[i] && isHeading(lines[i] ?? "")) lastHeading = i;
-  }
-
-  /** 뽑아 쓸 줄들. 코드 블록 안은 버린다 — 댓글은 두세 줄 요약이지 명령 모음이 아니다. */
-  const rows = lastHeading === -1
-    // 헤딩이 없다 — 맨 끝 문단을 쓴다.
-    ? (summary.replace(/\r\n/g, "\n").split(/\n{2,}/).filter((b) => b.trim() !== "").at(-1) ?? "")
-      .split("\n")
-    : lines.slice(lastHeading + 1).filter((_, i) => !inside[lastHeading + 1 + i]);
-
-  const picked = rows
+function pickLines(rows: readonly string[]): string[] {
+  return rows
     .map((line) => line.trim())
     // 표는 가져오지 않는다. 댓글에서 파이프 줄은 읽히지 않는다.
     .filter((line) => line !== "" && !line.startsWith("|"))
@@ -97,6 +81,57 @@ export function resultExcerpt(summary: string, maxChars = MAX_CHARS): string {
      */
     .map((line) => line.replace(/^[-*•]\s+/, ""))
     .slice(0, MAX_LINES);
+}
+
+/**
+ * 주소만 있는 줄인가.
+ *
+ * 문서 맨 끝에는 참고 문서 섹션이 붙는다(lib/summarySolution.ts). 그것이 마지막
+ * 헤딩이므로, 그대로 두면 Jira 댓글이 **URL 목록**이 된다. 결론을 보려고 댓글을 읽는
+ * 사람에게는 아무 말도 안 해 주는 것과 같다.
+ *
+ * 섹션 **이름으로 가리지 않는다** — 이름으로 판별하면 프롬프트가 바뀔 때 조용히 깨진다
+ * (머리말). 주소뿐인 덩어리는 결론이 아니라는 **모양**으로 가린다.
+ */
+function isLinkOnly(line: string): boolean {
+  return /^<?https?:\/\/\S+>?$/.test(line);
+}
+
+/**
+ * 결과로 쓸 두세 줄.
+ *
+ * 헤딩이 하나도 없으면 **맨 끝 문단**을 쓴다. 요약이 어떤 모양이든 끝부분이 결론일
+ * 가능성이 가장 높고, 빈 댓글을 남기는 것보다 낫다.
+ */
+export function resultExcerpt(summary: string, maxChars = MAX_CHARS): string {
+  const lines = summary.replace(/\r\n/g, "\n").split("\n");
+
+  // 헤딩 자리를 모은다. 코드 블록 안의 `#` 은 주석이지 제목이 아니다.
+  const inside = fenceMask(lines);
+  const headings: number[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!inside[i] && isHeading(lines[i] ?? "")) headings.push(i);
+  }
+
+  /** 헤딩 하나의 본문. 코드 블록 안은 버린다 — 댓글은 두세 줄 요약이지 명령 모음이 아니다. */
+  const bodyOf = (at: number): string[] => {
+    const next = headings.find((h) => h > at) ?? lines.length;
+    return pickLines(lines.slice(at + 1, next).filter((_, i) => !inside[at + 1 + i]));
+  };
+
+  const lastHeading = headings.at(-1);
+  const picked = lastHeading === undefined
+    // 헤딩이 없다 — 맨 끝 문단을 쓴다.
+    ? pickLines(
+      (summary.replace(/\r\n/g, "\n").split(/\n{2,}/).filter((b) => b.trim() !== "").at(-1) ?? "")
+        .split("\n"),
+    )
+    /*
+     * 뒤에서부터 **말이 든 덩어리**를 찾는다. 주소뿐인 섹션은 건너뛴다.
+     * 전부 주소뿐이면 마지막 것을 쓴다 — 빈 댓글보다 낫다.
+     */
+    : [...headings].reverse().map(bodyOf).find((rows) => rows.some((l) => !isLinkOnly(l)))
+      ?? bodyOf(lastHeading);
 
   const text = picked.join("\n").trim();
   if (text.length <= maxChars) return text;

@@ -20,6 +20,7 @@ import {
   parseMeta,
   sectionSystemPrompt,
 } from "../lib/summaryPrompt.ts";
+import { REFERENCE_HEADING } from "../lib/summarySolution.ts";
 
 const NEWLINE = String.fromCharCode(10);
 const lines = (...parts: string[]): string => parts.join(NEWLINE);
@@ -241,6 +242,52 @@ test("제목·표값 섹션은 본문으로 붙지 않는다", () => {
   });
   assert.equal(doc.split("[SR 1] 제목").length - 1, 1, doc);
   assert.ok(!doc.includes("유형: 문의"), doc);
+});
+
+/*
+ * 조치 → 효과 → 참고 문서.
+ *
+ * 실제 게시된 문서가 `조치 방안:` → `참고 공식 문서:` → `조치 효과:` 순이었다. 조치와
+ * 효과가 링크 뭉치로 갈라져, 읽는 사람이 URL 목록을 지나 다시 효과를 만났다. 모델이
+ * 어떤 순서로 써 보내도 코드가 이 순서로 세운다(lib/summarySolution.ts).
+ */
+test("참고 문서는 떼어 맨 끝으로, 조치와 효과는 소제목으로", () => {
+  const doc = assembleConfluenceDoc({
+    title: "",
+    table: "",
+    sections: [
+      { section: byId("cause"), text: "잔여 설정: 남아 있었습니다." },
+      {
+        section: byId("solution"),
+        text: lines(
+          "조치 방안: 메트릭 엔드포인트를 활성화하도록 안내했습니다.",
+          "참고 공식 문서: https://docs.example.com/app-metrics.html",
+          "조치 효과: 재배포 후 사용량이 정상 표시됩니다.",
+        ),
+      },
+    ],
+  });
+
+  assert.ok(doc.includes("#### 조치 방안"), doc);
+  assert.ok(doc.includes("#### 조치 효과"), doc);
+  assert.ok(doc.indexOf("#### 조치 방안") < doc.indexOf("#### 조치 효과"), doc);
+  // 참고 문서는 섹션 안이 아니라 문서 맨 끝의 독립 섹션이다.
+  assert.ok(doc.includes(`### ${REFERENCE_HEADING}`), doc);
+  assert.ok(doc.indexOf("#### 조치 효과") < doc.indexOf(`### ${REFERENCE_HEADING}`), doc);
+  assert.ok(doc.trimEnd().endsWith("- https://docs.example.com/app-metrics.html"), doc);
+  // 라벨 꼴은 남지 않는다 — 소제목으로 올라갔다.
+  assert.ok(!doc.includes("조치 방안:"), doc);
+  assert.ok(!doc.includes("참고 공식 문서:"), doc);
+});
+
+// 참고 문서가 없으면 빈 섹션을 만들지 않는다. 제목만 있는 칸은 읽는 사람을 헷갈리게 한다.
+test("참고 문서가 없으면 그 섹션은 없다", () => {
+  const doc = assembleConfluenceDoc({
+    title: "",
+    table: "",
+    sections: [{ section: byId("solution"), text: "조치 방안: 쿼터를 올렸습니다." }],
+  });
+  assert.ok(!doc.includes(REFERENCE_HEADING), doc);
 });
 
 test("빈 섹션은 제목째로 뺀다", () => {
