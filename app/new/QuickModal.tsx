@@ -53,6 +53,11 @@ interface Ready {
   readonly jiraBody: string;
   readonly reason: string;
   readonly fallback: boolean;
+  /**
+   * 서버가 두 번 불러도 본문이 모자랐을 때의 한 줄. 비어 있으면 괜찮았다는 뜻이다.
+   * (한국어가 남았거나 메모 수준으로 짧은 경우 — lib/srDraftQuality.ts)
+   */
+  readonly warning: string;
 }
 
 const text2 = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -91,6 +96,7 @@ function readReady(body: Record<string, unknown>): Ready | null {
     jiraTitle: text2(body.jiraTitle).trim(),
     jiraBody: text2(body.jiraBody).trim(),
     reason: text2(body.reason).trim(),
+    warning: text2(body.warning).trim(),
     // 모르면 **폴백으로 본다.** 경고를 띄우고 마는 쪽이, 조용히 "AI 가 골랐다" 고
     // 보여 주는 쪽보다 낫다.
     fallback: body.fallback !== false,
@@ -353,6 +359,16 @@ export function QuickModal({ onClose }: { onClose: () => void }) {
               <Notice tone="warn">
                 {`원문에 없어 못 채운 것이 있습니다 — ${ready.missing.join(" / ")}. `
                   + "그대로 올리면 Broadcom 이 되묻습니다."}
+              </Notice>
+            )}
+            {/*
+              본문 자체가 모자란 경우. 위의 missing 과 다른 말이다 — 저쪽은 "원문에
+              없는 정보" 고 이쪽은 **AI 가 제대로 못 쓴 것**이다. 한국어가 남은 본문은
+              화면에서 그럴듯해 보여서(제목·제품이 다 채워져 있다) 그냥 올라간다.
+            */}
+            {ready.warning !== "" && (
+              <Notice tone="warn">
+                {`${ready.warning} 다시 적기를 눌러 한 번 더 시도할 수 있습니다.`}
               </Notice>
             )}
 

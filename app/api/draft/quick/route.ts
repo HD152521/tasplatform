@@ -20,6 +20,13 @@
  * 일치하는 것만** 집는다(lib/releaseGuess.ts). 못 집으면 비워서 보내고, 화면이 그
  * 사실을 말한다. 비슷한 것을 찍으면 틀린 환경으로 SR 이 올라간다.
  *
+ * ## 영문으로 **풀어 쓴다**
+ *
+ * 담당자는 한두 줄만 적는다. 그 한두 줄을 옮기는 것이 아니라 지원팀이 바로 조사에
+ * 들어갈 수 있는 글로 풀어 쓰는 것이 이 기능이다. 그래서 전용 프롬프트를 쓴다
+ * (lib/srDraftPrompt.ts 의 QUICK_SYSTEM_PROMPT — 왜 tidy 로는 안 됐는지도 거기 있다).
+ * 결과가 한국어로 남거나 메모 수준으로 짧으면 **한 번 더 부른다.**
+ *
  * ## 분류가 실패해도 멈추지 않는다
  *
  * LLM 이 없거나 답이 쓸 수 없으면 **가장 많이 쓴 조합**으로 떨어진다(lib/classifyCase.ts).
@@ -47,7 +54,14 @@ import {
   parseComposed,
   stripUngroundedTag,
   systemPromptFor,
+  type ComposedDraft,
 } from "../../../../lib/srDraftPrompt.ts";
+import {
+  draftPenalty,
+  draftShortfalls,
+  shortfallNote,
+  shortfallWarning,
+} from "../../../../lib/srDraftQuality.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -180,21 +194,55 @@ async function handle(request: Request): Promise<Response> {
   }
 
   try {
-    // "tidy" — 받은 글을 우리 팀 서식으로 **정리**한다(번역만 하는 "translate" 가 아니다).
-    // 간단히 올리기는 담당자가 메모처럼 적는 자리라, 문단을 다시 짜 주는 쪽이 맞다.
-    const composed = parseComposed(await chat(
-      systemPromptFor("tidy"),
-      buildDraftUser({
-        content,
-        mode: "tidy",
-        productName: choice.productName,
-        componentName: choice.componentName,
-        // 찾았으면 넘긴다. 못 찾았으면 빈 값 — 없는 버전을 본문에 적게 하지 않는다.
-        release: release?.releaseDesc ?? "",
-        severity: str(body.severity),
-        subject: "",
-      }),
-    ));
+    /*
+     * "quick" — 받은 메모를 **영문으로 풀어 쓴다.**
+     *
+     * 한때 "tidy" 를 썼다. 메모처럼 적은 글이니 문단을 다시 짜 주는 쪽이 맞다고 본
+     * 것인데, tidy 는 **언어를 바꾸지 말라고** 못박는 프롬프트다(영어로 적은 글을
+     * 다듬는 자리였다). 담당자는 한국어로 적으니, 영문 본문 자리에 한국어가 그대로
+     * 실려 나갔다 — QUICK_SYSTEM_PROMPT 머리말에 그 글이 그대로 남아 있다.
+     */
+    const user = buildDraftUser({
+      content,
+      mode: "quick",
+      productName: choice.productName,
+      componentName: choice.componentName,
+      // 찾았으면 넘긴다. 못 찾았으면 빈 값 — 없는 버전을 본문에 적게 하지 않는다.
+      release: release?.releaseDesc ?? "",
+      severity: str(body.severity),
+      subject: "",
+    });
+
+    let composed = parseComposed(await chat(systemPromptFor("quick"), user));
+
+    /*
+     * 모자라면 **한 번 더** 부른다.
+     *
+     * 지시를 지킬 것이라는 전제 위에 기능을 쌓지 않는다. 한국어가 남은 본문은 화면에서
+     * 그럴듯해 보여서(제목·제품이 다 채워져 있다) 사람이 그냥 올린다. 7~8초가 한 번 더
+     * 들지만, 읽을 수 없는 SR 이 나가 되묻기로 하루를 버리는 것보다 싸다.
+     *
+     * 두 번으로 끝낸다. 사람이 화면 앞에서 기다리는 구간이고, 세 번째가 나아진다는
+     * 근거도 없다. 나은 쪽을 골라 쓰고(draftPenalty), 끝까지 모자라면 화면에 적는다.
+     */
+    let shortfalls = draftShortfalls(composed.content);
+    if (shortfalls.length > 0) {
+      console.warn("[draft/quick] 결과가 모자라 다시 요청합니다:", shortfalls.join(", "));
+      try {
+        const again: ComposedDraft = parseComposed(await chat(
+          systemPromptFor("quick"),
+          `${user}\n\n${shortfallNote(shortfalls)}`,
+        ));
+        // 두 번째가 더 나을 때만 바꾼다. 첫 결과를 버리는 쪽이 늘 옳지는 않다.
+        if (draftPenalty(again) < draftPenalty(composed)) {
+          composed = again;
+          shortfalls = draftShortfalls(again.content);
+        }
+      } catch (error) {
+        // 두 번째 실패가 첫 결과를 버릴 이유는 아니다.
+        console.error("[draft/quick] 다시 쓰기 실패(첫 결과를 씁니다):", chatFailureMessage(error));
+      }
+    }
     // 제목 앞 대괄호는 근거가 있을 때만 남긴다. compose 라우트와 같은 규칙이다 —
     // 모델이 본문에 없는 버전을 지어 붙인 적이 있다.
     // 제목 대괄호의 근거에 **찾은 버전도** 넣는다. 안 넣으면 모델이 올바른 버전을
@@ -233,6 +281,9 @@ async function handle(request: Request): Promise<Response> {
       jiraBody: composed.jiraBody,
       reason: classified.reason,
       fallback: classified.fallback,
+      // 두 번 불러도 한국어가 남았으면 **말한다.** 이 글은 그대로 벤더에게 나가고,
+      // 화면에서는 멀쩡해 보인다(짧은 것은 말하지 않는 이유는 shortfallWarning 머리말).
+      warning: shortfallWarning(shortfalls),
     });
   } catch (error) {
     // **다시 던지지 않는다.** chat() 은 OpenAiError 와 LlmError 두 종류를 던지는데,

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   DRAFT_SYSTEM_PROMPT,
   QUESTIONS_HEADING,
+  QUICK_SYSTEM_PROMPT,
   TIDY_SYSTEM_PROMPT,
   UNKNOWN_MARK,
   buildDraftUser,
@@ -140,6 +141,7 @@ test("모르는 mode 는 번역으로 둔다", () => {
   // 한국어를 영어로 못 바꿔 보내는 쪽이 더 나쁘다.
   assert.equal(readMode("tidy"), "tidy");
   assert.equal(readMode("translate"), "translate");
+  assert.equal(readMode("quick"), "quick");
   assert.equal(readMode(undefined), "translate");
   assert.equal(readMode("아무거나"), "translate");
 });
@@ -160,6 +162,7 @@ test("다듬기도 같은 틀과 같은 출력 형식을 쓴다", () => {
 test("mode 에 따라 다른 프롬프트를 고른다", () => {
   assert.equal(systemPromptFor("tidy"), TIDY_SYSTEM_PROMPT);
   assert.equal(systemPromptFor("translate"), DRAFT_SYSTEM_PROMPT);
+  assert.equal(systemPromptFor("quick"), QUICK_SYSTEM_PROMPT);
 });
 
 test("다듬기일 때는 본문 라벨이 달라진다", () => {
@@ -167,6 +170,61 @@ test("다듬기일 때는 본문 라벨이 달라진다", () => {
   assert.match(tidy, /언어를 바꾸지 말고 다듬기만/);
   const translate = buildDraftUser({ content: "한국어", mode: "translate" });
   assert.ok(!translate.includes("언어를 바꾸지 말고"));
+});
+
+
+/* ------------------------------------------------------------------ *
+ * 간단히 올리기(quick)
+ *
+ * 이 모드는 **영문으로 풀어 쓰는** 자리다. 한때 tidy 를 돌려썼는데 tidy 는 "언어를
+ * 바꾸지 말라" 고 못박는 프롬프트라, 담당자가 한국어로 적으면 영문 본문 자리에 한국어가
+ * 그대로 실려 나갔다. 다시 돌려쓰지 못하게 여기서 잠근다.
+ * ------------------------------------------------------------------ */
+
+test("간단히 올리기는 영어로 쓰라고 못박는다", () => {
+  assert.match(QUICK_SYSTEM_PROMPT, /\*\*영어로 씁니다\.\*\*/);
+  assert.match(QUICK_SYSTEM_PROMPT, /한국어를 남기지 않습니다/);
+});
+
+// 기능은 "간단히 적은 것을 간단히 올리기" 가 아니라 "간단히 적어도 자세히 나가기" 다.
+test("간단히 올리기는 풀어 쓰라고 지시한다", () => {
+  assert.match(QUICK_SYSTEM_PROMPT, /짧게 적어도 자세히 나가게 씁니다/);
+  assert.match(QUICK_SYSTEM_PROMPT, /세 문단 이상/);
+});
+
+// 풀어 쓰는 것은 문장이고, 늘리는 것은 사실이 아니다. 둘을 같이 못박아야 한다.
+test("풀어 쓰면서도 사실은 지어내지 말라고 못박는다", () => {
+  assert.match(QUICK_SYSTEM_PROMPT, /사실은 늘리지 않습니다/);
+  assert.match(QUICK_SYSTEM_PROMPT, /추측해서 채우지 않습니다/);
+  assert.ok(QUICK_SYSTEM_PROMPT.includes(UNKNOWN_MARK));
+});
+
+// 질문 칸에 본문을 그대로 베낀 적이 있다(그것도 한국어로).
+test("질문은 영어 의문문으로 세우라고 지시한다", () => {
+  assert.ok(QUICK_SYSTEM_PROMPT.includes(QUESTIONS_HEADING));
+  assert.match(QUICK_SYSTEM_PROMPT, /영어 의문문으로 씁니다/);
+  assert.match(QUICK_SYSTEM_PROMPT, /본문 문장을 그대로 다시 적지 않습니다/);
+});
+
+test("간단히 올리기도 같은 틀과 같은 출력 형식을 쓴다", () => {
+  assert.ok(QUICK_SYSTEM_PROMPT.includes("Hello Support Team,"));
+  assert.ok(QUICK_SYSTEM_PROMPT.includes("Thanks,"));
+  assert.ok(QUICK_SYSTEM_PROMPT.includes("[SUBJECT]"));
+  assert.ok(QUICK_SYSTEM_PROMPT.includes("[JIRA_TITLE]"));
+  assert.match(QUICK_SYSTEM_PROMPT, /Background, Symptom, Environment 같은/);
+});
+
+// 에러 문구는 한국어여도 그대로 둔다. 옮겨 적으면 받는 쪽이 검색하지 못한다.
+test("에러 문구만은 그대로 두라고 예외를 둔다", () => {
+  assert.match(QUICK_SYSTEM_PROMPT, /한 글자도 바꾸지 않습니다/);
+  assert.match(QUICK_SYSTEM_PROMPT, /한국어여도 그대로 둡니다/);
+});
+
+test("간단히 올리기일 때는 본문 라벨이 또 달라진다", () => {
+  const quick = buildDraftUser({ content: "disk가 az에 남아있음", mode: "quick" });
+  // 글이 짧은 것이 결함이 아니라 전제라고 알려 줘야 그대로 베끼지 않는다.
+  assert.match(quick, /짧은 것이 정상입니다/);
+  assert.ok(!quick.includes("언어를 바꾸지 말고"));
 });
 
 /* ------------------------------------------------------------------ *
@@ -223,8 +281,8 @@ test("대소문자는 따지지 않는다", () => {
   assert.equal(stripUngroundedTag(subject, FACTS), subject);
 });
 
-test("두 프롬프트 모두 대괄호를 지어내지 말라고 못박는다", () => {
-  for (const prompt of [DRAFT_SYSTEM_PROMPT, TIDY_SYSTEM_PROMPT]) {
+test("세 프롬프트 모두 대괄호를 지어내지 말라고 못박는다", () => {
+  for (const prompt of [DRAFT_SYSTEM_PROMPT, TIDY_SYSTEM_PROMPT, QUICK_SYSTEM_PROMPT]) {
     assert.match(prompt, /대괄호를 아예 쓰지 않습니다/);
     assert.match(prompt, /추측해서 만들지/);
   }
