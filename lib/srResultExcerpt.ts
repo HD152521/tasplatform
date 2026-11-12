@@ -68,7 +68,7 @@ function fenceMask(lines: readonly string[]): boolean[] {
 /**
  * 쓸 만한 줄만 남긴다. 코드 블록 안은 이미 빠진 상태로 들어온다.
  */
-function pickLines(rows: readonly string[]): string[] {
+function pickLines(rows: readonly string[], maxLines: number): string[] {
   return rows
     .map((line) => line.trim())
     // 표는 가져오지 않는다. 댓글에서 파이프 줄은 읽히지 않는다.
@@ -80,7 +80,7 @@ function pickLines(rows: readonly string[]): string[] {
      * 되고 `--force` 가 `-force` 가 된다. 요약은 그런 모양을 자주 쓴다.
      */
     .map((line) => line.replace(/^[-*•]\s+/, ""))
-    .slice(0, MAX_LINES);
+    .slice(0, maxLines);
 }
 
 /**
@@ -102,8 +102,16 @@ function isLinkOnly(line: string): boolean {
  *
  * 헤딩이 하나도 없으면 **맨 끝 문단**을 쓴다. 요약이 어떤 모양이든 끝부분이 결론일
  * 가능성이 가장 높고, 빈 댓글을 남기는 것보다 낫다.
+ *
+ * 길이와 줄 수를 받는 이유: 같은 뽑기를 **두 자리**가 쓴다. 댓글은 두세 줄이면 되지만,
+ * 티켓 본문에 적는 조치 방향은 절 하나를 담는 기록이라 더 길어야 한다
+ * (lib/srJiraComment.ts). 뽑는 규칙을 두 벌로 베끼면 한쪽만 고쳐지는 날이 온다.
  */
-export function resultExcerpt(summary: string, maxChars = MAX_CHARS): string {
+export function resultExcerpt(
+  summary: string,
+  maxChars = MAX_CHARS,
+  maxLines = MAX_LINES,
+): string {
   const lines = summary.replace(/\r\n/g, "\n").split("\n");
 
   // 헤딩 자리를 모은다. 코드 블록 안의 `#` 은 주석이지 제목이 아니다.
@@ -116,7 +124,10 @@ export function resultExcerpt(summary: string, maxChars = MAX_CHARS): string {
   /** 헤딩 하나의 본문. 코드 블록 안은 버린다 — 댓글은 두세 줄 요약이지 명령 모음이 아니다. */
   const bodyOf = (at: number): string[] => {
     const next = headings.find((h) => h > at) ?? lines.length;
-    return pickLines(lines.slice(at + 1, next).filter((_, i) => !inside[at + 1 + i]));
+    return pickLines(
+      lines.slice(at + 1, next).filter((_, i) => !inside[at + 1 + i]),
+      maxLines,
+    );
   };
 
   const lastHeading = headings.at(-1);
@@ -125,6 +136,7 @@ export function resultExcerpt(summary: string, maxChars = MAX_CHARS): string {
     ? pickLines(
       (summary.replace(/\r\n/g, "\n").split(/\n{2,}/).filter((b) => b.trim() !== "").at(-1) ?? "")
         .split("\n"),
+      maxLines,
     )
     /*
      * 뒤에서부터 **말이 든 덩어리**를 찾는다. 주소뿐인 섹션은 건너뛴다.

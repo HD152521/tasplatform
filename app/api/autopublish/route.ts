@@ -181,7 +181,11 @@ async function handle(request: Request, dryRun: boolean): Promise<Response> {
           console.log(`[autopublish] 올림 ${target.caseLabel} ${result.created ? "(새 문서)" : "(갱신)"}`);
 
           /*
-           * 티켓에 결과를 남긴다. **게시 성공을 뒤집지 않는다** — 던지지 않는 함수이고,
+           * 티켓에 결과를 남긴다 — 댓글 하나와 **본문 끝의 조치 방향**이다
+           * (lib/srJiraComment.ts, lib/jiraSolution.ts). 등록 때 만든 본문에는 문제
+           * 상황만 있어서, 끝난 뒤 조치 방향과 문서 주소를 그 뒤에 적는다.
+           *
+           * **게시 성공을 뒤집지 않는다** — 던지지 않는 함수이고,
            * 실패하면 값으로 돌아온다. 여기서 던지게 두면 이미 올라간 문서가 "실패" 로
            * 기록되고 다음 회차가 또 올린다.
            */

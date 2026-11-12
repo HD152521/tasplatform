@@ -102,7 +102,7 @@ function authHeader(config: JiraSrConfig): string {
 
 async function jfetch<T>(
   config: JiraSrConfig,
-  method: "POST",
+  method: "GET" | "POST" | "PUT",
   path: string,
   body: unknown,
 ): Promise<T> {
@@ -115,7 +115,8 @@ async function jfetch<T>(
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
+      // GET 에 본문을 실으면 게이트웨이가 거부하는 경우가 있다.
+      ...(method === "GET" ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (error) {
@@ -256,6 +257,62 @@ function requireKey(key: string | undefined): string {
     throw new JiraMaybeCreatedError("Jira 가 티켓 번호를 주지 않았습니다.");
   }
   return key;
+}
+
+/* ------------------------------------------------------------------ *
+ * 본문(description) 읽고 쓰기
+ *
+ * SR 이 끝나면 티켓 본문 끝에 조치 방향과 정리 문서 주소를 적는다. 등록 때 만든 본문에는
+ * 문제 상황만 있어서다(lib/jiraSolution.ts 머리말).
+ *
+ * **읽고 나서 쓴다.** 본문을 통째로 갈아 끼우는 API 라, 읽지 않고 쓰면 사람이 적어 둔
+ * 글이 사라진다.
+ * ------------------------------------------------------------------ */
+
+/**
+ * 티켓의 현재 본문(ADF). 비어 있으면 null.
+ *
+ * 모양을 믿지 않고 그대로 돌려준다 — 판정은 순수 함수가 한다(lib/jiraSolution.ts 의
+ * solutionPatch 가 ADF 문서인지 본다).
+ */
+export async function fetchIssueDescription(
+  config: JiraSrConfig,
+  issueKey: string,
+): Promise<unknown> {
+  const got = await jfetch<{ fields?: { description?: unknown } }>(
+    config,
+    "GET",
+    `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=description`,
+    undefined,
+  );
+  return got.fields?.description ?? null;
+}
+
+/**
+ * 티켓 본문을 바꾼다.
+ *
+ * 먼저 `notifyUsers=false` 로 보낸다 — 조치 방향은 같은 순간에 **댓글로도** 남으므로
+ * (lib/srJiraComment.ts), 알림이 두 번 가면 지켜보는 사람이 같은 소식을 두 번 받는다.
+ *
+ * 그런데 그 플래그는 **관리자 권한이 있어야** 쓴다. 없으면 Jira 가 400 으로 거절한다.
+ * 알림 한 번 더 가는 것 때문에 본문 갱신이 아예 안 되게 두지 않는다 — 400 이면
+ * 플래그를 떼고 한 번 더 보낸다(등록 때 칸을 떼고 다시 보내는 것과 같은 방식).
+ */
+export async function updateIssueDescription(
+  config: JiraSrConfig,
+  issueKey: string,
+  description: unknown,
+): Promise<void> {
+  const path = `/rest/api/3/issue/${encodeURIComponent(issueKey)}`;
+  const body = { fields: { description } };
+  try {
+    await jfetch(config, "PUT", `${path}?notifyUsers=false`, body);
+    return;
+  } catch (error) {
+    // 400 만 다시 해 본다. 권한·망 문제라면 다시 보내도 같은 답이다.
+    if (!(error instanceof AtlassianError) || error.status !== 400) throw error;
+  }
+  await jfetch(config, "PUT", path, body);
 }
 
 export function issueUrl(config: JiraSrConfig, issueKey: string): string {

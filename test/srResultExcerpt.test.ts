@@ -187,3 +187,24 @@ test("전부 주소뿐이면 마지막 섹션을 그대로 쓴다", () => {
   const got = resultExcerpt(lines("### 참고 공식 문서", "- https://docs.example.com/a.html"));
   assert.equal(got, "https://docs.example.com/a.html");
 });
+
+/*
+ * 같은 뽑기를 **두 자리**가 쓴다 — 댓글(두세 줄)과 티켓 본문의 조치 방향(절 하나).
+ * 줄 수를 못 넘기면 본문에도 네 줄만 적히고, 조치 방향이 중간에서 잘린다.
+ */
+test("줄 수와 길이를 받아 더 길게 뽑을 수 있다", () => {
+  const summary = lines(
+    "### 해결 제안 및 조치 방안",
+    "#### 조치 방안",
+    "첫째 줄",
+    "둘째 줄",
+    "셋째 줄",
+    "넷째 줄",
+    "다섯째 줄",
+    "여섯째 줄",
+  );
+  // 기본값은 네 줄까지다(댓글 자리).
+  assert.ok(!resultExcerpt(summary).includes("다섯째 줄"));
+  // 본문 자리는 더 받는다.
+  assert.ok(resultExcerpt(summary, 1400, 16).includes("여섯째 줄"));
+});
