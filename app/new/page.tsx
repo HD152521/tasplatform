@@ -4,6 +4,7 @@ import { listProductComponents, type ProductComponent } from "../../lib/queries.
 import { COLOR, Notice } from "../ui.tsx";
 import { DraftForm } from "./DraftForm.tsx";
 import { QuickButton } from "./QuickButton.tsx";
+import { QuickFillProvider } from "./QuickFillBus.tsx";
 
 export const dynamic = "force-dynamic";
 
@@ -32,8 +33,13 @@ export default async function NewCasePage() {
   combos = selectableProducts(mergeCatalog(combos));
 
 
+  /*
+   * 간단히 올리기(머리글 버튼)가 만든 값을 작성 폼으로 건네는 통로로 감싼다.
+   * 둘은 형제고 이 페이지는 서버 컴포넌트라 상태를 들 수 없다
+   * (app/new/QuickFillBus.tsx 머리말).
+   */
   return (
-    <>
+    <QuickFillProvider>
       <header style={{
         marginBottom: 20, display: "flex", alignItems: "flex-start",
         justifyContent: "space-between", gap: 16,
@@ -60,6 +66,6 @@ export default async function NewCasePage() {
       )}
 
       <DraftForm combos={combos} fromCatalog={fromDbCount === 0} />
-    </>
+    </QuickFillProvider>
   );
 }

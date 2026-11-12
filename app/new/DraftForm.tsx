@@ -12,7 +12,7 @@ import {
 } from "../../lib/srDraft.ts";
 import { writeFailureText } from "../../lib/writeFailure.ts";
 import { SEVERITIES, priorityIdOf } from "../../lib/severity.ts";
-import { COLOR, Card, RADIUS, controlStyle } from "../ui.tsx";
+import { COLOR, Card, Notice, RADIUS, controlStyle } from "../ui.tsx";
 import { Select } from "../Select.tsx";
 import { Composer, type ComposeMode } from "./Composer.tsx";
 import { ReleasePicker, type PickedRelease } from "./ReleasePicker.tsx";
@@ -21,6 +21,8 @@ import {
   DEFAULT_TRACK, guessTrack, hasHangul, koTitleFrom, type SrTrack,
 } from "../../lib/jiraSrTicket.ts";
 import { SubmitBar } from "./SubmitBar.tsx";
+import { quickFillNotes } from "../../lib/quickFill.ts";
+import { useQuickFill } from "./QuickFillBus.tsx";
 
 /**
  * SR 작성.
@@ -147,6 +149,71 @@ export function DraftForm({
   const [composeError, setComposeError] = useState("");
   /** 원문에 없어 담당자가 채워야 할 것들. */
   const [gaps, setGaps] = useState<string[]>([]);
+
+  /* ------------------------------------------------------------------ *
+   * 간단히 올리기로 채우기
+   *
+   * 머리글의 "간단히 올리기" 가 만든 값을 **이 폼에 입력된 상태로** 받는다. 전에는
+   * 그 결과를 모달 안에 펼쳐 놓고 거기서 올렸는데, 거기서는 고칠 수가 없었다 — 거의
+   * 맞는 글에서 한 줄만 고치려면 취소하고 여기 처음부터 다시 적어야 했다.
+   *
+   * 받은 값은 **전부 덮어쓴다.** 사람이 방금 "간단히 올리기" 를 눌러 만든 값이므로,
+   * 빈 칸만 채우면 앞서 적다 만 글이 섞여 무엇이 AI 가 쓴 것인지 알 수 없게 된다.
+   * ------------------------------------------------------------------ */
+  const { fill, clear } = useQuickFill();
+  /** 채운 뒤 사람이 확인해야 할 줄들(lib/quickFill.ts). */
+  const [quickNotes, setQuickNotes] = useState<readonly string[]>([]);
+  /** 왜 그 Product · Component 를 골랐는가. 경고가 아니라 설명이다. */
+  const [quickReason, setQuickReason] = useState("");
+  const [quickFilled, setQuickFilled] = useState(false);
+
+  useEffect(() => {
+    if (fill === null) return;
+
+    setD((prev) => ({
+      ...prev,
+      subject: fill.subject.slice(0, SUBJECT_LIMIT),
+      content: fill.content,
+      severity: fill.severity,
+    }));
+    setProductId(fill.productId);
+    setComponentId(fill.componentId);
+    // 서버가 글에서 집어 준 버전. 못 집었으면 null — 그러면 SubmitBar 가 올리기를
+    // 막고 사람이 ReleasePicker 에서 고른다. 비슷한 것을 찍으면 틀린 환경으로 올라간다.
+    setRelease(fill.releaseId > 0
+      ? { releaseId: fill.releaseId, releaseDesc: fill.releaseDesc }
+      : null);
+    /*
+     * 적은 메모가 곧 **한글 원문**이다. Jira 본문이 비었을 때 이 값으로 떨어지고,
+     * 티켓 제목·구분도 여기서 뽑는다. 번역이 입력칸을 갈아끼우는 경로와 달리 여기서는
+     * 원문이 그대로 남아 있으므로 붙잡아 두기만 하면 된다.
+     */
+    setKoOriginal(fill.memo);
+    setTitleKo(fill.titleKo !== "" ? fill.titleKo : koTitleFrom(fill.memo));
+    setJiraBody(fill.jiraBody);
+    // 구분은 사람이 고른 적이 있으면 덮지 않는다. 고친 줄 모르고 바뀌면 틀린 구분으로
+    // 티켓이 올라간다.
+    setTrack((prev) => (trackPicked ? prev : guessTrack(fill.memo)));
+    setGaps([...fill.missing]);
+
+    /*
+     * 고른 조합이 **이 화면의 목록에 있는지** 본다. 없으면 Select 는 다른 값을 보여
+     * 주는데(첫 항목으로 떨어진다) 사람은 AI 가 고른 값이라고 믿는다. 그대로 올라가면
+     * Broadcom 쪽에서 엉뚱한 팀으로 간다.
+     */
+    const known = combos.some(
+      (c) => c.productId === fill.productId && c.componentId === fill.componentId,
+    );
+    setQuickNotes(quickFillNotes(fill, known));
+    setQuickReason(fill.reason);
+    setQuickFilled(true);
+    setStage("write");
+    setComposeError("");
+    setError("");
+
+    // 한 번만 받는다. 비우지 않으면 다시 그려질 때마다 사람이 고쳐 둔 값을 덮는다.
+    clear();
+  }, [fill, clear, combos, trackPicked]);
 
   /**
    * 본문을 그 자리에서 바꾼다.
@@ -407,6 +474,29 @@ export function DraftForm({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/*
+        간단히 올리기로 채워진 상태라는 것을 **말해 준다.** 모달이 닫히고 칸만 조용히
+        채워져 있으면, 사람은 자기가 적은 글이 어디로 갔는지 모른다.
+      */}
+      {quickFilled && (
+        <div>
+          <Notice tone="ok">
+            간단히 올리기로 채웠습니다. 제목·본문·속성을 고친 뒤 아래에서 올려주세요.
+          </Notice>
+          {/*
+            틀릴 수 있는 자리를 이름으로 짚어 준다. 칸은 바로 아래 있으니 고치면 된다.
+          */}
+          {quickNotes.map((note) => (
+            <Notice key={note} tone="warn">{note}</Notice>
+          ))}
+          {quickReason !== "" && (
+            <div style={{ marginTop: 8, fontSize: 11.5, color: COLOR.faint, lineHeight: 1.6 }}>
+              {`Product · Component 를 고른 이유: ${quickReason}`}
+            </div>
+          )}
+        </div>
+      )}
+
       <Card style={{ padding: "20px 22px 6px" }}>
         <SectionTitle>케이스 속성</SectionTitle>
 
@@ -491,6 +581,26 @@ export function DraftForm({
               value={track}
               onChange={(next) => { setTrack(next); setTrackPicked(true); }}
               disabled={busy}
+            />
+          </Field>
+        </Row>
+
+        {/*
+          티켓 본문(사내 기록)도 **보이고 고칠 수 있게** 둔다.
+
+          AI 가 쓴 글이 우리 팀 추적 기록으로 그대로 남는다. 전에는 간단히 올리기
+          모달에서만 읽기로 보여 줬고, 작성 폼에서는 아예 보이지 않아 무엇이 올라가는지
+          알 수 없었다. 비워 두면 한글 원문으로 떨어진다(lib/jiraSrTicket.ts).
+        */}
+        <Row>
+          <Field label="Jira 티켓 본문 (사내 기록)"
+                 hint="비워 두면 한글 원문을 씁니다. 고객에게 가는 글이 아닙니다">
+            <textarea
+              value={jiraBody}
+              onChange={(e) => setJiraBody(e.target.value)}
+              rows={4}
+              placeholder="질문: … / 배경: …"
+              style={{ ...inputStyle, height: 92, lineHeight: 1.6 }}
             />
           </Field>
         </Row>
