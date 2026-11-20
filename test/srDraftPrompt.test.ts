@@ -288,6 +288,21 @@ test("세 프롬프트 모두 대괄호를 지어내지 말라고 못박는다",
   }
 });
 
+/*
+ * Jira 본문은 **개조식**이다.
+ *
+ * 티켓은 우리 팀의 기록이라 문장이 아니라 항목으로 읽힌다. 프롬프트의 다른 지시가 모두
+ * 합니다체로 적혀 있어, 못박아 두지 않으면 모델이 본문도 `~습니다` 로 맺는다. 세 모드가
+ * 같은 outputFormat 을 쓰므로 한 군데만 빠져도 그 모드만 조용히 어투가 달라진다.
+ */
+test("세 프롬프트 모두 Jira 본문을 개조식으로 쓰라고 못박는다", () => {
+  for (const prompt of [DRAFT_SYSTEM_PROMPT, TIDY_SYSTEM_PROMPT, QUICK_SYSTEM_PROMPT]) {
+    assert.match(prompt, /개조식으로 씁니다/);
+    assert.match(prompt, /어말어미를 붙이지 않습니다/);
+    assert.match(prompt, /마침표도 붙이지 않습니다/);
+  }
+});
+
 /* ------------------------------------------------------------------ *
  * Jira 티켓용 한글 (JIRA_TITLE / JIRA_BODY)
  *

@@ -175,7 +175,7 @@ export function srCommentBody(input: {
   pageUrl: string;
 }) {
   return adfDoc([
-    adfParagraph(`SR ${input.caseLabel} 가 종료되어 정리 문서를 올렸습니다.`),
+    adfParagraph(`SR ${input.caseLabel} 종료 — 정리 문서 게시`),
     ...(input.result === "" ? [] : adfLines(input.result)),
     adfParagraph("문서: ", adfLink("Confluence 에서 보기", input.pageUrl)),
   ]);
