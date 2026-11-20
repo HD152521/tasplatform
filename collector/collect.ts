@@ -15,6 +15,7 @@ import {
   API_HEADERS,
   API_ORIGIN,
   DEFAULT_TEAM_ID,
+  assertValidTeamId,
   REQUEST_DELAY_MS,
   sessionFileForTeam,
 } from "../lib/config.ts";
@@ -52,6 +53,21 @@ import {
 import { hydrateTeamSessionFromDb, persistTeamSessionToDb } from "../lib/sessionStore.ts";
 
 const DRY_RUN = process.argv.includes("--dry-run");
+
+/**
+ * 어느 팀을 수집하나. `--team=<id>`, 없으면 기본 팀.
+ *
+ * 세션·기기신뢰·공용 계정·잠금 상태가 전부 팀별이라(lib/config.ts sessionFileForTeam),
+ * 한 회차는 **한 팀만** 본다. 여러 팀은 worker 가 팀마다 이 프로세스를 한 번씩 돌린다 —
+ * 한 프로세스에서 팀을 바꿔 가며 돌면 브라우저·락·세션 파일이 섞인다.
+ */
+const TEAM_ID = (() => {
+  const arg = process.argv.find((a) => a.startsWith("--team="));
+  const value = arg === undefined ? "" : arg.slice("--team=".length).trim();
+  if (value === "") return DEFAULT_TEAM_ID;
+  assertValidTeamId(value);
+  return value;
+})();
 
 /**
  * 브라우저 로그인을 끌지 여부(SR_DISABLE_BROWSER_LOGIN).
@@ -368,8 +384,8 @@ async function main(): Promise<void> {
     // 파일이 있고 아직 쓸 수 있으면 건드리지 않는다. 예전 주석은 "파일이 있으면 최신으로
     // 덮어쓴다" 였는데 그건 refreshTeamSessionFromDb 의 동작이고 이 함수의 것이 아니다.
     // 그 오해로 "DB 가 항상 이긴다" 고 믿고 고치면 방금 회전된 세션을 되돌리게 된다.
-    await hydrateTeamSessionFromDb(DEFAULT_TEAM_ID, db);
-    session = await acquireSession(db);
+    await hydrateTeamSessionFromDb(TEAM_ID, db);
+    session = await acquireSession(db, TEAM_ID);
     // 접속하는 순간 서버가 세션 쿠키를 회전시킨다.
     // 갱신분을 저장하지 않으면 파일에 남은 옛 쿠키가 무효화되어 다음 실행이 실패한다.
     // 이는 데이터 쓰기가 아니므로 dry-run 에서도 반드시 저장한다.
@@ -421,7 +437,12 @@ async function main(): Promise<void> {
       // 변경이 0건이어도 292행을 매번 다시 쓴다. 트랜잭션으로 묶어야 한다.
       await inTransaction(db, async (tx) => {
         for (const item of cases) {
-          await upsertCase(tx, toCaseRow(item, now, details.get(item.requestId)));
+          // **그 팀 소유**로 적는다. 팀을 안 넘기면 2번 팀 케이스가 1번 팀 것으로
+          // 들어가 화면·보고서에서 섞인다.
+          await upsertCase(tx, {
+            ...toCaseRow(item, now, details.get(item.requestId)),
+            team_id: TEAM_ID,
+          });
         }
       });
     }
@@ -541,7 +562,7 @@ async function announceFailure(
 
 function report(seen: number, changed: number, replies: readonly NewReply[]): void {
   console.log("");
-  console.log(`수집 완료${DRY_RUN ? " (dry-run: DB 미반영)" : ""}`);
+  console.log(`수집 완료 [${TEAM_ID}]${DRY_RUN ? " (dry-run: DB 미반영)" : ""}`);
   console.log(`  케이스 ${seen}건 조회 / 변경 ${changed}건`);
   console.log(`  새 답변 ${replies.length}건`);
   for (const r of replies) {

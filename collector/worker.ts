@@ -18,6 +18,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isWithinHours, parseHours, resolveDurationMs } from "./schedule.ts";
 import { isCloudFoundry } from "./launchPlan.ts";
+import { DEFAULT_TEAM_ID } from "../lib/config.ts";
 import { openDb, type Db } from "../lib/db.ts";
 import { COLLECT_KINDS, type CollectKind } from "../lib/collectKind.ts";
 import {
@@ -99,6 +100,39 @@ export function childPlanFor(kind: CollectKind, casesTimeoutMs: number): ChildPl
       return { entry: CVES_ENTRY, timeoutMs: CVES_TIMEOUT_MS, label: "보안 공지 수집" };
     case "kb":
       return { entry: KB_ENTRY, timeoutMs: KB_TIMEOUT_MS, label: "기술 문서 수집" };
+  }
+}
+
+/**
+ * 수집할 팀들.
+ *
+ * 세션·공용 계정·잠금 상태가 전부 팀별이라 한 회차는 **한 팀만** 본다. 그래서 팀마다
+ * collect.ts 를 한 번씩 돌린다 — 한 프로세스에서 팀을 바꿔 가며 돌면 브라우저·락·
+ * 세션 파일이 섞인다.
+ *
+ * 대상은 **공용 계정이 저장된 팀**이다. 계정이 없는 팀은 로그인할 수 없으므로 돌려도
+ * 실패만 쌓인다(그리고 그 실패가 잠금 카운터를 건드리지는 않는다 — 비밀번호를 제출
+ * 하지 못한 실패는 세지 않는다). 기본 팀은 `.env` 폴백이 있을 수 있어 **항상** 넣는다.
+ */
+async function teamsToCollect(): Promise<string[]> {
+  const db = await openDb();
+  try {
+    const rows = await db.all<{ team_id: string }>(
+      "SELECT team_id FROM portal_credentials WHERE username <> '' AND password_enc <> '' ORDER BY team_id",
+    );
+    const out = [DEFAULT_TEAM_ID];
+    for (const row of rows) {
+      if (!out.includes(row.team_id)) out.push(row.team_id);
+    }
+    return out;
+  } catch (error) {
+    // DB 를 못 읽어도 기본 팀은 돈다 — 수집이 통째로 멈추는 것이 더 나쁘다.
+    console.error(
+      `[worker] 수집 대상 팀을 읽지 못했습니다(기본 팀만 돕니다): ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return [DEFAULT_TEAM_ID];
+  } finally {
+    await db.close();
   }
 }
 
@@ -344,10 +378,15 @@ async function pollLoop(
  * 성공 여부(종료코드 0 이고 죽이지 않았음)를 돌려준다. 화면이 "완료" 라고 말하기 전에
  * 그 회차가 실제로 끝난 것인지 알아야 하는데, 케이스 말고는 runs 에 흔적이 없다.
  */
-function runChildOnce(entry: string, timeoutMs: number, label: string): Promise<boolean> {
+function runChildOnce(
+  entry: string,
+  timeoutMs: number,
+  label: string,
+  args: readonly string[] = [],
+): Promise<boolean> {
   return new Promise((resolveRun) => {
     const startedMs = Date.now();
-    const child = spawn(process.execPath, [entry], {
+    const child = spawn(process.execPath, [entry, ...args], {
       cwd: REPO_ROOT,
       stdio: "inherit",
     });
@@ -408,7 +447,20 @@ async function runLoop(config: WorkerConfig): Promise<void> {
 
   while (!stopping) {
     if (isWithinHours(new Date(), config.hoursSpec)) {
-      const ok = await runChildOnce(COLLECT_ENTRY, config.timeoutMs, "수집");
+      // **팀마다 한 번씩** 돈다. 한 팀이 실패해도 다음 팀은 돌린다 — 한 팀의 계정
+      // 문제로 다른 팀 수집이 멈추면 안 된다.
+      const teams = await teamsToCollect();
+      let ok = true;
+      for (const teamId of teams) {
+        if (stopping) break;
+        const label = teams.length === 1 ? "수집" : `수집 [${teamId}]`;
+        const done = await runChildOnce(COLLECT_ENTRY, config.timeoutMs, label, [
+          `--team=${teamId}`,
+        ]);
+        // 사람이 누른 요청의 완료 표시는 **기본 팀 결과**로 찍는다 — 버튼은 그 팀
+        // 화면에서 눌린 것이고, 다른 팀 실패로 "실패" 가 뜨면 엉뚱한 안내가 된다.
+        if (teamId === DEFAULT_TEAM_ID) ok = done;
+      }
       // 요약 예열보다 **먼저** 찍는다. 사람이 버튼 앞에서 기다리는 것은 수집까지다.
       if (casesRequest !== null) {
         await noteCollectFinished({ kind: "cases", seq: casesRequest }, ok);

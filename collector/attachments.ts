@@ -14,6 +14,7 @@
 import { loadEnv } from "../lib/env.ts";
 loadEnv();
 
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { BrowserContext } from "playwright";
@@ -29,7 +30,8 @@ import {
 } from "../lib/crushftp.ts";
 import { openDb, recordAudit, type Db } from "../lib/db.ts";
 import {
-  claimNextJob,
+  claimNextJobForTeam,
+  pendingTeams,
   finishJob,
   hasPendingJobs,
   purgeOldJobs,
@@ -294,21 +296,45 @@ async function main(): Promise<void> {
       return;
     }
 
-    // 세션 파일이 없을 수 있다(재시작). DB 백업에서 먼저 복원한다.
-    await hydrateTeamSessionFromDb(DEFAULT_TEAM_ID, db);
-    const sessionFile = resolve(sessionFileForTeam(DEFAULT_TEAM_ID));
+    // **팀마다 그 팀 계정으로** 들어간다. 한 세션으로 전부 올리면 2번 팀 고객
+    // 파일이 1번 팀 계정으로 올라간다 — 되돌릴 수 없는 사고다
+    // (lib/attachmentJobs.ts pendingTeams 머리말).
+    const teams = await pendingTeams(db);
+    log(`처리할 팀: ${teams.join(", ")}`);
 
     const browser = await launchBrowser(true);
     let done = 0;
     try {
+     for (const teamId of teams) {
+      if (done >= MAX_PER_ROUND) break;
+
+      // 세션 파일이 없을 수 있다(재시작). DB 백업에서 먼저 복원한다.
+      await hydrateTeamSessionFromDb(teamId, db);
+      const sessionFile = resolve(sessionFileForTeam(teamId));
+      if (!existsSync(sessionFile)) {
+        // 그 팀 세션이 없으면 **남의 계정으로 올리지 않는다.** 올린 뒤에는 되돌릴 수
+        // 없으므로, 그 팀 일을 실패로 남기고 사람이 로그인하게 한다. 큐에 넣을 때는
+        // 세션이 있었으므로(ensureTeamSession) 그 사이에 끊긴 것이다.
+        const message = `${teamId} 팀의 포털 세션이 없습니다. 그 팀 계정으로 로그인한 뒤 다시 올려 주세요.`;
+        while (done < MAX_PER_ROUND) {
+          const job = await claimNextJobForTeam(db, teamId);
+          if (job === null) break;
+          await finishJob(db, job.job_id, { error: message });
+          await auditUpload(db, job, message);
+          log(`실패 #${job.job_id}: ${message}`);
+          done += 1;
+        }
+        continue;
+      }
+
       const context = await browser.newContext({
         storageState: await sessionStateFor(sessionFile) as never,
       });
       // 들어가 있는 케이스. 같은 케이스가 이어지면 재진입(6초)을 아낀다.
       const held: { current: CaseSession | null } = { current: null };
       try {
-        for (let i = 0; i < MAX_PER_ROUND; i += 1) {
-          const job = await claimNextJob(db);
+        while (done < MAX_PER_ROUND) {
+          const job = await claimNextJobForTeam(db, teamId);
           if (job === null) break;
 
           try {
@@ -338,13 +364,16 @@ async function main(): Promise<void> {
       } finally {
         await context.close().catch(() => undefined);
       }
+
+      // **그 팀** 세션을 그 팀 자리에 백업한다.
+      await persistTeamSessionToDb(teamId, db).catch((error: unknown) => {
+        log(`${teamId} 세션 DB 백업 실패(처리 자체는 끝남): ${error instanceof Error ? error.message : String(error)}`);
+      });
+     }
     } finally {
       await browser.close().catch(() => undefined);
     }
 
-    await persistTeamSessionToDb(DEFAULT_TEAM_ID, db).catch((error: unknown) => {
-      log(`세션 DB 백업 실패(처리 자체는 끝남): ${error instanceof Error ? error.message : String(error)}`);
-    });
     log(`${done}건 처리했습니다.`);
     await purgeOldJobs(db);
   } finally {

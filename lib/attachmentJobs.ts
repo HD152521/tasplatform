@@ -29,6 +29,7 @@
  *
  * server-only 를 붙이지 않는다. 수집기(Node)에서도 부른다.
  */
+import { DEFAULT_TEAM_ID } from "./config.ts";
 import { isoNow } from "./dates.ts";
 import type { Db } from "./db.ts";
 
@@ -131,10 +132,63 @@ export async function hasPendingJobs(db: Db): Promise<boolean> {
  * 수집기는 한 대뿐이라 경쟁이 없다. 그래도 state 조건을 UPDATE 에 실어, 혹시 둘이
  * 돌더라도 같은 일을 두 번 하지 않게 한다.
  */
+/**
+ * 아직 처리할 일이 남은 팀들.
+ *
+ * ## 왜 팀별로 갈라야 하나
+ *
+ * 첨부를 올리는 것은 **그 팀의 브로드컴 계정**으로 포털에 들어가는 일이다. 한 세션으로
+ * 전부 올리면 2번 팀 고객 파일이 **1번 팀 계정으로** 올라간다 — 고객 자료가 남의 계정
+ * 이름으로 상대에게 전달되는 것이고, 되돌릴 수 없다. 그래서 팀마다 따로 들어간다.
+ *
+ * 옛 행은 team_id 가 빈 문자열이다(그 칸이 생기기 전). 그때는 기본 팀으로 본다.
+ */
+export async function pendingTeams(db: Db): Promise<string[]> {
+  const rows = await db.all<{ team_id: string }>(
+    "SELECT DISTINCT team_id FROM attachment_jobs WHERE state = 'pending' ORDER BY team_id",
+  );
+  const out: string[] = [];
+  for (const row of rows) {
+    const teamId = row.team_id === "" ? DEFAULT_TEAM_ID : row.team_id;
+    if (!out.includes(teamId)) out.push(teamId);
+  }
+  return out;
+}
+
+/**
+ * 그 팀의 다음 일을 집어 running 으로 바꾼다. 없으면 null.
+ *
+ * 기본 팀은 **옛 행(빈 team_id)까지** 함께 집는다 — 그 행들은 기본 팀 것이다.
+ */
+export async function claimNextJobForTeam(
+  db: Db,
+  teamId: string,
+): Promise<AttachmentJob | null> {
+  const next =
+    teamId === DEFAULT_TEAM_ID
+      ? await db.get<AttachmentJob>(
+          `SELECT ${COLUMNS} FROM attachment_jobs WHERE state = 'pending' AND (team_id = ? OR team_id = '') ORDER BY job_id LIMIT 1`,
+          [teamId],
+        )
+      : await db.get<AttachmentJob>(
+          `SELECT ${COLUMNS} FROM attachment_jobs WHERE state = 'pending' AND team_id = ? ORDER BY job_id LIMIT 1`,
+          [teamId],
+        );
+  return claimRow(db, next);
+}
+
 export async function claimNextJob(db: Db): Promise<AttachmentJob | null> {
   const next = await db.get<AttachmentJob>(
     `SELECT ${COLUMNS} FROM attachment_jobs WHERE state = 'pending' ORDER BY job_id LIMIT 1`,
   );
+  return claimRow(db, next);
+}
+
+/** 집은 행을 running 으로 바꿔 돌려준다. 두 집기 함수가 공유한다. */
+async function claimRow(
+  db: Db,
+  next: AttachmentJob | undefined,
+): Promise<AttachmentJob | null> {
   if (next === undefined) return null;
 
   const now = isoNow();
