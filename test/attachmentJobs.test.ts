@@ -141,6 +141,27 @@ test("업로드가 끝나도 올린 내용은 남는다", async () => {
 
   assert.equal((await getJobPayload(db, id))?.payload, "aGVsbG8=", "올린 뒤에도 사본이 남아야 한다");
   assert.equal((await getJobStatus(db, id))?.state, "done");
+  assert.equal((await getJobStatus(db, id))?.error, "", "할 말이 없으면 비어 있어야 한다");
+  await db.close();
+});
+
+/*
+ * "올렸지만 확인은 못 했다" — done 이면서 할 말이 있는 경우.
+ *
+ * 실패로 적으면 두 가지를 동시에 잃는다. 사람은 다시 올려 케이스에 같은 파일이 두 번
+ * 붙고, 실패 경로가 payload 를 비워 **우리가 보낸 파일의 유일한 사본**이 사라진다.
+ * 그래서 state 는 done, payload 는 그대로, 경고만 error 칸에 담는다.
+ */
+test("확인 못 한 업로드는 done 으로 남고 사본도 지키며 경고만 담는다", async () => {
+  const db = await freshDb();
+  const id = await enqueueUpload(db, { requestId: CASE, fileName: "a.txt", payload: "aGVsbG8=" });
+  await claimNextJob(db);
+  await finishJob(db, id, { note: "올렸지만 폴더를 확인하지 못했습니다." });
+
+  const status = await getJobStatus(db, id);
+  assert.equal(status?.state, "done", "실패가 아니다");
+  assert.match(status?.error ?? "", /올렸지만/, "경고는 남아야 한다");
+  assert.equal((await getJobPayload(db, id))?.payload, "aGVsbG8=", "사본을 지워서는 안 된다");
   await db.close();
 });
 

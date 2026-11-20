@@ -162,11 +162,23 @@ export async function claimNextJob(db: Db): Promise<AttachmentJob | null> {
  * 종류를 인자로 받지 않고 행에서 읽는다. 호출부(collector/attachments.ts)는 다운로드일 때만
  * payload 를 싣는데, 업로드 성공에서는 그게 undefined 로 와 "비우라" 는 뜻이 되어 버렸다.
  * 판정을 이 함수 안에 두면 호출부를 한 곳도 고치지 않아도 된다.
+ *
+ * ## note — done 인데 할 말이 있는 경우
+ *
+ * "올렸지만 폴더 확인은 못 했다" 가 그렇다(lib/crushftp.ts 의 unverified). 실패가
+ * **아니므로** state 는 done 이어야 하고 payload 도 남겨야 하는데, 그 사실을 어딘가
+ * 적어야 한다. 칸을 새로 만들지 않고 `error` 를 같이 쓴다 —
+ *
+ *   **state = 'done' 이면서 error 가 비어 있지 않으면 그것은 실패가 아니라 경고다.**
+ *
+ * 읽는 쪽은 두 곳뿐이고(app/api/attachments/upload 의 GET, app/api/attachments/[id]),
+ * 둘 다 state 를 먼저 보고 갈라지므로 이 규칙으로 충분하다. 칸을 늘리면 마이그레이션이
+ * 따라오고, 이 한 줄짜리 사실에 그만한 값이 없다.
  */
 export async function finishJob(
   db: Db,
   jobId: number,
-  result: { payload?: string; error?: string },
+  result: { payload?: string; error?: string; note?: string },
 ): Promise<void> {
   const failed = (result.error ?? "") !== "";
   const row = await db.get<{ kind: JobKind }>(
@@ -177,8 +189,8 @@ export async function finishJob(
   if (!failed && row?.kind === "upload") {
     // payload 를 SET 에서 빼야 올린 내용이 그대로 남는다.
     await db.run(
-      "UPDATE attachment_jobs SET state = 'done', error = '', updated_at = ? WHERE job_id = ?",
-      [isoNow(), jobId],
+      "UPDATE attachment_jobs SET state = 'done', error = ?, updated_at = ? WHERE job_id = ?",
+      [result.note ?? "", isoNow(), jobId],
     );
     return;
   }

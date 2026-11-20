@@ -19,6 +19,20 @@ const POLL_MS = 2_000;
 const MAX_MISSES = 5;
 
 /**
+ * 한 건의 결과.
+ *
+ * 성공·실패만으로는 모자란다. **"올라갔지만 확인은 못 했다"** 라는 셋째 경우가 있고
+ * (lib/crushftp.ts 의 unverified), 그걸 실패로 묶으면 사람이 다시 올려 케이스에 같은
+ * 파일이 두 번 붙는다. 성공으로 묶어 조용히 넘기면 포털에서 확인할 생각을 못 한다.
+ */
+interface OneResult {
+  /** 빈 문자열이면 성공. */
+  readonly error: string;
+  /** 성공했지만 덧붙일 말. 빈 문자열이면 할 말 없음. */
+  readonly note: string;
+}
+
+/**
  * 파일 붙이기.
  *
  * ## 답변 전송과 별개다
@@ -48,6 +62,8 @@ export function AttachButton({ requestId }: { requestId: number }) {
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [note, setNote] = useState("");
+  /** 올라갔지만 확인은 못 한 건들. 실패(error)와 색·문구를 달리 쓴다. */
+  const [warn, setWarn] = useState("");
   /** 이번에 올리는 개수. 0 이면 놀고 있다. */
   const [total, setTotal] = useState(0);
   const [error, setError] = useState("");
@@ -68,7 +84,7 @@ export function AttachButton({ requestId }: { requestId: number }) {
    * 담당자는 10~20초 만에 "fetch 실패" 를 봤고, 파일은 정작 올라가 있었다.
    * 지금은 올려 놓고(POST) 끝났는지만 되물어(GET) 긴 연결을 아예 만들지 않는다.
    */
-  async function uploadOne(file: File): Promise<string> {
+  async function uploadOne(file: File): Promise<OneResult> {
     let jobId: number;
     try {
       const body = new FormData();
@@ -79,14 +95,14 @@ export function AttachButton({ requestId }: { requestId: number }) {
         ok?: boolean; jobId?: number; message?: string;
       };
       if (data.ok !== true || typeof data.jobId !== "number") {
-        return data.message ?? `올리지 못했습니다 (HTTP ${response.status}).`;
+        return { error: data.message ?? `올리지 못했습니다 (HTTP ${response.status}).`, note: "" };
       }
       jobId = data.jobId;
     } catch (problem) {
       // 파일을 보내는 중에 끊긴 것이다. **자동으로 다시 보내지 않는다** — 큐에는
       // 들어갔는데 응답만 못 받은 경우일 수 있고, 그러면 같은 파일이 두 번 붙는다.
       const why = problem instanceof Error ? problem.message : String(problem);
-      return `${why} (올라갔는지는 잠시 후 케이스를 새로고침해 확인하세요)`;
+      return { error: `${why} (올라갔는지는 잠시 후 케이스를 새로고침해 확인하세요)`, note: "" };
     }
     return waitForJob(jobId);
   }
@@ -98,7 +114,7 @@ export function AttachButton({ requestId }: { requestId: number }) {
    * 올린다 — 여기서 실패라고 말하면 사람이 다시 올려 같은 파일이 두 번 붙는다.
    * 연달아 못 물을 때만 손을 든다.
    */
-  async function waitForJob(jobId: number): Promise<string> {
+  async function waitForJob(jobId: number): Promise<OneResult> {
     const deadline = Date.now() + WAIT_MS;
     let misses = 0;
 
@@ -110,16 +126,23 @@ export function AttachButton({ requestId }: { requestId: number }) {
           { cache: "no-store" },
         );
         const data = (await response.json().catch(() => ({}))) as {
-          ok?: boolean; code?: string; state?: string; message?: string;
+          ok?: boolean; code?: string; state?: string; message?: string; note?: string;
         };
         if (data.ok === true) {
           misses = 0;
-          if (data.state === "done") return "";
-          if (data.state === "failed") return data.message ?? "첨부를 올리지 못했습니다.";
+          // done 인데 note 가 있으면 "올라갔지만 확인은 못 했다" 다. 성공으로 끝내되
+          // 그 말을 버리지 않는다 — 삼키면 사람이 포털에서 확인할 생각을 못 한다.
+          if (data.state === "done") return { error: "", note: data.note ?? "" };
+          if (data.state === "failed") {
+            return { error: data.message ?? "첨부를 올리지 못했습니다.", note: "" };
+          }
         } else if (isSessionFailure(data.code)) {
           // 세션이 끊기면 다시 물어도 같은 답이다. 다섯 번 헛물을 켜지 않고 바로 말한다.
           // **올리지 못했다고 말하지 않는다** — 파일은 줄에 남아 수집기가 올린다.
-          return "세션이 끊겨 진행 상황을 확인할 수 없습니다. 파일은 줄에 남아 있으니 다시 올리지 말고, 로그인한 뒤 케이스를 새로고침해 확인하세요.";
+          return {
+            error: "세션이 끊겨 진행 상황을 확인할 수 없습니다. 파일은 줄에 남아 있으니 다시 올리지 말고, 로그인한 뒤 케이스를 새로고침해 확인하세요.",
+            note: "",
+          };
         } else {
           misses += 1;
         }
@@ -128,11 +151,17 @@ export function AttachButton({ requestId }: { requestId: number }) {
       }
 
       if (misses >= MAX_MISSES) {
-        return "진행 상황을 확인할 수 없습니다. 잠시 후 케이스를 새로고침해 확인하세요 (다시 올리지 마세요).";
+        return {
+          error: "진행 상황을 확인할 수 없습니다. 잠시 후 케이스를 새로고침해 확인하세요 (다시 올리지 마세요).",
+          note: "",
+        };
       }
       if (Date.now() > deadline) {
         // 상한을 넘겨도 **실패가 아니다.** 일은 큐에 남아 있고 수집기가 결국 올린다.
-        return "수집기가 아직 올리는 중입니다. 다시 올리지 말고 잠시 후 케이스를 새로고침해 확인하세요.";
+        return {
+          error: "수집기가 아직 올리는 중입니다. 다시 올리지 말고 잠시 후 케이스를 새로고침해 확인하세요.",
+          note: "",
+        };
       }
     }
   }
@@ -150,6 +179,7 @@ export function AttachButton({ requestId }: { requestId: number }) {
   async function upload(files: readonly File[]): Promise<void> {
     setNote("");
     setError("");
+    setWarn("");
 
     // 서버가 판정하는 것과 같은 규칙으로 먼저 걸러 준다. 상한을 넘는 파일을 다 올려보낸
     // 뒤에 거절당하면 회선만 쓰고 사람은 그동안 기다린다.
@@ -167,8 +197,14 @@ export function AttachButton({ requestId }: { requestId: number }) {
     setBusy(true);
     try {
       const results = await Promise.all(files.map((file) => uploadOne(file)));
+      const label = (i: number): string => files[i]?.name ?? "?";
       const failed = results
-        .map((why, i) => (why === "" ? "" : `${files[i]?.name ?? "?"}: ${why}`))
+        .map((r, i) => (r.error === "" ? "" : `${label(i)}: ${r.error}`))
+        .filter((line) => line !== "");
+      // 올라갔지만 확인은 못 한 건들. 실패와 섞지 않는다 — 처방이 정반대다
+      // (실패는 다시 올려야 하고, 이쪽은 **다시 올리면 중복**이다).
+      const notes = results
+        .map((r, i) => (r.note === "" ? "" : `${label(i)}: ${r.note}`))
         .filter((line) => line !== "");
       const okCount = results.length - failed.length;
 
@@ -185,6 +221,7 @@ export function AttachButton({ requestId }: { requestId: number }) {
           ? `${files[0]?.name ?? "파일"} 을 올렸습니다. 답변 전송과는 별개입니다.`
           : `${okCount}개를 올렸습니다. 답변 전송과는 별개입니다.`);
       }
+      if (notes.length > 0) setWarn(notes.join(" / "));
       // 첨부 목록은 다음 수집에 반영되므로 지금 보이지 않을 수 있다. 그래도 새로
       // 읽어 둔다 — 이미 반영된 경우에 사람이 바로 확인할 수 있다.
       router.refresh();
@@ -249,17 +286,19 @@ export function AttachButton({ requestId }: { requestId: number }) {
         그대로 두면 문구가 번역·정리·전송 **사이를 갈라** 전송 버튼을 아래로 밀어낸다.
         사람이 전송을 누르려는 순간 버튼이 내려가면 안 된다. 그래서 그리는 순서만 뒤로 민다.
       */}
-      {(busy || note !== "" || error !== "") && (
+      {(busy || note !== "" || error !== "" || warn !== "") && (
         <div
           role="status"
           style={{
             flexBasis: "100%", minWidth: 0, order: 1,
             fontSize: 11.5, lineHeight: 1.6, wordBreak: "break-word",
-            color: error !== "" ? COLOR.waitUs : busy ? COLOR.muted : COLOR.ok,
-            background: error !== "" ? COLOR.waitUsBg : "transparent",
-            border: error !== "" ? "1px solid #f3c7c2" : "1px solid transparent",
+            color: error !== "" ? COLOR.waitUs : warn !== "" ? COLOR.warn : busy ? COLOR.muted : COLOR.ok,
+            background: error !== "" ? COLOR.waitUsBg : warn !== "" ? COLOR.warnBg : "transparent",
+            border: error !== ""
+              ? "1px solid #f3c7c2"
+              : warn !== "" ? "1px solid #f3dca8" : "1px solid transparent",
             borderRadius: RADIUS.control,
-            padding: error !== "" ? "8px 11px" : "2px 2px 0",
+            padding: error !== "" || warn !== "" ? "8px 11px" : "2px 2px 0",
           }}
         >
           {error !== ""
@@ -267,7 +306,9 @@ export function AttachButton({ requestId }: { requestId: number }) {
             : busy
               // 수집기가 집어가는 데 최대 15초, 브라우저 진입에 10초가 더 든다.
               ? `수집기가 브라우저로 ${total > 1 ? `${total}개를 함께 ` : ""}올립니다. 1분 가까이 걸릴 수 있습니다 — 다시 누르지 마세요.`
-              : note}
+              // 올렸다는 말과 확인 못 했다는 말을 **한 줄에** 붙여 둔다. 둘을 떼어 놓으면
+              // 경고만 읽고 실패로 오해해 다시 올린다.
+              : warn !== "" ? `${note} ${warn}` : note}
         </div>
       )}
     </>

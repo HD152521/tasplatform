@@ -36,6 +36,7 @@ import {
   reviveStuckJobs,
   type AttachmentJob,
 } from "../lib/attachmentJobs.ts";
+import { describeFetchError } from "../lib/fetchFailure.ts";
 import { cookiesOnlyState, type CookiesOnlyState } from "../lib/attachSessionState.ts";
 import { hydrateTeamSessionFromDb, persistTeamSessionToDb } from "../lib/sessionStore.ts";
 
@@ -146,6 +147,14 @@ interface JobOutcome {
   readonly error: string;
   /** 다운로드가 받아온 내용(base64). */
   readonly payload?: string;
+  /**
+   * 성공했지만 사람에게 덧붙일 말.
+   *
+   * "올렸지만 폴더 확인은 못 했다" 가 그렇다 — 실패가 아니므로 error 에 넣으면 안 되고
+   * (넣으면 사람이 다시 올려 중복이 되고 우리 사본이 지워진다), 그렇다고 조용히 넘기면
+   * 확인이 안 됐다는 사실이 아무 데도 안 남는다.
+   */
+  readonly note?: string;
 }
 
 /** 일 하나. 실패는 던지지 않고 사유로 돌려준다 — 한 건이 회차를 세우면 안 된다. */
@@ -167,11 +176,21 @@ async function runJob(
   if (job.kind === "upload") {
     const bytes = Buffer.from(job.payload, "base64");
     if (bytes.byteLength === 0) return { error: "올릴 내용이 비어 있습니다." };
-    const result = await uploadToCase(jar, {
-      site, caseId: job.request_id, fileName: job.file_name, bytes,
-    });
-    log(`올림 ${job.file_name} (${result.bytes}B, 조각 ${result.chunks})`);
-    return { error: "" };
+    try {
+      const result = await uploadToCase(jar, {
+        site, caseId: job.request_id, fileName: job.file_name, bytes,
+      });
+      // 시도 횟수를 같이 남긴다. 2 이상이 자주 보이면 망을 봐야 한다는 신호다.
+      log(`올림 ${job.file_name} (${result.bytes}B, 시도 ${result.attempts}회)`);
+      return { error: "" };
+    } catch (error) {
+      // 올라갔는데 확인만 못 한 경우. **실패로 적지 않는다**(lib/crushftp.ts 머리말).
+      if (error instanceof UploadError && error.code === "unverified") {
+        log(`올림(확인 못 함) ${job.file_name}: ${error.message}`);
+        return { error: "", note: error.message };
+      }
+      throw error;
+    }
   }
 
   return { error: "알 수 없는 작업 종류입니다." };
@@ -242,7 +261,12 @@ async function runDownload(
  * 받아오기(download)는 남기지 않는다 — 조회를 남기면 로그가 조회로 덮인다.
  * 로그 실패가 일을 뒤집지 않는다(recordAudit 이 예외를 삼킨다).
  */
-async function auditUpload(db: Db, job: AttachmentJob, error: string): Promise<void> {
+async function auditUpload(
+  db: Db,
+  job: AttachmentJob,
+  error: string,
+  note?: string,
+): Promise<void> {
   if (job.kind !== "upload") return;
   await recordAudit(db, {
     actor: job.actor,
@@ -250,7 +274,9 @@ async function auditUpload(db: Db, job: AttachmentJob, error: string): Promise<v
     teamId: job.team_id === "" ? DEFAULT_TEAM_ID : job.team_id,
     action: "upload",
     requestId: job.request_id,
-    result: error === "" ? "ok" : "failed:upload",
+    // 확인 못 한 성공은 `ok` 와 구분해 적는다. 나중에 "그 파일 올라갔었나" 를 로그로
+    // 답할 때, 확인까지 끝난 것과 못 한 것은 다른 대답이어야 한다.
+    result: error !== "" ? "failed:upload" : (note ?? "") !== "" ? "ok:unverified" : "ok",
     detail: job.file_name,
   });
 }
@@ -289,16 +315,17 @@ async function main(): Promise<void> {
             const outcome = await runJob(db, context, held, job);
             if (outcome.error !== "") held.current = null;
             await finishJob(db, job.job_id, outcome.error === ""
-              ? { payload: outcome.payload }
+              ? { payload: outcome.payload, note: outcome.note }
               : { error: outcome.error });
-            await auditUpload(db, job, outcome.error);
+            await auditUpload(db, job, outcome.error, outcome.note);
             if (outcome.error !== "") log(`실패 #${job.job_id}: ${outcome.error}`);
           } catch (error) {
             // 던지고 나온 뒤에는 세션 상태를 믿을 수 없다. 다음 일은 다시 들어간다.
             held.current = null;
-            const message = error instanceof UploadError || error instanceof Error
-              ? error.message
-              : String(error);
+            // **describeFetchError 여야 한다.** error.message 만 꺼내면 전송이 깨진 경우
+            // "fetch failed" 넉 자만 남는다 — 그 때문에 첨부 실패 한 건의 사유를 끝까지
+            // 못 읽었다(lib/fetchFailure.ts 머리말).
+            const message = describeFetchError(error);
             await finishJob(db, job.job_id, { error: message });
             await auditUpload(db, job, message);
             log(`실패 #${job.job_id}: ${message}`);

@@ -202,8 +202,13 @@ export async function GET(request: Request): Promise<Response> {
       });
     }
     if (status.state === "done") {
+      // done 인데 error 가 비어 있지 않으면 **실패가 아니라 경고**다(lib/attachmentJobs.ts
+      // finishJob 머리말): 올라갔지만 폴더 확인을 못 한 경우. 사람에게 그대로 전한다 —
+      // 삼키면 확인이 안 됐다는 사실이 아무 데도 안 남고, 실패로 보이면 다시 올려 중복이 된다.
       return NextResponse.json({
-        ok: true, state: "done", message: `${status.file_name} 을 올렸습니다.`,
+        ok: true, state: "done",
+        message: `${status.file_name} 을 올렸습니다.`,
+        note: status.error === "" ? undefined : status.error,
       });
     }
     return NextResponse.json({ ok: true, state: status.state });
