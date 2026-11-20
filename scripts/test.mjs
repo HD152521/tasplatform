@@ -17,7 +17,23 @@ for (const key of ["SR_DATABASE_URL", "DATABASE_URL", "VCAP_SERVICES", "SR_PG_SC
   delete env[key];
 }
 
-const child = spawn(process.execPath, ["--test", "test/**/*.test.ts"], { stdio: "inherit", env });
+/**
+ * `--conditions=react-server` 를 왜 거는가.
+ *
+ * 이 레포의 서버 전용 모듈은 머리말에 `import "server-only"` 를 둔다. 그 패키지는
+ * 평소에 **던지는** 모듈이라, 그걸 import 하는 파일은 `node --test` 에서 아예 못
+ * 불러온다(그래서 전에는 테스트할 부분만 따로 떼어 냈다 — lib/requestAudit.ts 머리말).
+ *
+ * `server-only` 는 `react-server` 조건에서 **빈 모듈**로 해석된다(그 패키지의 exports).
+ * 이 레포가 mcp 서버와 login-cli 를 이미 그 조건으로 돌리고 있다(package.json).
+ * 테스트에도 같은 조건을 주면 Jira 쓰기 경로처럼 "fetch 를 바꿔 끼워 확인해야 하는"
+ * 모듈을 그대로 불러올 수 있다 — 그 경로에 시험이 없던 것이 S5 의 가장 큰 공백이었다.
+ */
+const child = spawn(
+  process.execPath,
+  ["--conditions=react-server", "--test", "test/**/*.test.ts"],
+  { stdio: "inherit", env },
+);
 child.on("exit", (code, signal) => {
   if (signal) process.kill(process.pid, signal);
   else process.exit(code ?? 1);
