@@ -7,10 +7,15 @@
  * 별도 모듈로 만들 것" 이라고 적혀 있다. 그 약속을 지킨다. lib/confluencePublish.ts 가
  * 먼저 같은 방식으로 떨어져 나왔다 — 선례를 따른다.
  *
- * 쓰는 자리는 **둘뿐**이다.
+ * 쓰는 자리는 셋이다.
  *   1. SR 등록 직후 티켓 하나
  *   2. SR 정리 문서를 Confluence 에 올린 뒤 댓글 하나
- * 그 밖의 Jira 쓰기(상태 전이·담당자 지정)는 여기에 넣지 않는다.
+ *   3. 팀 캘린더의 일정(lib/calendarJira.ts) — 생성·수정·상태 전이·삭제
+ *
+ * 3번이 들어오면서 **상태 전이와 삭제**가 생겼다. 전에 이 머리말은 "그 밖의 쓰기는
+ * 넣지 않는다" 고 적혀 있었다. 그 선을 옮기는 결정은 사용자의 지시였다(일정을 지우면
+ * 이슈도 지우고, 상태가 바뀌면 전이한다 — docs/plans/team-platform-plan.md S5).
+ * 둘 다 **되돌릴 수 없는** 동작이므로, 각 함수 머리말에 무엇을 조심해야 하는지 적어 둔다.
  *
  * ## 꺼 둘 수 있어야 한다
  *
@@ -102,7 +107,7 @@ function authHeader(config: JiraSrConfig): string {
 
 async function jfetch<T>(
   config: JiraSrConfig,
-  method: "GET" | "POST" | "PUT",
+  method: "GET" | "POST" | "PUT" | "DELETE",
   path: string,
   body: unknown,
 ): Promise<T> {
@@ -115,8 +120,8 @@ async function jfetch<T>(
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      // GET 에 본문을 실으면 게이트웨이가 거부하는 경우가 있다.
-      ...(method === "GET" ? {} : { body: JSON.stringify(body) }),
+      // GET·DELETE 에 본문을 실으면 게이트웨이가 거부하는 경우가 있다.
+      ...(method === "GET" || method === "DELETE" ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (error) {
@@ -179,14 +184,31 @@ export async function createSrIssue(
     description: input.description,
   };
 
+  return createIssue(config, required, extras);
+}
+
+/**
+ * 이슈 하나를 만든다 — **SR 전용이 아닌** 일반 경로.
+ *
+ * `required` 는 Jira 가 생성에 반드시 요구하는 칸(project·issuetype·summary)이고,
+ * `extras` 는 없어도 티켓이 성립하는 칸이다. 400 이 오면 extras 를 **다 떼고** 한 번
+ * 더 보낸다 — 어느 칸이 문제인지 응답에서 골라내려 들면 Jira 판본마다 메시지가 달라
+ * 또 어긋난다(이 폴백은 createSrIssue 가 쓰던 것을 그대로 옮긴 것이다).
+ *
+ * 캘린더 쪽의 새 칸(duedate·assignee·멱등 라벨)도 extras 에 넣는다. 커스텀필드 id 와
+ * assignee 모양은 인스턴스마다 갈리므로, 이 폴백이 유일한 안전망이다.
+ */
+export async function createIssue(
+  config: JiraSrConfig,
+  required: Record<string, unknown>,
+  extras: Record<string, unknown>,
+): Promise<CreatedIssue> {
   try {
     const made = await jfetch<{ key?: string }>(config, "POST", "/rest/api/3/issue", {
       fields: { ...required, ...extras },
     });
     return { key: requireKey(made.key), url: issueUrl(config, requireKey(made.key)), dropped: [] };
   } catch (error) {
-    // 400 은 "어느 칸의 모양이 틀렸다" 는 뜻이다. 곁가지 칸을 다 떼고 한 번만 더 본다 —
-    // 어느 칸인지 응답에서 골라내려 들면 Jira 판본마다 메시지가 달라 또 어긋난다.
     if (!(error instanceof AtlassianError) || error.status !== 400) throw error;
     console.error(
       `[jira] 티켓 생성 400 — 곁가지 칸(${Object.keys(extras).join(", ")})을 떼고 다시 시도합니다: ${error.message}`,
@@ -318,3 +340,191 @@ export async function updateIssueDescription(
 export function issueUrl(config: JiraSrConfig, issueKey: string): string {
   return issueKey === "" ? "" : `${config.base}/browse/${issueKey}`;
 }
+
+/* ------------------------------------------------------------------ *
+ * 필드 수정 (description 말고 일반 칸)
+ * ------------------------------------------------------------------ */
+
+/**
+ * 이슈의 칸을 바꾼다.
+ *
+ * `updateIssueDescription` 과 갈라 둔다 — 그쪽은 본문 전용이고 "읽고 나서 쓴다" 는
+ * 규칙이 있다(사람이 적어 둔 글을 지우지 않기 위해). 여기는 summary·duedate·assignee
+ * 처럼 **우리가 소유하는 칸**만 덮어쓴다.
+ *
+ * 400 이면 extras 를 떼고 한 번 더 본다(생성과 같은 방식). duedate 가 화면에 없는
+ * 프로젝트, assignee 를 못 바꾸는 권한 등에서 400 이 나는데, 그것 때문에 제목 수정이
+ * 아예 안 되게 두지 않는다. 뗀 칸 이름을 돌려주므로 부르는 쪽이 사람에게 말할 수 있다.
+ *
+ * `notifyUsers=false` 를 먼저 쓰는 이유와 그 400 폴백은 updateIssueDescription 과 같다.
+ */
+export async function updateIssueFields(
+  config: JiraSrConfig,
+  issueKey: string,
+  required: Record<string, unknown>,
+  extras: Record<string, unknown> = {},
+): Promise<{ dropped: readonly string[] }> {
+  const path = `/rest/api/3/issue/${encodeURIComponent(issueKey)}`;
+
+  const send = async (fields: Record<string, unknown>): Promise<void> => {
+    try {
+      await jfetch(config, "PUT", `${path}?notifyUsers=false`, { fields });
+      return;
+    } catch (error) {
+      // notifyUsers 는 관리자 권한이 필요하다. 없으면 400 — 플래그를 떼고 다시 본다.
+      if (!(error instanceof AtlassianError) || error.status !== 400) throw error;
+    }
+    await jfetch(config, "PUT", path, { fields });
+  };
+
+  if (Object.keys(extras).length === 0) {
+    await send(required);
+    return { dropped: [] };
+  }
+
+  try {
+    await send({ ...required, ...extras });
+    return { dropped: [] };
+  } catch (error) {
+    if (!(error instanceof AtlassianError) || error.status !== 400) throw error;
+    console.error(
+      `[jira] ${issueKey} 수정 400 — 곁가지 칸(${Object.keys(extras).join(", ")})을 떼고 다시 시도합니다: ${error.message}`,
+    );
+    await send(required);
+    return { dropped: Object.keys(extras) };
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 상태 전이
+ * ------------------------------------------------------------------ */
+
+export interface JiraTransition {
+  readonly id: string;
+  readonly name: string;
+  /** 전이 뒤의 상태 이름. 워크플로마다 전이 이름과 상태 이름이 다르다. */
+  readonly toStatus: string;
+}
+
+/**
+ * 지금 그 이슈에서 **할 수 있는** 전이 목록.
+ *
+ * 전이 id 를 설정으로 박아 둘 수 없어서 매번 묻는다. id 는 프로젝트의 워크플로마다
+ * 다르고, 워크플로가 바뀌면 조용히 틀린 상태로 밀어 버린다. 이름으로 고르는 쪽이
+ * 느리지만 틀리지 않는다.
+ */
+export async function listTransitions(
+  config: JiraSrConfig,
+  issueKey: string,
+): Promise<JiraTransition[]> {
+  const got = await jfetch<{
+    transitions?: Array<{ id?: string; name?: string; to?: { name?: string } }>;
+  }>(config, "GET", `/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`, undefined);
+
+  return (got.transitions ?? []).map((t) => ({
+    id: String(t.id ?? ""),
+    name: String(t.name ?? ""),
+    toStatus: String(t.to?.name ?? ""),
+  })).filter((t) => t.id !== "");
+}
+
+/**
+ * 후보 이름 중 **처음 맞는 전이**를 실행한다. 맞는 것이 없으면 아무것도 하지 않고
+ * null 을 돌려준다 — 추측해서 엉뚱한 상태로 밀지 않는다.
+ *
+ * 전이 이름("완료")과 도착 상태 이름("Done")이 다른 워크플로가 흔하므로 둘 다 본다.
+ * 비교는 공백을 떼고 소문자로 — "Resolve Issue" 와 "resolve issue" 를 같게 본다.
+ */
+export async function transitionIssue(
+  config: JiraSrConfig,
+  issueKey: string,
+  candidates: readonly string[],
+): Promise<{ applied: JiraTransition | null; available: readonly string[] }> {
+  const available = await listTransitions(config, issueKey);
+  const norm = (value: string): string => value.replace(/\s+/g, "").toLowerCase();
+  const wanted = candidates.map(norm).filter((c) => c !== "");
+
+  const match = available.find(
+    (t) => wanted.includes(norm(t.name)) || wanted.includes(norm(t.toStatus)),
+  );
+  const names = available.map((t) => (t.toStatus === "" ? t.name : `${t.name}→${t.toStatus}`));
+  if (match === undefined) return { applied: null, available: names };
+
+  await jfetch(config, "POST", `/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`, {
+    transition: { id: match.id },
+  });
+  return { applied: match, available: names };
+}
+
+/* ------------------------------------------------------------------ *
+ * 삭제
+ * ------------------------------------------------------------------ */
+
+export type DeleteOutcome = "deleted" | "already_gone" | "forbidden";
+
+/**
+ * 이슈를 **지운다. 되돌릴 수 없다.**
+ *
+ * 부르는 쪽이 사람에게 한 번 더 물었어야 한다(app/api/calendar/route.ts 가 그렇게 한다).
+ * 여기서는 결과를 세 가지로 갈라 돌려준다 — 그래야 화면이 사실대로 말할 수 있다.
+ *
+ *   deleted      지웠다
+ *   already_gone 404. **성공으로 본다** — 이미 없는 것이 목표 상태다(멱등).
+ *   forbidden    403·405. 지울 권한이 없다. 부르는 쪽이 코멘트로 대신 남긴다.
+ *
+ * 그 밖의 실패는 던진다. 특히 타임아웃·5xx 는 JiraMaybeCreatedError 로 올라가는데,
+ * 삭제에서는 "지워졌는지 모른다" 는 뜻이다. 그 상태를 성공으로 적으면 안 된다.
+ *
+ * `deleteSubtasks=true`: 하위작업이 있으면 Jira 가 400 으로 거부한다. SR/일정 이슈에
+ * 하위작업이 달릴 일은 드물지만, 달려 있다면 그건 우리가 만든 것의 부속이다.
+ */
+export async function deleteIssue(
+  config: JiraSrConfig,
+  issueKey: string,
+): Promise<DeleteOutcome> {
+  const path = `/rest/api/3/issue/${encodeURIComponent(issueKey)}?deleteSubtasks=true`;
+  try {
+    await jfetch(config, "DELETE", path, undefined);
+    return "deleted";
+  } catch (error) {
+    if (error instanceof AtlassianError) {
+      if (error.status === 404) return "already_gone";
+      if (error.status === 403 || error.status === 405) return "forbidden";
+    }
+    throw error;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 멱등 — 라벨로 이미 만든 이슈를 찾는다
+ * ------------------------------------------------------------------ */
+
+/**
+ * 그 라벨이 붙은 이슈 키. 없으면 "".
+ *
+ * ## 왜 이것이 반드시 필요한가
+ *
+ * 생성이 타임아웃·5xx 로 실패하면 **만들어졌는지 알 수 없다**(JiraMaybeCreatedError).
+ * 그 상태에서 그냥 다시 만들면 같은 일정으로 이슈가 두 개 생긴다. 그래서 생성할 때
+ * 일정마다 고유한 라벨을 함께 올리고, 재시도 전에 그 라벨로 **먼저 찾아 입양**한다.
+ *
+ * 못 찾는 것과 못 물어보는 것을 구분한다: 조회 자체가 실패하면 던진다. ""(없음)으로
+ * 뭉개면 "조회 실패 → 없다고 보고 → 두 번째 이슈 생성" 이 된다.
+ *
+ * 조회 주소는 읽기 쪽(lib/jira.ts)이 쓰는 `/rest/api/3/search/jql` 과 같다 —
+ * 이 인스턴스에서 동작이 확인된 주소다.
+ */
+export async function findIssueByLabel(
+  config: JiraSrConfig,
+  label: string,
+): Promise<string> {
+  if (label.trim() === "") return "";
+  // 라벨에는 공백이 들어갈 수 없으므로 따옴표만 막으면 JQL 주입 여지가 없다.
+  const safe = label.replace(/["\\]/g, "");
+  const jql = `labels = "${safe}" ORDER BY created DESC`;
+  const path = `/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&fields=key&maxResults=1`;
+
+  const got = await jfetch<{ issues?: Array<{ key?: string }> }>(config, "GET", path, undefined);
+  return got.issues?.[0]?.key ?? "";
+}
+
