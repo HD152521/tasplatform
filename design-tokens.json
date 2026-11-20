@@ -1,0 +1,262 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/format/",
+  "meta": {
+    "name": "broadcom-sr",
+    "direction": "operational-console",
+    "generated": "2026-11-20"
+  },
+  "color": {
+    "ink": {
+      "value": "#101317",
+      "type": "color"
+    },
+    "body": {
+      "value": "#343a42",
+      "type": "color"
+    },
+    "muted": {
+      "value": "#646c78",
+      "type": "color"
+    },
+    "faint": {
+      "value": "#9099a6",
+      "type": "color"
+    },
+    "line": {
+      "value": "#e3e6ea",
+      "type": "color"
+    },
+    "divider": {
+      "value": "#eef0f3",
+      "type": "color"
+    },
+    "field": {
+      "value": "#d3d8df",
+      "type": "color"
+    },
+    "surface": {
+      "value": "#ffffff",
+      "type": "color"
+    },
+    "ground": {
+      "value": "#f7f8f9",
+      "type": "color"
+    },
+    "subtle": {
+      "value": "#f1f3f5",
+      "type": "color"
+    },
+    "accent": {
+      "value": "#1f4ed8",
+      "type": "color"
+    },
+    "accentDeep": {
+      "value": "#163ba6",
+      "type": "color"
+    },
+    "accentWash": {
+      "value": "#eef2fe",
+      "type": "color"
+    },
+    "waitUs": {
+      "value": "#b42318",
+      "type": "color"
+    },
+    "waitUsBg": {
+      "value": "#fef3f2",
+      "type": "color"
+    },
+    "waitUsLine": {
+      "value": "#f6c9c3",
+      "type": "color"
+    },
+    "waitThem": {
+      "value": "#1849a9",
+      "type": "color"
+    },
+    "waitThemBg": {
+      "value": "#eff4ff",
+      "type": "color"
+    },
+    "waitThemLine": {
+      "value": "#c6d7fb",
+      "type": "color"
+    },
+    "ok": {
+      "value": "#067647",
+      "type": "color"
+    },
+    "okBg": {
+      "value": "#ecfdf3",
+      "type": "color"
+    },
+    "okLine": {
+      "value": "#b4e3c9",
+      "type": "color"
+    },
+    "warn": {
+      "value": "#b54708",
+      "type": "color"
+    },
+    "warnBg": {
+      "value": "#fffaeb",
+      "type": "color"
+    },
+    "warnLine": {
+      "value": "#f1d79c",
+      "type": "color"
+    },
+    "onAccent": {
+      "value": "#ffffff",
+      "type": "color"
+    }
+  },
+  "fontSize": {
+    "micro": {
+      "value": "11px",
+      "type": "dimension"
+    },
+    "small": {
+      "value": "12px",
+      "type": "dimension"
+    },
+    "base": {
+      "value": "13px",
+      "type": "dimension"
+    },
+    "lead": {
+      "value": "15px",
+      "type": "dimension"
+    },
+    "title": {
+      "value": "18px",
+      "type": "dimension"
+    },
+    "page": {
+      "value": "24px",
+      "type": "dimension"
+    },
+    "figure": {
+      "value": "30px",
+      "type": "dimension"
+    }
+  },
+  "fontWeight": {
+    "normal": {
+      "value": 400,
+      "type": "fontWeight"
+    },
+    "medium": {
+      "value": 500,
+      "type": "fontWeight"
+    },
+    "semibold": {
+      "value": 600,
+      "type": "fontWeight"
+    },
+    "bold": {
+      "value": 700,
+      "type": "fontWeight"
+    }
+  },
+  "lineHeight": {
+    "tight": {
+      "value": 1.35,
+      "type": "number"
+    },
+    "normal": {
+      "value": 1.6,
+      "type": "number"
+    },
+    "relaxed": {
+      "value": 1.8,
+      "type": "number"
+    }
+  },
+  "space": {
+    "xxs": {
+      "value": "2px",
+      "type": "dimension"
+    },
+    "xs": {
+      "value": "4px",
+      "type": "dimension"
+    },
+    "sm": {
+      "value": "8px",
+      "type": "dimension"
+    },
+    "md": {
+      "value": "12px",
+      "type": "dimension"
+    },
+    "lg": {
+      "value": "16px",
+      "type": "dimension"
+    },
+    "xl": {
+      "value": "20px",
+      "type": "dimension"
+    },
+    "xxl": {
+      "value": "24px",
+      "type": "dimension"
+    },
+    "xxxl": {
+      "value": "32px",
+      "type": "dimension"
+    }
+  },
+  "radius": {
+    "cell": {
+      "value": "0px",
+      "type": "dimension"
+    },
+    "control": {
+      "value": "6px",
+      "type": "dimension"
+    },
+    "badge": {
+      "value": "5px",
+      "type": "dimension"
+    },
+    "card": {
+      "value": "10px",
+      "type": "dimension"
+    },
+    "pill": {
+      "value": "999px",
+      "type": "dimension"
+    }
+  },
+  "shadow": {
+    "overlay": {
+      "value": "0 8px 24px rgba(16, 19, 23, 0.12), 0 1px 2px rgba(16, 19, 23, 0.06)",
+      "type": "shadow"
+    },
+    "popover": {
+      "value": "0 4px 12px rgba(16, 19, 23, 0.10)",
+      "type": "shadow"
+    }
+  },
+  "motion": {
+    "fast": {
+      "value": "90ms ease-out",
+      "type": "transition"
+    },
+    "base": {
+      "value": "140ms ease-out",
+      "type": "transition"
+    }
+  },
+  "fontFamily": {
+    "sans": {
+      "value": "'IBM Plex Sans KR', -apple-system, 'Segoe UI', system-ui, sans-serif",
+      "type": "fontFamily"
+    },
+    "mono": {
+      "value": "ui-monospace, 'SF Mono', Consolas, monospace",
+      "type": "fontFamily"
+    }
+  }
+}

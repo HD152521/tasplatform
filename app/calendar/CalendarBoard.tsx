@@ -13,8 +13,24 @@ import {
   describeQuickAdd,
   formatQuickAddLine,
   parseQuickAdd,
+  weekdayOf,
 } from "../../lib/quickAdd.ts";
-import { COLOR, Card, MONO_STACK, Notice, RADIUS, controlStyle } from "../ui.tsx";
+import {
+  Badge,
+  COLOR,
+  Card,
+  Empty,
+  MONO_STACK,
+  Notice,
+  RADIUS,
+  SPACE,
+  SectionHead,
+  TEXT,
+  Tab,
+  WEIGHT,
+  controlStyle,
+  inputStyle,
+} from "../ui.tsx";
 import { EventPanel } from "./EventPanel.tsx";
 import { TokenInput } from "./TokenInput.tsx";
 import {
@@ -588,10 +604,11 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
                   if (mode === "line") inputRef.current?.focus();
                 }}
                 style={{
-                  minHeight: 96, padding: "6px 7px 8px", cursor: "pointer",
+                  minHeight: 68, padding: `${SPACE.xs + 1}px ${SPACE.sm - 2}px ${SPACE.sm - 2}px`,
+                  cursor: "pointer",
                   borderBottom: i < 35 ? `1px solid ${COLOR.divider}` : "none",
                   borderRight: (i + 1) % 7 === 0 ? "none" : `1px solid ${COLOR.divider}`,
-                  background: isSelected ? "#eef1f6" : inMonth ? COLOR.surface : "#fafbfc",
+                  background: isSelected ? COLOR.accentWash : inMonth ? COLOR.surface : COLOR.ground,
                   outline: isToday ? `2px solid ${COLOR.accent}` : "none",
                   outlineOffset: -2,
                 }}
@@ -604,43 +621,40 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
                   {Number(date.slice(8, 10))}
                 </div>
 
-                {dayEvents.map((event) =>
-                  editingId === event.eventId && date === event.startDate ? (
-                    <input
-                      key={`edit-${event.eventId}`}
-                      value={editLine}
-                      autoFocus
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => setEditLine(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void saveEdit(event.eventId);
-                        } else if (e.key === "Escape") {
-                          setEditingId(null);
-                        }
-                      }}
-                      style={{
-                        width: "100%", fontSize: 11, padding: "3px 5px", boxSizing: "border-box",
-                        border: `1px solid ${COLOR.accent}`, borderRadius: 4, fontFamily: "inherit",
-                      }}
-                    />
-                  ) : (
-                    <EventChip
-                      key={`${event.eventId}-${date}`}
-                      event={event}
-                      continued={date !== event.startDate}
-                      mine={event.assigneeUserId === me.userId}
-                      onOpen={() => setOpenId(event.eventId)}
-                      onToggle={() => void cycleState(event)}
-                      busy={busy}
-                    />
-                  ),
-                )}
+                <DayCellSummary events={dayEvents} meId={me.userId} />
               </div>
             );
           })}
         </div>
+      </Card>
+
+      {/*
+        고른 날의 **자세한 목록**. 달력 칸에는 "있다" 만 보이고 내용은 여기서 읽는다.
+        Jira 를 불러오면 한 날에 열 건이 넘기도 하는데, 그걸 칸 안에 넣으면 제목이
+        전부 잘려 아무것도 읽을 수 없었다. 칸은 좁고 이 자리는 넓다.
+      */}
+      <Card style={{ marginBottom: SPACE.lg }}>
+        <SectionHead
+          title={`${selectedDate} (${weekdayOf(selectedDate)}) · ${byDate.get(selectedDate)?.length ?? 0}건`}
+          right={
+            <span style={{ fontSize: TEXT.micro, color: COLOR.faint }}>
+              달력에서 날짜를 누르면 그 날이 열립니다
+            </span>
+          }
+        />
+        <DayList
+          events={byDate.get(selectedDate) ?? []}
+          date={selectedDate}
+          meId={me.userId}
+          busy={busy}
+          editingId={editingId}
+          editLine={editLine}
+          onEditLineChange={setEditLine}
+          onEditCommit={(id) => void saveEdit(id)}
+          onEditCancel={() => setEditingId(null)}
+          onOpen={setOpenId}
+          onToggle={(event) => void cycleState(event)}
+        />
       </Card>
 
       {open !== null && (
@@ -688,83 +702,215 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
   );
 }
 
-function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: "6px 13px", borderRadius: RADIUS.control, fontSize: 12.5, cursor: "pointer",
-        fontFamily: "inherit", fontWeight: active ? 700 : 400,
-        border: `1px solid ${active ? COLOR.accent : COLOR.field}`,
-        background: active ? COLOR.waitThemBg : COLOR.surface,
-        color: active ? COLOR.accent : COLOR.body,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
 
-function EventChip({
-  event, continued, mine, onOpen, onToggle, busy,
-}: {
-  event: TeamEventView;
-  continued: boolean;
-  mine: boolean;
-  onOpen: () => void;
-  onToggle: () => void;
-  busy: boolean;
-}) {
-  const style = STATE_STYLE[event.state];
-  const jiraWarn = event.jiraState === "failed" || event.jiraState === "unknown";
+/**
+ * 달력 한 칸의 요약.
+ *
+ * 제목을 늘어놓지 않는다 — Jira 를 불러오면 한 날에 열 건이 넘고, 좁은 칸에서는
+ * 전부 잘려 **아무것도 읽을 수 없다.** 대신 "몇 건이 어떤 상태로 있는가" 만 색점으로
+ * 보여 주고, 내용은 아래 목록에서 읽는다.
+ *
+ * 내 담당이 있으면 테두리 있는 점으로 표시한다 — 달을 훑을 때 제일 먼저 찾는 것이다.
+ */
+function DayCellSummary({ events, meId }: { events: readonly TeamEventView[]; meId: number }) {
+  if (events.length === 0) return null;
+
+  const shown = events.slice(0, 8);
+  const mine = events.filter((e) => e.assigneeUserId === meId).length;
 
   return (
     <div
-      onClick={(e) => {
-        e.stopPropagation();
-        onOpen();
-      }}
-      title={`${event.title}${event.assigneeName === "" ? "" : ` · 담당 ${event.assigneeName}`}`}
-      style={{
-        display: "flex", alignItems: "center", gap: 4, marginBottom: 3,
-        padding: "2px 5px", borderRadius: 4, cursor: "pointer",
-        background: style.bg,
-        border: mine ? `1px solid ${style.fg}` : "1px solid transparent",
-        opacity: event.state === "canceled" ? 0.65 : 1,
-      }}
+      title={events.map((e) => `${e.title}${e.assigneeName === "" ? "" : ` · ${e.assigneeName}`}`).join("\n")}
+      style={{ display: "flex", flexDirection: "column", gap: SPACE.xs }}
     >
-      <button
-        type="button"
-        disabled={busy}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggle();
-        }}
-        title="예정 → 진행 → 완료"
-        style={{
-          width: 9, height: 9, borderRadius: "50%", flexShrink: 0, padding: 0,
-          border: `1.5px solid ${style.fg}`,
-          background: event.state === "done" ? style.fg : "transparent",
-          cursor: busy ? "default" : "pointer",
-        }}
-      />
-      <span style={{
-        fontSize: 11, color: style.fg, whiteSpace: "nowrap",
-        overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0,
-        textDecoration: event.state === "canceled" ? "line-through" : "none",
-      }}>
-        {continued && "↳ "}
-        {event.startTime !== "" && !continued && (
-          <span style={{ fontFamily: MONO_STACK, marginRight: 3 }}>{event.startTime}</span>
+      <div style={{ display: "flex", gap: 3, flexWrap: "wrap", alignItems: "center" }}>
+        {shown.map((event, i) => (
+          <span
+            key={`${event.eventId}-${i}`}
+            style={{
+              width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
+              background: STATE_STYLE[event.state].fg,
+              // 내 담당은 테두리로 한 번 더 구분한다(색만으로는 못 가른다).
+              boxShadow: event.assigneeUserId === meId ? `0 0 0 2px ${COLOR.accentWash}` : undefined,
+            }}
+          />
+        ))}
+        {events.length > shown.length && (
+          <span style={{ fontSize: 9, color: COLOR.faint, fontFamily: MONO_STACK }}>
+            +{events.length - shown.length}
+          </span>
         )}
-        {event.title}
-      </span>
-      {jiraWarn && (
-        <span title={event.jiraError} style={{ fontSize: 10, color: COLOR.waitUs, flexShrink: 0 }}>
-          !
-        </span>
-      )}
+      </div>
+      <div style={{ fontSize: TEXT.micro, color: COLOR.muted, lineHeight: 1.4 }}>
+        {events.length}건
+        {mine > 0 && <span style={{ color: COLOR.accent, fontWeight: WEIGHT.semibold }}> · 내 {mine}</span>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 고른 날의 일정 목록. 한 줄에 한 건, **잘리지 않게.**
+ *
+ * 인라인 한 줄 수정도 여기서 한다 — 달력 칸은 좁아 입력칸이 잘렸다.
+ */
+function DayList({
+  events, date, meId, busy, editingId, editLine,
+  onEditLineChange, onEditCommit, onEditCancel, onOpen, onToggle,
+}: {
+  events: readonly TeamEventView[];
+  date: string;
+  meId: number;
+  busy: boolean;
+  editingId: number | null;
+  editLine: string;
+  onEditLineChange: (next: string) => void;
+  onEditCommit: (eventId: number) => void;
+  onEditCancel: () => void;
+  onOpen: (eventId: number) => void;
+  onToggle: (event: TeamEventView) => void;
+}) {
+  if (events.length === 0) {
+    return <Empty>이 날에는 일정이 없습니다. 위에서 등록할 수 있습니다.</Empty>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      {events.map((event, index) => {
+        const style = STATE_STYLE[event.state];
+        const continued = event.startDate !== date;
+        const multi = event.endDate !== event.startDate;
+
+        if (editingId === event.eventId) {
+          return (
+            <div
+              key={event.eventId}
+              style={{ padding: `${SPACE.sm}px 0`, borderTop: index === 0 ? undefined : `1px solid ${COLOR.divider}` }}
+            >
+              <input
+                value={editLine}
+                autoFocus
+                onChange={(e) => onEditLineChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    onEditCommit(event.eventId);
+                  } else if (e.key === "Escape") {
+                    onEditCancel();
+                  }
+                }}
+                style={{ ...inputStyle, fontSize: TEXT.small }}
+              />
+              <div style={{ fontSize: TEXT.micro, color: COLOR.faint, marginTop: SPACE.xs }}>
+                Enter 저장 · Esc 취소
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div
+            key={event.eventId}
+            style={{
+              display: "flex", alignItems: "center", gap: SPACE.sm,
+              padding: `${SPACE.sm}px 0`,
+              borderTop: index === 0 ? undefined : `1px solid ${COLOR.divider}`,
+              opacity: event.state === "canceled" ? 0.6 : 1,
+            }}
+          >
+            {/* 상태 점. 누르면 예정 → 진행 → 완료 로 돈다. */}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onToggle(event)}
+              title="예정 → 진행 → 완료"
+              aria-label={`상태 바꾸기 (지금 ${style.label})`}
+              style={{
+                width: 12, height: 12, borderRadius: "50%", flexShrink: 0, padding: 0,
+                border: `2px solid ${style.fg}`,
+                background: event.state === "done" ? style.fg : "transparent",
+                cursor: busy ? "default" : "pointer",
+              }}
+            />
+
+            {/* 시각·기간. 종일이면 비워 두고 폭은 지킨다(줄이 흔들리지 않게). */}
+            <span style={{
+              width: 86, flexShrink: 0, fontFamily: MONO_STACK, fontSize: TEXT.micro,
+              fontVariantNumeric: "tabular-nums", color: COLOR.muted,
+            }}>
+              {continued
+                ? `↳ ${event.endDate.slice(5).replace("-", "/")}까지`
+                : event.startTime === ""
+                  ? multi
+                    ? `~${event.endDate.slice(5).replace("-", "/")}`
+                    : "종일"
+                  : event.endTime === ""
+                    ? event.startTime
+                    : `${event.startTime}-${event.endTime}`}
+            </span>
+
+            {event.scopes !== "" && (
+              <span style={{
+                flexShrink: 0, fontSize: TEXT.micro, fontWeight: WEIGHT.semibold,
+                color: COLOR.accent, background: COLOR.accentWash,
+                padding: `1px ${SPACE.xs + 1}px`, borderRadius: RADIUS.badge,
+              }}>
+                {event.scopes}
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={() => onOpen(event.eventId)}
+              style={{
+                flex: 1, minWidth: 0, textAlign: "left", background: "transparent",
+                border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit",
+                fontSize: TEXT.base, color: COLOR.ink,
+                fontWeight: event.assigneeUserId === meId ? WEIGHT.semibold : WEIGHT.normal,
+                textDecoration: event.state === "canceled" ? "line-through" : "none",
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              }}
+            >
+              {event.title}
+            </button>
+
+            {event.noteCount > 0 && (
+              <span style={{ fontSize: TEXT.micro, color: COLOR.faint, flexShrink: 0 }}>
+                메모 {event.noteCount}
+              </span>
+            )}
+
+            <span style={{
+              flexShrink: 0, fontSize: TEXT.micro, color: COLOR.muted,
+              width: 72, textAlign: "right", whiteSpace: "nowrap",
+              overflow: "hidden", textOverflow: "ellipsis",
+            }}>
+              {event.assigneeName === "" ? "미지정" : event.assigneeName}
+            </span>
+
+            <Badge fg={style.fg} bg={style.bg}>{style.label}</Badge>
+
+            {event.jiraKey !== "" && (
+              <a
+                href={event.jiraUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  flexShrink: 0, fontFamily: MONO_STACK, fontSize: TEXT.micro,
+                  color: COLOR.accent, textDecoration: "none",
+                }}
+              >
+                {event.jiraKey}
+              </a>
+            )}
+            {(event.jiraState === "failed" || event.jiraState === "unknown") && (
+              <span title={event.jiraError} style={{ fontSize: TEXT.micro, color: COLOR.waitUs, flexShrink: 0 }}>
+                Jira !
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

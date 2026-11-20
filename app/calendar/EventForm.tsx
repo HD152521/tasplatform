@@ -11,7 +11,7 @@ import {
   type Scope,
 } from "../../lib/jiraHouseStyle.ts";
 import { addDays, weekdayOf } from "../../lib/quickAdd.ts";
-import { COLOR, MONO_STACK, RADIUS, controlStyle } from "../ui.tsx";
+import { COLOR, Chip, MONO_STACK, RADIUS, controlStyle } from "../ui.tsx";
 import type { MemberChip } from "./CalendarBoard.tsx";
 import { TokenInput } from "./TokenInput.tsx";
 
@@ -409,20 +409,3 @@ function Row({
   );
 }
 
-function Chip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: "5px 11px", borderRadius: RADIUS.pill, fontSize: 12.5, cursor: "pointer",
-        fontFamily: "inherit", fontWeight: active ? 600 : 400,
-        border: `1px solid ${active ? COLOR.accent : COLOR.field}`,
-        background: active ? COLOR.accent : COLOR.surface,
-        color: active ? "#ffffff" : COLOR.body,
-      }}
-    >
-      {label}
-    </button>
-  );
-}
