@@ -43,21 +43,58 @@ export function SideNav({
 }) {
   const path = usePathname();
 
-  const items: Array<{ href: string; label: string; count: number | null; badge: number }> = [
-    { href: "/", label: "진행중", count: counts.open, badge: counts.unread },
-    { href: "/closed", label: "종료", count: counts.closed, badge: 0 },
-    { href: "/new", label: "SR 작성", count: null, badge: 0 },
-    { href: "/calendar", label: "팀 캘린더", count: null, badge: 0 },
-    { href: "/cves", label: "보안 공지", count: counts.cves, badge: counts.criticalCves },
-    { href: "/kb", label: "기술 문서", count: counts.kb, badge: counts.kbMatch },
-    { href: "/report", label: "정기점검", count: null, badge: 0 },
-    { href: "/logs", label: "수집 로그", count: null, badge: 0 },
-    { href: "/team", label: "팀", count: null, badge: 0 },
-    // "연동 설정" 은 걷어냈다 — 아무 일도 하지 않는 화면이었다(app/settings/page.tsx).
-    // `/settings` 는 여기로 리다이렉트된다.
-    { href: "/settings/llm", label: "LLM 연결", count: null, badge: 0 },
-    { href: "/settings/account", label: "브로드컴 계정", count: null, badge: 0 },
+  /**
+   * 메뉴를 **카테고리로 묶는다.**
+   *
+   * 항목이 열한 개가 되면서 평평한 목록으로는 무엇이 무엇인지 읽히지 않았다
+   * ("정기점검" 과 "수집 로그" 와 "LLM 연결" 이 같은 높이로 붙어 있었다).
+   * 묶음의 기준은 **무엇에 대한 화면인가** 다 — SR / 일정 / 참고 / 설정.
+   *
+   * 대시보드는 묶음 밖에 둔다. "지금 볼 것" 은 분류가 아니라 입구다.
+   */
+  const groups: Array<{
+    title: string;
+    items: Array<{ href: string; label: string; count: number | null; badge: number }>;
+  }> = [
+    {
+      title: "",
+      items: [{ href: "/dashboard", label: "대시보드", count: null, badge: 0 }],
+    },
+    {
+      title: "서비스 요청",
+      items: [
+        { href: "/", label: "진행중", count: counts.open, badge: counts.unread },
+        { href: "/closed", label: "종료", count: counts.closed, badge: 0 },
+        { href: "/new", label: "SR 작성", count: null, badge: 0 },
+      ],
+    },
+    {
+      title: "일정 · 작업",
+      items: [
+        { href: "/calendar", label: "팀 캘린더", count: null, badge: 0 },
+        { href: "/report", label: "정기점검", count: null, badge: 0 },
+      ],
+    },
+    {
+      title: "참고",
+      items: [
+        { href: "/cves", label: "보안 공지", count: counts.cves, badge: counts.criticalCves },
+        { href: "/kb", label: "기술 문서", count: counts.kb, badge: counts.kbMatch },
+      ],
+    },
+    {
+      title: "설정 · 운영",
+      items: [
+        { href: "/team", label: "팀", count: null, badge: 0 },
+        { href: "/settings/account", label: "브로드컴 계정", count: null, badge: 0 },
+        // "연동 설정" 은 걷어냈다 — 아무 일도 하지 않는 화면이었다(app/settings/page.tsx).
+        // `/settings` 는 LLM 연결로 리다이렉트된다.
+        { href: "/settings/llm", label: "LLM 연결", count: null, badge: 0 },
+        { href: "/logs", label: "수집 로그", count: null, badge: 0 },
+      ],
+    },
   ];
+  const items = groups.flatMap((g) => g.items);
 
   // 지금 어느 항목에 있나. **가장 깊게 맞는 것 하나만** 켠다.
   //
@@ -80,45 +117,59 @@ export function SideNav({
         </div>
       </div>
 
-      <nav style={{ padding: "14px 12px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" }}>
-        {items.map((item) => {
-          const active = item.href === activeHref;
-          return (
-            <Link key={item.href} href={item.href} style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "9px 12px", borderRadius: 8, fontSize: 13, textDecoration: "none",
-              fontWeight: active ? 600 : 400,
-              color: active ? COLOR.ink : "#4b5563",
-              background: active ? "#eef1f6" : "transparent",
-            }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                <span style={{
-                  width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                  background: active ? COLOR.accent : "#c7ccd4",
-                }} />
-                {item.label}
-              </span>
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                {item.badge > 0 && (
-                  <span style={{
-                    fontFamily: MONO_STACK, fontSize: 11, fontWeight: 600, color: "#ffffff",
-                    background: COLOR.waitUs, padding: "1px 6px", borderRadius: RADIUS.badge,
+      <nav style={{ padding: "12px 12px 16px", display: "flex", flexDirection: "column", overflowY: "auto" }}>
+        {groups.map((group, gi) => (
+          <div key={group.title === "" ? `g${gi}` : group.title} style={{ marginBottom: 10 }}>
+            {group.title !== "" && (
+              <div style={{
+                fontSize: 10.5, fontWeight: 700, color: COLOR.faint, letterSpacing: "0.04em",
+                padding: "8px 12px 5px", textTransform: "uppercase",
+              }}>
+                {group.title}
+              </div>
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {group.items.map((item) => {
+                const active = item.href === activeHref;
+                return (
+                  <Link key={item.href} href={item.href} style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "9px 12px", borderRadius: 8, fontSize: 13, textDecoration: "none",
+                    fontWeight: active ? 600 : 400,
+                    color: active ? COLOR.ink : "#4b5563",
+                    background: active ? "#eef1f6" : "transparent",
                   }}>
-                    {item.badge}
-                  </span>
-                )}
-                {item.count !== null && (
-                  <span style={{
-                    fontFamily: MONO_STACK, fontVariantNumeric: "tabular-nums",
-                    fontSize: 12, color: COLOR.faint,
-                  }}>
-                    {item.count}
-                  </span>
-                )}
-              </span>
-            </Link>
-          );
-        })}
+                    <span style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                      <span style={{
+                        width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+                        background: active ? COLOR.accent : "#c7ccd4",
+                      }} />
+                      {item.label}
+                    </span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      {item.badge > 0 && (
+                        <span style={{
+                          fontFamily: MONO_STACK, fontSize: 11, fontWeight: 600, color: "#ffffff",
+                          background: COLOR.waitUs, padding: "1px 6px", borderRadius: RADIUS.badge,
+                        }}>
+                          {item.badge}
+                        </span>
+                      )}
+                      {item.count !== null && (
+                        <span style={{
+                          fontFamily: MONO_STACK, fontVariantNumeric: "tabular-nums",
+                          fontSize: 12, color: COLOR.faint,
+                        }}>
+                          {item.count}
+                        </span>
+                      )}
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
       <div style={{ marginTop: "auto" }}>
