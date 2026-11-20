@@ -160,6 +160,43 @@ test("생성 요청에 멱등 라벨·기간·담당자가 실린다", async () 
   assert.ok(labels.includes("SRHUB_CAL"));
 });
 
+test("본문에 등록자를 적는다 — reporter 는 공용 계정이라 이게 유일한 기록이다", async () => {
+  // 토큰 하나로 쓰므로 Jira 의 reporter 는 전원 같은 계정이 된다. 본문에 등록자가
+  // 없으면 목록만 훑는 사람은 누가 올린 일정인지 알 길이 없다.
+  install(() => ({ status: 201, body: { key: "ABC-10" } }));
+  await syncEventToJira(db, "default", eventId);
+
+  const description = JSON.stringify(createdFields().description);
+  // 괄호가 든 문구라 정규식 대신 글자로 본다(이스케이프 실수로 조용히 통과하지 않게).
+  assert.ok(description.includes("등록: 안용식 (앱 사용자)"), description);
+});
+
+test("본문의 담당자는 맞춰진 팀원의 '지금 이름' 이다", async () => {
+  // 일정에 적힌 글자는 "용식" 이지만 팀원 이름은 "안용식" 이다. accountId 가 없어
+  // 담당자 칸을 비울 때 본문의 이 줄이 유일한 단서라, 정확한 이름이어야 한다.
+  install(() => ({ status: 201, body: { key: "ABC-10" } }));
+  await syncEventToJira(db, "default", eventId);
+
+  const description = JSON.stringify(createdFields().description);
+  assert.match(description, /담당: 안용식/);
+});
+
+test("담당자를 못 맞췄으면 적어 둔 글자를 본문에 쓴다", async () => {
+  const loose = await createEvent(db, {
+    teamId: "default",
+    title: "VCF 패치",
+    startDate: "2126-12-05",
+    assigneeUserId: null,
+    assigneeLabel: "민수",
+    createdBy: userId,
+  });
+  install(() => ({ status: 201, body: { key: "ABC-13" } }));
+  await syncEventToJira(db, "default", loose);
+
+  const description = JSON.stringify(createdFields().description);
+  assert.match(description, /담당: 민수/, "조용히 '미지정' 으로 두면 적은 사람이 모른다");
+});
+
 test("담당자의 Jira 계정이 없으면 담당자 없이 올린다", async () => {
   await db.run("UPDATE users SET jira_account_id = '' WHERE user_id = ?", [userId]);
   install(() => ({ status: 201, body: { key: "ABC-11" } }));

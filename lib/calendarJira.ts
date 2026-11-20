@@ -133,12 +133,49 @@ async function assigneeAccountId(db: Db, event: TeamEvent): Promise<string> {
   return user?.jiraAccountId ?? "";
 }
 
+/** 사람 하나의 보기 이름. 이름이 비면 아이디로 떨어진다(빈칸보다 낫다). */
+async function personName(db: Db, userId: number | null): Promise<string> {
+  if (userId === null) return "";
+  const user = await getUserById(db, userId);
+  if (user === null) return "";
+  return user.displayName === "" ? user.loginId : user.displayName;
+}
+
+/**
+ * 이슈 본문에 적을 사람들.
+ *
+ * ## 등록자를 왜 반드시 적나
+ *
+ * Jira 의 **reporter 는 공용 Atlassian 계정**이 된다 — 토큰 하나(ATLASSIAN_TOKEN)로
+ * 쓰기 때문에 구조상 피할 수 없다. 그래서 본문에 등록자를 적지 않으면 **모든 일정이
+ * 같은 사람이 만든 것처럼 보이고**, Jira 쪽에서 "누가 올린 일정인지" 를 알 길이 아예
+ * 없다. 캘린더로 돌아오는 링크가 있어도, 목록만 훑는 사람에게는 보이지 않는다.
+ *
+ * 담당자 이름은 **맞춰진 팀원이 있으면 그 사람의 지금 이름**을 쓰고, 못 맞췄으면
+ * 적어 둔 글자(assignee_label)를 쓴다. accountId 가 없어 담당자 칸을 비울 때
+ * 본문의 이 줄이 유일한 단서다.
+ */
+async function peopleOf(
+  db: Db,
+  event: TeamEvent,
+): Promise<{ assigneeName: string; createdByName: string }> {
+  const matched = await personName(db, event.assigneeUserId);
+  return {
+    assigneeName: matched !== "" ? matched : event.assigneeLabel,
+    createdByName: await personName(db, event.createdBy),
+  };
+}
+
 function appUrl(): string {
   return (process.env.SR_APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
 }
 
 /** 이슈 본문. 앱으로 돌아오는 링크를 반드시 넣는다 — Jira 에서 본 사람이 원본을 찾게. */
-function describeEvent(event: TeamEvent, assigneeName: string): AdfDoc {
+function describeEvent(
+  event: TeamEvent,
+  assigneeName: string,
+  createdByName: string,
+): AdfDoc {
   const period =
     event.endDate === event.startDate
       ? event.startDate
@@ -156,6 +193,8 @@ function describeEvent(event: TeamEvent, assigneeName: string): AdfDoc {
     `기간: ${period} (${time})`,
     `담당: ${assigneeName === "" ? "미지정" : assigneeName}`,
     event.kind === "" ? "" : `종류: ${event.kind}`,
+    // reporter 가 공용 계정이라 이 줄이 "누가 올렸나" 의 유일한 기록이다.
+    createdByName === "" ? "" : `등록: ${createdByName} (앱 사용자)`,
     `팀 캘린더: ${appUrl()}/calendar?event=${event.eventId}`,
     "",
     "이 이슈는 팀 캘린더의 일정에서 자동으로 만들어졌습니다. 일정을 고치면 여기도 따라 바뀝니다.",
@@ -276,7 +315,7 @@ async function createForEvent(
   event: TeamEvent,
 ): Promise<JiraSyncResult> {
   const assignee = await assigneeAccountId(db, event);
-  const assigneeName = event.assigneeLabel;
+  const { assigneeName, createdByName } = await peopleOf(db, event);
 
   const required = {
     project: { key: config.projectKey },
@@ -285,7 +324,7 @@ async function createForEvent(
   };
   // 없어도 이슈가 성립하는 칸. 400 이면 **전부** 떨어진다(생성은 반드시 성공해야 한다).
   const extras: Record<string, unknown> = {
-    description: describeEvent(event, assigneeName),
+    description: describeEvent(event, assigneeName, createdByName),
     labels: [CALENDAR_LABEL, eventLabel(event.eventId), ...(event.kind === "" ? [] : [`SRHUB_${event.kind}`])],
     [START_DATE_FIELD]: event.startDate,
     duedate: event.endDate,
