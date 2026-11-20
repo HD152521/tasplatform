@@ -149,7 +149,8 @@ test("생성 요청에 멱등 라벨·기간·담당자가 실린다", async () 
   await syncEventToJira(db, "default", eventId);
 
   const fields = createdFields();
-  assert.equal(fields.summary, "[점검] 방화벽 점검");
+  // 대괄호는 **전산망** 자리다(이 팀 양식). 성격 태그(점검)는 거기 들어가지 않는다.
+  assert.equal(fields.summary, "방화벽 점검");
   assert.deepEqual(fields.project, { key: "ABC" });
   assert.equal(fields.duedate, "2126-11-27", "종료일이 기한으로 들어가야 한다");
   assert.equal(fields.customfield_10015, "2126-11-25", "시작일 커스텀필드");
@@ -158,6 +159,7 @@ test("생성 요청에 멱등 라벨·기간·담당자가 실린다", async () 
   const labels = fields.labels as string[];
   assert.ok(labels.includes(eventLabel(eventId)), "멱등 라벨이 없으면 중복 이슈를 막을 수 없다");
   assert.ok(labels.includes("SRHUB_CAL"));
+  assert.ok(labels.includes("TAS_작업지원"), "업무 성격은 사내 라벨로 간다");
 });
 
 test("본문에 등록자를 적는다 — reporter 는 공용 계정이라 이게 유일한 기록이다", async () => {
@@ -226,6 +228,147 @@ test("400 이면 곁가지 칸을 떼고 이슈는 반드시 만든다", async (
 
   // 라벨이 떨어졌으면 멱등 장치가 없는 이슈다 — 그 사실을 분명히 말해야 한다.
   assert.match(result.message, /멱등 라벨이 들어가지 않았습니다/);
+});
+
+/* ------------------------------------------------------------------ *
+ * 사내 양식 — 제목 대괄호(망) · 상위 에픽(법인) · 라벨(성격)
+ *
+ * 세 자리가 서로 다른 것을 담는다. 하나라도 엉뚱하게 넣으면 보고서 집계
+ * (lib/jira.ts)가 그 건을 놓치거나 다른 법인으로 센다.
+ * ------------------------------------------------------------------ */
+
+/** 망·법인을 넣은 일정 하나. */
+async function eventWith(fields: { scopes?: string; corp?: string; kind?: string }): Promise<number> {
+  return createEvent(db, {
+    teamId: "default",
+    title: "10월 정기 점검",
+    kind: fields.kind ?? "",
+    scopes: fields.scopes ?? "",
+    corp: fields.corp ?? "",
+    startDate: "2126-12-10",
+    createdBy: userId,
+  });
+}
+
+test("망이 제목 앞 대괄호가 된다", async () => {
+  const id = await eventWith({ scopes: "개발/운영/DR" });
+  install(() => ({ status: 201, body: { key: "ABC-30" } }));
+  await syncEventToJira(db, "default", id);
+  assert.equal(createdFields().summary, "[개발/운영/DR] 10월 정기 점검");
+});
+
+test("망 순서는 적은 순서가 아니라 정해진 순서다", async () => {
+  // 같은 조합이 [개발/운영/DR] 과 [운영/개발/DR] 로 갈려 있으면 눈으로 묶이지 않는다.
+  const id = await eventWith({ scopes: "DR/운영/개발" });
+  install(() => ({ status: 201, body: { key: "ABC-31" } }));
+  await syncEventToJira(db, "default", id);
+  assert.equal(createdFields().summary, "[개발/운영/DR] 10월 정기 점검");
+});
+
+test("법인이 상위 에픽을 고른다", async () => {
+  process.env.JIRA_EPIC_BANK = "EPIC-BANK";
+  process.env.JIRA_EPIC_CENTRAL = "EPIC-CENT";
+
+  const bank = await eventWith({ scopes: "운영", corp: "은행" });
+  install(() => ({ status: 201, body: { key: "ABC-32" } }));
+  await syncEventToJira(db, "default", bank);
+  assert.deepEqual(createdFields().parent, { key: "EPIC-BANK" });
+
+  calls = [];
+  const central = await eventWith({ scopes: "운영", corp: "중앙회" });
+  install(() => ({ status: 201, body: { key: "ABC-33" } }));
+  await syncEventToJira(db, "default", central);
+  assert.deepEqual(createdFields().parent, { key: "EPIC-CENT" });
+});
+
+test("법인 에픽 설정이 없으면 기본 에픽에 달고 그 사실을 말한다", async () => {
+  // 조용히 다른 법인 에픽에 달리면 보고서가 엉뚱한 법인으로 센다.
+  delete process.env.JIRA_EPIC_CENTRAL;
+  process.env.JIRA_SR_EPIC = "EPIC-FALLBACK";
+
+  const id = await eventWith({ scopes: "운영", corp: "중앙회" });
+  install(() => ({ status: 201, body: { key: "ABC-34" } }));
+  const result = await syncEventToJira(db, "default", id);
+
+  assert.deepEqual(createdFields().parent, { key: "EPIC-FALLBACK" });
+  assert.match(result.message, /JIRA_EPIC_CENTRAL/);
+});
+
+test("본사는 망이 없어도 대괄호에 본사가 들어간다", async () => {
+  // 실제로 [본사] 가 91건이다.
+  process.env.JIRA_EPIC_HQ = "EPIC-HQ";
+  const id = await eventWith({ corp: "본사" });
+  install(() => ({ status: 201, body: { key: "ABC-35" } }));
+  await syncEventToJira(db, "default", id);
+
+  assert.equal(createdFields().summary, "[본사] 10월 정기 점검");
+  assert.deepEqual(createdFields().parent, { key: "EPIC-HQ" });
+});
+
+test("은행·중앙회는 제목에 넣지 않는다", async () => {
+  const id = await eventWith({ corp: "은행" });
+  install(() => ({ status: 201, body: { key: "ABC-36" } }));
+  await syncEventToJira(db, "default", id);
+  assert.equal(createdFields().summary, "10월 정기 점검");
+});
+
+test("업무 성격이 사내 라벨이 된다", async () => {
+  const id = await eventWith({ scopes: "운영", kind: "장애" });
+  install(() => ({ status: 201, body: { key: "ABC-37" } }));
+  await syncEventToJira(db, "default", id);
+
+  const labels = createdFields().labels as string[];
+  assert.ok(labels.includes("TAS_장애대응"));
+  assert.ok(!labels.includes("TAS_작업지원"), "둘이 함께 붙으면 집계가 겹친다");
+});
+
+test("본문에 전산망·법인이 적힌다", async () => {
+  const id = await eventWith({ scopes: "개발/운영", corp: "은행", kind: "점검" });
+  install(() => ({ status: 201, body: { key: "ABC-38" } }));
+  await syncEventToJira(db, "default", id);
+
+  const description = JSON.stringify(createdFields().description);
+  assert.ok(description.includes("전산망: 개발 / 운영"), description);
+  assert.ok(description.includes("법인: 은행"), description);
+  assert.ok(description.includes("업무: 점검"), description);
+});
+
+/* ------------------------------------------------------------------ *
+ * 멘션 — 글자로 두면 알림이 가지 않는다
+ * ------------------------------------------------------------------ */
+
+test("본문의 @이름이 실제 Jira 멘션이 된다", async () => {
+  const id = await createEvent(db, {
+    teamId: "default",
+    title: "패치 작업",
+    body: "@안용식 확인 부탁드립니다",
+    startDate: "2126-12-11",
+    createdBy: userId,
+  });
+  install(() => ({ status: 201, body: { key: "ABC-40" } }));
+  await syncEventToJira(db, "default", id);
+
+  const description = JSON.stringify(createdFields().description);
+  assert.ok(description.includes('"type":"mention"'), description);
+  assert.ok(description.includes('"id":"acct-1"'), "accountId 가 들어가야 알림이 간다");
+});
+
+test("Jira 계정이 없는 사람은 글자로 남고 결과가 그 사실을 말한다", async () => {
+  await db.run("UPDATE users SET jira_account_id = '' WHERE user_id = ?", [userId]);
+  const id = await createEvent(db, {
+    teamId: "default",
+    title: "패치 작업",
+    body: "@안용식 확인 부탁",
+    startDate: "2126-12-12",
+    createdBy: userId,
+  });
+  install(() => ({ status: 201, body: { key: "ABC-41" } }));
+  const result = await syncEventToJira(db, "default", id);
+
+  const description = JSON.stringify(createdFields().description);
+  assert.ok(!description.includes('"type":"mention"'));
+  assert.ok(description.includes("@안용식"), "이름을 지우면 누구 얘기였는지 잃는다");
+  assert.match(result.message, /Jira 계정이 연결되지 않아/);
 });
 
 /* ------------------------------------------------------------------ *
@@ -355,7 +498,7 @@ test("수정은 제목·기간·담당자를 갱신한다", async () => {
 
   const put = callsTo("/rest/api/3/issue/ABC-10", "PUT")[0];
   const fields = (put?.body?.fields ?? {}) as Record<string, unknown>;
-  assert.equal(fields.summary, "[점검] 방화벽 룰 정리");
+  assert.equal(fields.summary, "방화벽 룰 정리");
   assert.equal(fields.duedate, "2126-11-30");
   assert.ok(put?.url.includes("notifyUsers=false"), "같은 소식을 두 번 알리지 않는다");
 });

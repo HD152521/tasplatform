@@ -27,6 +27,15 @@
  */
 import "server-only";
 import { adfDoc, adfLines, type AdfDoc } from "./adf.ts";
+import { adfLinesWithMentions, type MentionablePerson } from "./adfMention.ts";
+import {
+  classifyTags,
+  corpEpicKey,
+  houseSummary,
+  readWorkLabel,
+  type Corp,
+  type Scope,
+} from "./jiraHouseStyle.ts";
 import { AtlassianError } from "./atlassian.ts";
 import { getEvent, type EventState, type JiraState, type TeamEvent } from "./calendar.ts";
 import { isoNow } from "./dates.ts";
@@ -43,7 +52,7 @@ import {
   updateIssueFields,
   type JiraSrConfig,
 } from "./jiraWrite.ts";
-import { getUserById } from "./users.ts";
+import { getUserById, listTeamMembers } from "./users.ts";
 
 /** 여러 줄 글 → ADF 문서. adfDoc + adfLines 를 매번 엮지 않게 묶어 둔다. */
 function textDoc(text: string): AdfDoc {
@@ -171,11 +180,20 @@ function appUrl(): string {
 }
 
 /** 이슈 본문. 앱으로 돌아오는 링크를 반드시 넣는다 — Jira 에서 본 사람이 원본을 찾게. */
+/**
+ * 이슈 본문.
+ *
+ * 사람이 적은 본문(`event.body`)은 **멘션을 살려** 넣는다 — `@민수` 가 글자로 남으면
+ * 그 사람에게 알림이 가지 않는다(lib/adfMention.ts 머리말). 우리가 조립하는 아래
+ * 정보 줄들은 멘션을 만들지 않는다(담당자 줄은 이름만 적는다 — 담당자 칸이 이미
+ * 그 사람을 가리키므로 멘션까지 걸면 같은 사람에게 알림이 두 번 간다).
+ */
 function describeEvent(
   event: TeamEvent,
   assigneeName: string,
   createdByName: string,
-): AdfDoc {
+  people: readonly MentionablePerson[] = [],
+): { doc: AdfDoc; unlinked: readonly string[] } {
   const period =
     event.endDate === event.startDate
       ? event.startDate
@@ -187,23 +205,66 @@ function describeEvent(
         ? event.startTime
         : `${event.startTime} ~ ${event.endTime}`;
 
+  const scopes = scopesOf(event);
+  const corp = corpOf(event);
   const lines = [
-    event.body.trim(),
-    "",
     `기간: ${period} (${time})`,
     `담당: ${assigneeName === "" ? "미지정" : assigneeName}`,
-    event.kind === "" ? "" : `종류: ${event.kind}`,
+    scopes.length === 0 ? "" : `전산망: ${scopes.join(" / ")}`,
+    corp === null ? "" : `법인: ${corp}`,
+    event.kind === "" ? "" : `업무: ${event.kind}`,
     // reporter 가 공용 계정이라 이 줄이 "누가 올렸나" 의 유일한 기록이다.
     createdByName === "" ? "" : `등록: ${createdByName} (앱 사용자)`,
     `팀 캘린더: ${appUrl()}/calendar?event=${event.eventId}`,
     "",
     "이 이슈는 팀 캘린더의 일정에서 자동으로 만들어졌습니다. 일정을 고치면 여기도 따라 바뀝니다.",
   ];
-  return textDoc(lines.filter((line, i) => line !== "" || i > 0).join("\n"));
+
+  // 사람이 적은 본문이 맨 위에 온다. 멘션은 여기서만 만든다.
+  const written = adfLinesWithMentions(event.body.trim(), people);
+  const info = textDoc(lines.filter((line) => line !== "").join("\n"));
+
+  return {
+    doc: adfDoc([...written.nodes, ...info.content]),
+    unlinked: written.unlinked,
+  };
 }
 
+/**
+ * 저장된 망·법인 문자열을 다시 타입으로 읽는다.
+ *
+ * DB 는 글자로 들고 있고(`scopes='개발/운영'`, `corp='은행'`), 양식 함수는 타입을
+ * 받는다. 모르는 값이 섞여 있어도 **버리지 않고 걸러만** 낸다 — 손으로 넣은 값이나
+ * 옛 행이 있을 수 있다.
+ */
+function scopesOf(event: TeamEvent): Scope[] {
+  const raw = event.scopes.split("/").map((p) => p.trim()).filter((p) => p !== "");
+  return classifyTags(raw).scopes as Scope[];
+}
+
+function corpOf(event: TeamEvent): Corp | null {
+  return classifyTags(event.corp === "" ? [] : [event.corp]).corp;
+}
+
+/**
+ * 이슈 제목. **이 팀의 사내 양식**을 따른다 — `[개발/운영] 10월 정기 점검`.
+ *
+ * 전에는 캘린더의 성격 태그를 대괄호에 넣었다(`[점검] …`). 그 자리는 이 팀에서
+ * **전산망**을 적는 자리라(실측 370건), 성격을 넣으면 보고서 집계가 망을 못 읽는다
+ * (lib/jira.ts 의 parseCenter). 성격은 라벨로 간다.
+ */
 function summaryOf(event: TeamEvent): string {
-  return event.kind === "" ? event.title : `[${event.kind}] ${event.title}`;
+  return houseSummary({ scopes: scopesOf(event), corp: corpOf(event), title: event.title });
+}
+
+/** 그 팀에서 멘션할 수 있는 사람들. Jira 계정이 없는 사람도 넣는다(글자로 남긴다). */
+async function mentionable(db: Db, teamId: string): Promise<MentionablePerson[]> {
+  const members = await listTeamMembers(db, teamId).catch(() => []);
+  return members.map((m) => ({
+    displayName: m.displayName,
+    loginId: m.loginId,
+    jiraAccountId: m.jiraAccountId,
+  }));
 }
 
 /* ------------------------------------------------------------------ *
@@ -316,6 +377,10 @@ async function createForEvent(
 ): Promise<JiraSyncResult> {
   const assignee = await assigneeAccountId(db, event);
   const { assigneeName, createdByName } = await peopleOf(db, event);
+  const people = await mentionable(db, teamId);
+  const body = describeEvent(event, assigneeName, createdByName, people);
+  const corp = corpOf(event);
+  const epic = corpEpicKey(corp);
 
   const required = {
     project: { key: config.projectKey },
@@ -324,12 +389,16 @@ async function createForEvent(
   };
   // 없어도 이슈가 성립하는 칸. 400 이면 **전부** 떨어진다(생성은 반드시 성공해야 한다).
   const extras: Record<string, unknown> = {
-    description: describeEvent(event, assigneeName, createdByName),
-    labels: [CALENDAR_LABEL, eventLabel(event.eventId), ...(event.kind === "" ? [] : [`SRHUB_${event.kind}`])],
+    description: body.doc,
+    // 업무 성격은 **사내 라벨**로 간다(TAS_작업지원 248건 등). 앞의 둘은 우리 것이다 —
+    // CALENDAR_LABEL 은 캘린더에서 만든 것 전체를 찾는 용도, EVT 라벨은 멱등 키다.
+    labels: [CALENDAR_LABEL, eventLabel(event.eventId), readWorkLabel([event.kind])],
     [START_DATE_FIELD]: event.startDate,
     duedate: event.endDate,
   };
-  if (config.epicKey !== "") extras["parent"] = { key: config.epicKey };
+  // 상위 에픽이 **법인**을 결정한다(NH은행 운영지원 / NH중앙회 / NH본사 지원).
+  // 법인별 설정이 없으면 기존 JIRA_SR_EPIC 으로 떨어지고, 아래에서 그 사실을 적는다.
+  if (epic.key !== "") extras["parent"] = { key: epic.key };
   if (config.teamId !== "") extras["customfield_10001"] = config.teamId;
   if (assignee !== "") extras["assignee"] = { accountId: assignee };
 
@@ -344,9 +413,21 @@ async function createForEvent(
   // ⚠ 라벨이 떨어졌으면 **멱등 장치가 없는 이슈**다. 다음 재시도에서 찾을 수 없으므로
   // 그 사실을 분명히 남긴다(사유 칸이 비어 있으면 아무도 모른다).
   const lostLabel = made.dropped.includes("labels");
-  const message = lostLabel
-    ? `이슈 ${made.key} 를 만들었지만 멱등 라벨이 들어가지 않았습니다. 일정을 지울 때 이슈가 함께 지워지지 않을 수 있습니다.`
-    : `이슈 ${made.key} 를 만들었습니다.`;
+  const notes: string[] = [
+    lostLabel
+      ? `이슈 ${made.key} 를 만들었지만 멱등 라벨이 들어가지 않았습니다. 일정을 지울 때 이슈가 함께 지워지지 않을 수 있습니다`
+      : `이슈 ${made.key} 를 만들었습니다`,
+  ];
+  if (corp !== null && !epic.exact) {
+    // 조용히 다른 법인 에픽에 달리면 보고서가 그 건을 엉뚱한 법인으로 센다.
+    notes.push(
+      `법인 ${corp} 의 상위 에픽 설정(JIRA_EPIC_${corp === "은행" ? "BANK" : corp === "중앙회" ? "CENTRAL" : "HQ"})이 없어 기본 에픽에 달았습니다`,
+    );
+  }
+  if (body.unlinked.length > 0) {
+    notes.push(`${body.unlinked.join(", ")} 님은 Jira 계정이 연결되지 않아 멘션 대신 글자로 넣었습니다`);
+  }
+  const message = `${notes.join(". ")}.`;
 
   return {
     action: "created",

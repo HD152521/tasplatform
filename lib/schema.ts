@@ -583,6 +583,12 @@ CREATE TABLE IF NOT EXISTS team_events (
   title            TEXT    NOT NULL DEFAULT '',
   body             TEXT    NOT NULL DEFAULT '',
   kind             TEXT    NOT NULL DEFAULT '',
+  -- Jira 사내 양식(lib/jiraHouseStyle.ts). 태그에서 갈라 둔 값이다.
+  --   scopes : 전산망/센터. '/' 로 이어 둔다('개발/운영'). 제목 앞 대괄호가 된다
+  --   corp   : 법인('은행'|'중앙회'|'본사'). 상위 에픽을 고른다
+  -- 태그 원문은 kind 와 이 둘로 나뉘어 들어간다 — 되돌릴 때 셋을 합쳐 다시 만든다.
+  scopes           TEXT    NOT NULL DEFAULT '',
+  corp             TEXT    NOT NULL DEFAULT '',
   start_date       TEXT    NOT NULL,
   end_date         TEXT    NOT NULL,
   start_time       TEXT    NOT NULL DEFAULT '',

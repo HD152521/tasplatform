@@ -40,8 +40,20 @@ export interface QuickAddResult {
   readonly startTime: string;
   readonly endTime: string;
   readonly title: string;
-  /** `#태그`. 없으면 ''. */
+  /**
+   * 첫 `#태그`. 표시용으로 남긴다.
+   *
+   * 태그가 하나뿐이던 시절의 호출부와 화면이 이 칸을 본다. 분류(망·법인·성격)는
+   * kinds 를 lib/jiraHouseStyle.ts 에 넘겨 한다 — 파서는 가르지 않는다.
+   */
   readonly kind: string;
+  /**
+   * 적힌 `#태그` 전부, 적은 순서대로.
+   *
+   * 하나로 제한하지 않는 이유: 이 팀의 Jira 제목은 망을 여러 개 쓴다
+   * (`[개발/운영/DR]`). 태그를 하나만 받으면 그 모양을 만들 수 없다.
+   */
+  readonly kinds: readonly string[];
   /** `@이름`. 없으면 ''. 팀원과 맞추는 것은 부르는 쪽의 일이다. */
   readonly assignee: string;
   /** 날짜 조각이 실제로 적혀 있었나. 미리보기가 "오늘로 봤다" 를 말해 주려고 쓴다. */
@@ -266,7 +278,7 @@ export function parseQuickAdd(line: string, today: string): QuickAddResult {
 
   let date: DatePart | null = null;
   let time: TimePart | null = null;
-  let kind = "";
+  const kinds: string[] = [];
   let assignee = "";
   const rest: string[] = [];
 
@@ -274,12 +286,9 @@ export function parseQuickAdd(line: string, today: string): QuickAddResult {
     if (token === "") continue;
 
     if (token.startsWith("#") && token.length > 1) {
-      // 첫 태그만 쓴다. 두 번째부터는 제목에 남겨 둔다 — 버리면 적은 사람이 모른다.
-      if (kind === "") {
-        kind = token.slice(1);
-        continue;
-      }
-      rest.push(token);
+      // 태그는 **전부** 모은다. 같은 태그를 두 번 적어도 한 번만 센다.
+      const tag = token.slice(1);
+      if (!kinds.some((k) => k.toLowerCase() === tag.toLowerCase())) kinds.push(tag);
       continue;
     }
     if (token.startsWith("@") && token.length > 1) {
@@ -318,7 +327,8 @@ export function parseQuickAdd(line: string, today: string): QuickAddResult {
     startTime: time?.startTime ?? "",
     endTime: time?.endTime ?? "",
     title,
-    kind,
+    kind: kinds[0] ?? "",
+    kinds,
     assignee,
     hadDate: date !== null,
   };
@@ -332,7 +342,7 @@ export interface QuickAddFields {
   readonly startTime: string;
   readonly endTime: string;
   readonly title: string;
-  readonly kind: string;
+  readonly kinds: readonly string[];
   readonly assignee: string;
 }
 
@@ -354,7 +364,9 @@ export function formatQuickAddLine(f: QuickAddFields): string {
   }
   if (f.title !== "") parts.push(f.title);
   if (f.assignee !== "") parts.push(`@${f.assignee}`);
-  if (f.kind !== "") parts.push(`#${f.kind}`);
+  for (const tag of f.kinds) {
+    if (tag !== "") parts.push(`#${tag}`);
+  }
   return parts.join(" ");
 }
 
@@ -378,7 +390,7 @@ export function describeQuickAdd(r: Omit<QuickAddResult, "summary">): string {
   if (r.startTime === "") parts.push("종일");
   else parts.push(r.endTime === "" ? r.startTime : `${r.startTime}~${r.endTime}`);
 
-  if (r.kind !== "") parts.push(r.kind);
+  if (r.kinds.length > 0) parts.push(r.kinds.join("·"));
   if (r.assignee !== "") parts.push(`담당 ${r.assignee}`);
   if (!r.hadDate) parts.push("날짜 안 적음 → 선택한 날");
   if (r.title === "") parts.push("⚠ 제목이 비었습니다");

@@ -220,11 +220,19 @@ test("순서는 상관없다", () => {
   assert.equal(r.title, "VCF 패치");
 });
 
-test("두 번째 태그·담당자는 제목에 남긴다", () => {
-  const r = parseQuickAdd("점검 #작업 #긴급 @a @b", TODAY);
-  assert.equal(r.kind, "작업");
+test("태그는 여러 개를 다 받는다 — 두 번째 담당자만 제목에 남는다", () => {
+  // 태그를 하나만 받던 때는 두 번째 태그가 제목으로 밀려났다. 이 팀의 Jira 제목은
+  // 망을 여러 개 쓰므로(`[개발/운영/DR]`) 태그는 전부 받아야 한다.
+  // 담당자는 하나뿐이라 두 번째는 그대로 제목에 남긴다(버리면 적은 사람이 모른다).
+  const r = parseQuickAdd("점검 #개발 #운영 #DR @a @b", TODAY);
+  assert.deepEqual(r.kinds, ["개발", "운영", "DR"]);
+  assert.equal(r.kind, "개발", "첫 태그는 표시용으로 남는다");
   assert.equal(r.assignee, "a");
-  assert.equal(r.title, "점검 #긴급 @b", "버리지 않고 남겨야 적은 사람이 안다");
+  assert.equal(r.title, "점검 @b");
+});
+
+test("같은 태그를 두 번 적어도 한 번만 센다", () => {
+  assert.deepEqual(parseQuickAdd("점검 #운영 #운영 #운", TODAY).kinds, ["운영", "운"]);
 });
 
 test("목록에 없는 종류도 받는다", () => {
@@ -288,14 +296,14 @@ test("일정을 한 줄로 되돌려 적는다", () => {
   assert.equal(
     formatQuickAddLine({
       startDate: "2026-11-25", endDate: "2026-11-25",
-      startTime: "", endTime: "", title: "방화벽 점검", kind: "점검", assignee: "용식",
+      startTime: "", endTime: "", title: "방화벽 점검", kinds: ["점검"], assignee: "용식",
     }),
     "2026-11-25 방화벽 점검 @용식 #점검",
   );
   assert.equal(
     formatQuickAddLine({
       startDate: "2026-11-25", endDate: "2026-11-27",
-      startTime: "09:00", endTime: "18:00", title: "정기점검", kind: "", assignee: "",
+      startTime: "09:00", endTime: "18:00", title: "정기점검", kinds: [], assignee: "",
     }),
     "2026-11-25~2026-11-27 09:00-18:00 정기점검",
   );
@@ -304,10 +312,10 @@ test("일정을 한 줄로 되돌려 적는다", () => {
 test("되돌린 한 줄을 다시 읽으면 같은 일정이다 (왕복)", () => {
   // 편집이 왕복에서 값을 잃으면, 제목만 고치려던 수정이 날짜를 바꿔 버린다.
   const cases = [
-    { startDate: "2026-11-25", endDate: "2026-11-25", startTime: "", endTime: "", title: "방화벽 점검", kind: "점검", assignee: "용식" },
-    { startDate: "2026-11-25", endDate: "2026-11-27", startTime: "09:00", endTime: "18:00", title: "정기점검 준비", kind: "작업", assignee: "민수" },
-    { startDate: "2027-01-02", endDate: "2027-01-02", startTime: "14:00", endTime: "", title: "신년 회의", kind: "", assignee: "" },
-    { startDate: "2026-12-30", endDate: "2027-01-02", startTime: "", endTime: "", title: "연말 작업", kind: "휴가", assignee: "" },
+    { startDate: "2026-11-25", endDate: "2026-11-25", startTime: "", endTime: "", title: "방화벽 점검", kinds: ["점검"], assignee: "용식" },
+    { startDate: "2026-11-25", endDate: "2026-11-27", startTime: "09:00", endTime: "18:00", title: "정기점검 준비", kinds: ["작업"], assignee: "민수" },
+    { startDate: "2027-01-02", endDate: "2027-01-02", startTime: "14:00", endTime: "", title: "신년 회의", kinds: [], assignee: "" },
+    { startDate: "2026-12-30", endDate: "2027-01-02", startTime: "", endTime: "", title: "연말 작업", kinds: ["휴가"], assignee: "" },
   ];
   for (const c of cases) {
     const line = formatQuickAddLine(c);
@@ -317,7 +325,7 @@ test("되돌린 한 줄을 다시 읽으면 같은 일정이다 (왕복)", () =>
     assert.equal(back.startTime, c.startTime, line);
     assert.equal(back.endTime, c.endTime, line);
     assert.equal(back.title, c.title, line);
-    assert.equal(back.kind, c.kind, line);
+    assert.deepEqual(back.kinds, c.kinds, line);
     assert.equal(back.assignee, c.assignee, line);
     assert.equal(back.hadDate, true, line);
   }

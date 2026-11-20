@@ -133,6 +133,9 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: string 
   { table: "attachment_jobs", column: "team_id", ddl: "TEXT NOT NULL DEFAULT ''" },
   // 팀 초대 코드. S1(신원)에서 들어왔다 — 이미 돌고 있는 DB 에는 teams 표가 있으니 ALTER 로 더한다.
   { table: "teams", column: "invite_code", ddl: "TEXT NOT NULL DEFAULT ''" },
+  // Jira 사내 양식(망·법인). team_events 가 이미 배포된 뒤에 들어왔다.
+  { table: "team_events", column: "scopes", ddl: "TEXT NOT NULL DEFAULT ''" },
+  { table: "team_events", column: "corp", ddl: "TEXT NOT NULL DEFAULT ''" },
   // sr_jira_links 는 이미 배포돼 있으므로(PR #62) ALTER 로 더한다.
   { table: "sr_jira_links", column: "publish_tries", ddl: "INTEGER NOT NULL DEFAULT 0" },
   { table: "sr_jira_links", column: "comment_tries", ddl: "INTEGER NOT NULL DEFAULT 0" },

@@ -28,6 +28,7 @@ import {
 } from "../../../lib/calendar.ts";
 import { syncEventToJira, removeEventFromJira } from "../../../lib/calendarJira.ts";
 import { openDb, recordAudit } from "../../../lib/db.ts";
+import { classifyTags } from "../../../lib/jiraHouseStyle.ts";
 import { parseQuickAdd } from "../../../lib/quickAdd.ts";
 import { listTeamMembers } from "../../../lib/users.ts";
 
@@ -134,10 +135,15 @@ export async function POST(request: Request) {
         );
       }
       const matched = matchAssignee(parsed.assignee, members);
+      // 태그를 망·법인·성격으로 가른다. 이 팀의 Jira 양식이 그 셋을 서로 다른 자리에
+      // 쓰기 때문이다(제목 대괄호 / 상위 에픽 / 라벨 — lib/jiraHouseStyle.ts).
+      const tags = classifyTags(parsed.kinds);
       input = {
         teamId: me.teamId,
         title: parsed.title,
-        kind: parsed.kind,
+        kind: tags.rest[0] ?? "",
+        scopes: tags.scopes.join("/"),
+        corp: tags.corp ?? "",
         startDate: parsed.startDate,
         endDate: parsed.endDate,
         startTime: parsed.startTime,
@@ -149,10 +155,13 @@ export async function POST(request: Request) {
       };
     } else {
       const matched = matchAssignee(str("assignee"), members);
+      const tags = classifyTags(str("kind") === "" ? [] : [str("kind")]);
       input = {
         teamId: me.teamId,
         title: str("title"),
-        kind: str("kind"),
+        kind: tags.rest[0] ?? "",
+        scopes: tags.scopes.join("/"),
+        corp: tags.corp ?? "",
         startDate: str("startDate"),
         endDate: str("endDate"),
         startTime: str("startTime"),
@@ -224,9 +233,12 @@ export async function PATCH(request: Request) {
         loginId: m.loginId,
       }));
       const matched = matchAssignee(parsed.assignee, members);
+      const tags = classifyTags(parsed.kinds);
       patch = {
         title: parsed.title,
-        kind: parsed.kind,
+        kind: tags.rest[0] ?? "",
+        scopes: tags.scopes.join("/"),
+        corp: tags.corp ?? "",
         // 한 줄에 날짜를 안 적었으면 **원래 날짜를 지킨다.** 기준일로 밀어 버리면
         // 제목만 고치려던 수정이 일정을 다른 날로 옮긴다.
         startDate: parsed.hadDate ? parsed.startDate : before.startDate,

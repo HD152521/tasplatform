@@ -35,6 +35,10 @@ export interface TeamEvent {
   readonly title: string;
   readonly body: string;
   readonly kind: string;
+  /** 전산망/센터. '/' 로 이은 문자열('개발/운영'). Jira 제목의 대괄호가 된다. */
+  readonly scopes: string;
+  /** 법인('은행'|'중앙회'|'본사'). Jira 상위 에픽을 고른다. 없으면 ''. */
+  readonly corp: string;
   readonly startDate: string;
   readonly endDate: string;
   readonly startTime: string;
@@ -67,6 +71,8 @@ interface EventRowRaw {
   title: string;
   body: string;
   kind: string;
+  scopes: string;
+  corp: string;
   start_date: string;
   end_date: string;
   start_time: string;
@@ -92,6 +98,8 @@ function toEvent(row: EventRowRaw): TeamEvent {
     title: row.title,
     body: row.body,
     kind: row.kind,
+    scopes: row.scopes ?? "",
+    corp: row.corp ?? "",
     startDate: row.start_date,
     endDate: row.end_date,
     startTime: row.start_time,
@@ -131,6 +139,8 @@ export interface EventInput {
   readonly title: string;
   readonly body?: string;
   readonly kind?: string;
+  readonly scopes?: string;
+  readonly corp?: string;
   readonly startDate: string;
   readonly endDate?: string;
   readonly startTime?: string;
@@ -173,15 +183,18 @@ export async function createEvent(db: Db, input: EventInput): Promise<number> {
   const now = isoNow();
   return db.insertReturning(
     `INSERT INTO team_events (
-       team_id, title, body, kind, start_date, end_date, start_time, end_time,
+       team_id, title, body, kind, scopes, corp,
+       start_date, end_date, start_time, end_time,
        assignee_user_id, assignee_label, state, created_by, created_at, updated_at,
        jira_key, jira_url, jira_state, jira_error, jira_tries, jira_synced_at
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'','','none','',0,'')`,
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'','','none','',0,'')`,
     [
       input.teamId,
       input.title.trim(),
       input.body ?? "",
       (input.kind ?? "").trim(),
+      (input.scopes ?? "").trim(),
+      (input.corp ?? "").trim(),
       startDate,
       endDate,
       input.startTime ?? "",
@@ -201,6 +214,8 @@ export interface EventPatch {
   readonly title?: string;
   readonly body?: string;
   readonly kind?: string;
+  readonly scopes?: string;
+  readonly corp?: string;
   readonly startDate?: string;
   readonly endDate?: string;
   readonly startTime?: string;
@@ -233,6 +248,8 @@ export async function updateEvent(
     title: patch.title ?? before.title,
     body: patch.body ?? before.body,
     kind: patch.kind ?? before.kind,
+    scopes: patch.scopes ?? before.scopes,
+    corp: patch.corp ?? before.corp,
     startDate: patch.startDate ?? before.startDate,
     endDate: patch.endDate ?? before.endDate,
     startTime: patch.startTime ?? before.startTime,
@@ -245,7 +262,7 @@ export async function updateEvent(
 
   await db.run(
     `UPDATE team_events SET
-       title = ?, body = ?, kind = ?, start_date = ?, end_date = ?,
+       title = ?, body = ?, kind = ?, scopes = ?, corp = ?, start_date = ?, end_date = ?,
        start_time = ?, end_time = ?, assignee_user_id = ?, assignee_label = ?,
        state = ?, updated_at = ?
      WHERE team_id = ? AND event_id = ?`,
@@ -253,6 +270,8 @@ export async function updateEvent(
       merged.title.trim(),
       merged.body ?? "",
       (merged.kind ?? "").trim(),
+      (merged.scopes ?? "").trim(),
+      (merged.corp ?? "").trim(),
       startDate,
       endDate,
       merged.startTime ?? "",

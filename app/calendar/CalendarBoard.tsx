@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EventState, TeamEventView } from "../../lib/calendar.ts";
 import {
+  classifyTags,
+  describeClassification,
+  houseSummary,
+} from "../../lib/jiraHouseStyle.ts";
+import {
   addDays,
   daysInMonth,
   describeQuickAdd,
@@ -31,6 +36,19 @@ interface Props {
 }
 
 const WEEK_LABELS = ["일", "월", "화", "수", "목", "금", "토"] as const;
+
+/**
+ * 저장된 일정을 **한 줄 태그**로 되살린다.
+ *
+ * 적은 태그는 저장될 때 망(scopes)·법인(corp)·성격(kind) 셋으로 갈라진다
+ * (lib/jiraHouseStyle.ts). 인라인 편집은 그 줄을 다시 보여 줘야 하므로 셋을 합친다.
+ * 순서는 저장 순서가 아니라 **망 → 법인 → 성격** 으로 고정한다 — 편집할 때마다
+ * 순서가 흔들리면 같은 일정이 매번 다른 줄로 보인다.
+ */
+function tagsOf(event: TeamEventView): string[] {
+  const scopes = event.scopes === "" ? [] : event.scopes.split("/").filter((s) => s !== "");
+  return [...scopes, ...(event.corp === "" ? [] : [event.corp]), ...(event.kind === "" ? [] : [event.kind])];
+}
 
 /** 상태별 색. 취소는 지운 것과 다르다 — 보이되 흐리게 둔다. */
 const STATE_STYLE: Record<EventState, { fg: string; bg: string; label: string }> = {
@@ -97,14 +115,29 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
     return map;
   }, [events]);
 
+  /**
+   * 미리보기. 파서가 어떻게 읽었는지와 **Jira 에 어떤 제목으로 올라갈지**를 함께 보여
+   * 준다. 제목 규칙(망 대괄호·법인 에픽)이 눈에 보이지 않으면 아무도 `#운영` 을 적지
+   * 않는다 — 그러면 보고서 집계가 그 건의 망을 읽지 못한다.
+   */
   const preview = useMemo(() => {
     if (line.trim() === "") return null;
     try {
       const parsed = parseQuickAdd(line, selectedDate);
       const { summary, ...rest } = parsed;
-      return describeQuickAdd(rest);
+      const tags = classifyTags(parsed.kinds);
+      const jiraTitle = houseSummary({
+        scopes: tags.scopes,
+        corp: tags.corp,
+        title: parsed.title,
+      });
+      return {
+        read: describeQuickAdd(rest),
+        jira: parsed.title === "" ? "" : `Jira: ${jiraTitle}  ·  ${describeClassification(tags)}`,
+        error: "",
+      };
     } catch (error) {
-      return error instanceof Error ? error.message : String(error);
+      return { read: "", jira: "", error: error instanceof Error ? error.message : String(error) };
     }
   }, [line, selectedDate]);
 
@@ -287,7 +320,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
                 void add();
               }
             }}
-            placeholder="11/25 방화벽 점검 @용식 #점검   (날짜를 안 적으면 왼쪽 날짜)"
+            placeholder="11/25 정기점검 @용식 #운영 #DR #은   (날짜를 안 적으면 왼쪽 날짜)"
             disabled={busy}
             style={{ ...controlStyle, flex: "1 1 320px", cursor: "text", minWidth: 220 }}
           />
@@ -308,11 +341,22 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
           미리보기. 파서가 틀리게 읽었으면 Enter 전에 눈에 보인다 —
           이게 한 줄 입력을 믿게 만드는 장치다.
         */}
-        <div style={{
-          marginTop: 9, fontSize: 12.5, minHeight: 18,
-          color: preview === null ? COLOR.faint : COLOR.body,
-        }}>
-          {preview ?? "날짜·시간·@담당·#종류를 섞어 적을 수 있습니다. 순서는 상관없습니다."}
+        <div style={{ marginTop: 9, fontSize: 12.5, minHeight: 34 }}>
+          {preview === null ? (
+            <span style={{ color: COLOR.faint }}>
+              날짜 · 시간 · <strong>@담당</strong> · <strong>#망</strong>(운영·개발·DR·AWS) ·
+              {" "}<strong>#법인</strong>(은·중·본) · #성격(점검·작업·장애) — 순서는 상관없습니다.
+            </span>
+          ) : preview.error !== "" ? (
+            <span style={{ color: COLOR.waitUs }}>{preview.error}</span>
+          ) : (
+            <>
+              <div style={{ color: COLOR.body }}>{preview.read}</div>
+              {preview.jira !== "" && (
+                <div style={{ color: COLOR.accent, fontSize: 12, marginTop: 2 }}>{preview.jira}</div>
+              )}
+            </>
+          )}
         </div>
       </Card>
 
@@ -433,7 +477,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
                 startTime: open.startTime,
                 endTime: open.endTime,
                 title: open.title,
-                kind: open.kind,
+                kinds: tagsOf(open),
                 assignee: open.assigneeLabel,
               }),
             );

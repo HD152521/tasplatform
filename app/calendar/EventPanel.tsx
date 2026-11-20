@@ -120,6 +120,18 @@ export function EventPanel({
           </div>
           <div style={{ fontSize: 12.5, color: COLOR.muted, marginTop: 6, lineHeight: 1.8 }}>
             <span style={{ fontFamily: MONO_STACK }}>{period}</span> · {time}
+            {event.scopes !== "" && (
+              <>
+                {" · 전산망 "}
+                <strong>{event.scopes.split("/").join(" / ")}</strong>
+              </>
+            )}
+            {event.corp !== "" && (
+              <>
+                {" · 법인 "}
+                <strong>{event.corp}</strong>
+              </>
+            )}
             {" · 담당 "}
             {event.assigneeName === "" ? (
               <span style={{ color: COLOR.faint }}>미지정</span>
