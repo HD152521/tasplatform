@@ -1,8 +1,15 @@
 /**
  * LLM 연결 설정 저장·조회.
  *
- * 전역 단일 활성 연결(llm_id='default')을 다룬다. 요약·리포트·답변요약이 이 설정을
- * 읽어 OpenAI 대신 지정한 OpenAI-호환 엔드포인트(Gemma 등)를 쓴다.
+ * **연결을 여러 개 등록해 두고 그중 하나를 활성으로 쓴다.** 요약·리포트·답변요약은
+ * 활성 연결만 본다(getLlmConfig) — 호출부는 어느 연결이 활성인지 몰라도 된다.
+ *
+ * 왜 여러 개가 필요한가: 사내 LLM 이 바뀌거나(모델 교체·엔드포인트 이전) 두 모델을
+ * 번갈아 비교할 때, 설정 하나를 덮어쓰면 **돌아갈 길이 없다**. 특히 비밀번호는 다시
+ * 보여주지 않으므로 덮어쓴 설정을 복원할 수 없다.
+ *
+ * 활성 포인터는 `app_state` 의 `llm_active_id` 한 줄이다. 표를 새로 만들지 않는 이유:
+ * 전역 값 하나이고, 이 레포에 이미 "프로세스 사이에 남길 작은 값" 자리가 있다.
  *
  * 비밀번호(또는 API 키)는 secretBox 로 암호화해 저장한다. 화면용(getLlmConfigMeta)은
  * 평문·암호문을 절대 반환하지 않고 존재 여부(hasSecret)만 돌려준다. 내부 리졸버용
@@ -15,9 +22,34 @@
  */
 import { isoNow } from "./dates.ts";
 import type { Db } from "./db.ts";
+import { randomBytes } from "node:crypto";
+import { getAppState, setAppState } from "./appState.ts";
 import { decryptSecret, encryptSecret } from "./secretBox.ts";
 
+/**
+ * 처음 만든 연결의 id. 전에는 **유일한** 행의 id 였다 — 그 시절 DB 를 그대로 읽기
+ * 위해 남긴다(활성 포인터가 없으면 이 id 를 찾는다).
+ */
 export const DEFAULT_LLM_ID = "default";
+
+/** 활성 연결을 가리키는 app_state 키. */
+export const ACTIVE_LLM_STATE_KEY = "llm_active_id";
+
+/**
+ * 연결 id 형식. app_state 값과 API 파라미터로 오가므로 좁게 묶는다.
+ */
+const LLM_ID_PATTERN = /^[A-Za-z0-9_-]{1,40}$/;
+
+export function assertValidLlmId(llmId: string): void {
+  if (!LLM_ID_PATTERN.test(llmId)) {
+    throw new Error(`잘못된 연결 id 입니다: ${JSON.stringify(llmId)}`);
+  }
+}
+
+/** 새 연결의 id. 사람이 정하는 값이 아니다 — 이름은 따로 있다. */
+export function newLlmId(): string {
+  return `llm-${randomBytes(4).toString("hex")}`;
+}
 export const DEFAULT_CHAT_PATH = "/v1/chat/completions";
 export const DEFAULT_MAX_TOKENS = 512;
 export const DEFAULT_TEMPERATURE = 0.1;
@@ -136,6 +168,11 @@ function normalizeBaseUrl(url: string): string {
 }
 
 export interface UpsertLlmInput {
+  /**
+   * 어느 연결인가. 생략하면 `default` — 연결이 하나뿐이던 시절의 호출부와
+   * 시험이 그대로 돌아야 하기 때문이다. 새로 만들 때는 newLlmId() 를 쓴다.
+   */
+  llmId?: string;
   name: string;
   modelId: string;
   baseUrl: string;
@@ -160,7 +197,9 @@ export interface UpsertLlmInput {
  * - secret 이 채워졌는데 SR_SECRET_KEY 가 없으면 encryptSecret 이 던지고 저장을 거부한다
  *   (평문 저장 폴백 금지, 행이 부분적으로도 남지 않음).
  */
-export async function upsertLlmConfig(db: Db, input: UpsertLlmInput): Promise<void> {
+export async function upsertLlmConfig(db: Db, input: UpsertLlmInput): Promise<string> {
+  const llmId = (input.llmId ?? DEFAULT_LLM_ID).trim() || DEFAULT_LLM_ID;
+  assertValidLlmId(llmId);
   const name = input.name.trim();
   const modelId = input.modelId.trim();
   const baseUrl = normalizeBaseUrl(input.baseUrl);
@@ -197,7 +236,7 @@ export async function upsertLlmConfig(db: Db, input: UpsertLlmInput): Promise<vo
   // client_secret 으로 재사용된다. 그래서 저장된 auth_kind 가 이번 authKind 와 같을 때만 기존
   // 시크릿을 유지하고, 방식이 바뀌면 새 시크릿을 강제한다. (none 은 시크릿을 쓰지 않으므로 제외)
   if (secretInput === "" && authKind !== "none") {
-    const existing = await readRow(db);
+    const existing = await readRowById(db, llmId);
     const hasStoredSecret = existing !== undefined && existing.secret_enc !== "";
     const storedKind = existing !== undefined ? coerceAuthKind(existing.auth_kind) : undefined;
 
@@ -230,14 +269,102 @@ export async function upsertLlmConfig(db: Db, input: UpsertLlmInput): Promise<vo
        system_prompt = excluded.system_prompt,
        updated_at    = excluded.updated_at`,
     [
-      DEFAULT_LLM_ID, name, modelId, baseUrl, authKind, tokenUrl, clientId, authUsername,
+      llmId, name, modelId, baseUrl, authKind, tokenUrl, clientId, authUsername,
       secretEnc, chatPath, maxTokens, temperature, systemPrompt, isoNow(),
     ],
   );
+
+  // **처음 만든 연결은 자동으로 활성이 된다.** 안 그러면 저장했는데 아무것도
+  // 달라지지 않고(요약이 여전히 OpenAI 로 간다) 왜 그런지 알 길이 없다.
+  if ((await getActiveLlmId(db)) === null) {
+    await setAppState(db, ACTIVE_LLM_STATE_KEY, llmId);
+  }
+  return llmId;
 }
 
-function readRow(db: Db): Promise<LlmRowRaw | undefined> {
-  return db.get<LlmRowRaw>("SELECT * FROM llm_connections WHERE llm_id = ?", [DEFAULT_LLM_ID]);
+/* ------------------------------------------------------------------ *
+ * 활성 연결
+ * ------------------------------------------------------------------ */
+
+/** 활성으로 지정된 id. 지정이 없으면 null(그 경우 아래 해석 순서를 따른다). */
+export async function getActiveLlmId(db: Db): Promise<string | null> {
+  const stored = await getAppState(db, ACTIVE_LLM_STATE_KEY);
+  if (stored === null || stored.trim() === "") return null;
+  return stored.trim();
+}
+
+/**
+ * 활성 연결을 바꾼다. **없는 연결을 활성으로 만들 수 없다** — 그러면 요약이 조용히
+ * 환경변수 폴백으로 내려가고, 화면은 바뀐 것처럼 보인다.
+ */
+export async function setActiveLlmId(db: Db, llmId: string): Promise<void> {
+  assertValidLlmId(llmId);
+  if ((await readRowById(db, llmId)) === undefined) {
+    throw new Error(`그런 LLM 연결이 없습니다: ${llmId}`);
+  }
+  await setAppState(db, ACTIVE_LLM_STATE_KEY, llmId);
+}
+
+/**
+ * 실제로 쓸 행을 고른다.
+ *
+ * 순서: 활성 포인터 → `default` 행 → 가장 먼저 만들어진 행.
+ * 마지막 단계가 필요한 이유: 포인터가 가리키는 연결을 지웠거나, 연결이 하나뿐인데
+ * id 가 `default` 가 아닌 경우에도 **멈추지 않고** 쓸 수 있어야 한다.
+ */
+async function readActiveRow(db: Db): Promise<LlmRowRaw | undefined> {
+  const active = await getActiveLlmId(db);
+  if (active !== null && LLM_ID_PATTERN.test(active)) {
+    const row = await readRowById(db, active);
+    if (row !== undefined) return row;
+  }
+  const fallback = await readRowById(db, DEFAULT_LLM_ID);
+  if (fallback !== undefined) return fallback;
+  return db.get<LlmRowRaw>(
+    "SELECT * FROM llm_connections ORDER BY updated_at ASC, llm_id ASC LIMIT 1",
+  );
+}
+
+export interface LlmConnectionSummary extends LlmConfigMeta {
+  readonly llmId: string;
+  readonly active: boolean;
+}
+
+/** 등록된 연결 전부(민감값 없이) + 어느 것이 활성인가. */
+export async function listLlmConnections(db: Db): Promise<LlmConnectionSummary[]> {
+  const rows = await db.all<LlmRowRaw>(
+    "SELECT * FROM llm_connections ORDER BY updated_at ASC, llm_id ASC",
+  );
+  if (rows.length === 0) return [];
+  const activeRow = await readActiveRow(db);
+  return rows.map((row) => ({
+    ...rowToMeta(row),
+    llmId: row.llm_id,
+    active: row.llm_id === activeRow?.llm_id,
+  }));
+}
+
+function rowToMeta(row: LlmRowRaw): LlmConfigMeta {
+  return {
+    name: row.name,
+    modelId: row.model_id,
+    baseUrl: row.base_url,
+    authKind: coerceAuthKind(row.auth_kind),
+    tokenUrl: row.token_url,
+    clientId: row.client_id,
+    authUsername: row.auth_username,
+    hasSecret: row.secret_enc !== "",
+    chatPath: row.chat_path || DEFAULT_CHAT_PATH,
+    maxTokens: row.max_tokens,
+    temperature: row.temperature,
+    systemPrompt: row.system_prompt,
+    updatedAt: row.updated_at,
+    source: "db",
+  };
+}
+
+function readRowById(db: Db, llmId: string): Promise<LlmRowRaw | undefined> {
+  return db.get<LlmRowRaw>("SELECT * FROM llm_connections WHERE llm_id = ?", [llmId]);
 }
 
 /** 환경변수 폴백. LLM_BASE_URL 이 있으면 .env 기반 설정을 만든다. */
@@ -290,32 +417,15 @@ function rowToConfig(row: LlmRowRaw): LlmConfig {
  * DB 우선, 없으면 환경변수 폴백. 화면/HTTP 응답에 그대로 실어 보내지 말 것.
  */
 export async function getLlmConfig(db: Db): Promise<LlmConfig | null> {
-  const row = await readRow(db);
+  const row = await readActiveRow(db);
   if (row) return rowToConfig(row);
   return fromEnv();
 }
 
 /** 화면용. 민감값 없이. */
 export async function getLlmConfigMeta(db: Db): Promise<LlmConfigMeta | null> {
-  const row = await readRow(db);
-  if (row) {
-    return {
-      name: row.name,
-      modelId: row.model_id,
-      baseUrl: row.base_url,
-      authKind: coerceAuthKind(row.auth_kind),
-      tokenUrl: row.token_url,
-      clientId: row.client_id,
-      authUsername: row.auth_username,
-      hasSecret: row.secret_enc !== "",
-      chatPath: row.chat_path || DEFAULT_CHAT_PATH,
-      maxTokens: row.max_tokens,
-      temperature: row.temperature,
-      systemPrompt: row.system_prompt,
-      updatedAt: row.updated_at,
-      source: "db",
-    };
-  }
+  const row = await readActiveRow(db);
+  if (row) return rowToMeta(row);
   const env = fromEnv();
   if (!env) return null;
   return {
@@ -336,7 +446,30 @@ export async function getLlmConfigMeta(db: Db): Promise<LlmConfigMeta | null> {
   };
 }
 
-/** 삭제(단일 행). 없어도 조용히 반환한다. */
-export async function deleteLlmConfig(db: Db): Promise<void> {
-  await db.run("DELETE FROM llm_connections WHERE llm_id = ?", [DEFAULT_LLM_ID]);
+/**
+ * 삭제. 없어도 조용히 반환한다.
+ *
+ * **다른 연결이 있는데 활성 연결을 지우려 하면 거부한다.** 그대로 지우면 활성
+ * 포인터가 빈 곳을 가리키고, 요약·번역이 조용히 다른 연결(또는 환경변수)로
+ * 넘어간다 — 화면에는 아무 사고도 보이지 않는다. 먼저 활성을 옮기게 한다.
+ *
+ * 마지막 하나는 지울 수 있다. 그때는 "연결이 없다" 가 분명한 상태이고,
+ * 환경변수 폴백으로 내려가는 것이 의도된 동작이다.
+ */
+export async function deleteLlmConfig(db: Db, llmId: string = DEFAULT_LLM_ID): Promise<void> {
+  assertValidLlmId(llmId);
+  const total = await db.get<{ n: number }>("SELECT COUNT(*) AS n FROM llm_connections");
+  const count = Number(total?.n ?? 0);
+  const activeRow = await readActiveRow(db);
+  if (count > 1 && activeRow?.llm_id === llmId) {
+    throw new Error("활성 연결은 지울 수 없습니다. 먼저 다른 연결을 활성으로 바꾸세요.");
+  }
+
+  await db.run("DELETE FROM llm_connections WHERE llm_id = ?", [llmId]);
+
+  // 포인터가 지워진 연결을 가리키고 있으면 치운다 — 남겨 두면 "활성인데 없는 연결"
+  // 이라는 상태가 되고, 다음 해석이 엉뚱한 행으로 떨어진다.
+  if ((await getActiveLlmId(db)) === llmId) {
+    await setAppState(db, ACTIVE_LLM_STATE_KEY, "");
+  }
 }
