@@ -16,7 +16,13 @@ import {
 } from "../../lib/quickAdd.ts";
 import { COLOR, Card, MONO_STACK, Notice, RADIUS, controlStyle } from "../ui.tsx";
 import { EventPanel } from "./EventPanel.tsx";
-import { WeeklyDigestCard } from "./WeeklyDigestCard.tsx";
+import {
+  EventForm,
+  emptyFormValue,
+  formValueOf,
+  toPayload,
+  type EventFormValue,
+} from "./EventForm.tsx";
 
 export interface MemberChip {
   readonly userId: number;
@@ -33,6 +39,11 @@ interface Props {
   readonly focusEventId: number | null;
   /** 오늘(KST). 서버가 넘긴다 — 아래 todayLocal() 주석에 이유가 있다. */
   readonly today: string;
+}
+
+/** 처음 보여 줄 날짜. 이번 달을 보고 있으면 오늘, 다른 달이면 그 달 1일. */
+function selectedDateInit(month: string, today: string): string {
+  return today.startsWith(month) ? today : `${month}-01`;
 }
 
 const WEEK_LABELS = ["일", "월", "화", "수", "목", "금", "토"] as const;
@@ -85,16 +96,27 @@ function gridDates(month: string): string[] {
 
 export function CalendarBoard({ month, initialEvents, members, me, focusEventId, today }: Props) {
   const [events, setEvents] = useState<readonly TeamEventView[]>(initialEvents);
-  const [selectedDate, setSelectedDate] = useState(() =>
-    // 이번 달을 보고 있으면 오늘, 다른 달이면 그 달 1일.
-    today.startsWith(month) ? today : `${month}-01`,
-  );
+  const [selectedDate, setSelectedDate] = useState(() => selectedDateInit(month, today));
   const [line, setLine] = useState("");
+  /**
+   * 입력 방식. **폼이 기본**이다.
+   *
+   * 한 줄은 빠르지만 틀렸을 때 비싸다 — 날짜가 잘못 읽히면 등록한 뒤 찾아가서
+   * 고쳐야 한다. 그리고 망·법인처럼 고를 수 있는 값은 외워서 적는 것보다 보고
+   * 고르는 쪽이 정확하다. 익숙해지면 「한 줄로」 로 바꿔 쓴다.
+   */
+  const [mode, setMode] = useState<"form" | "line">("form");
+  const [form, setForm] = useState<EventFormValue>(() => emptyFormValue(selectedDateInit(month, today)));
+  /** 폼이 수정 중인 일정. null 이면 새로 등록하는 것이다. */
+  const [formEditId, setFormEditId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "error" | "warn"; text: string } | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editLine, setEditLine] = useState("");
   const [openId, setOpenId] = useState<number | null>(focusEventId);
+  /** Jira 가져오기 시작 날짜. 기본은 서버가 정한다(이번 달 1일 또는 JIRA_IMPORT_FROM). */
+  const [importFromDate, setImportFromDate] = useState("");
+  const [importing, setImporting] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const dates = useMemo(() => gridDates(month), [month]);
@@ -222,6 +244,36 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
     }
   };
 
+  /** 폼으로 등록하거나 고친다. 한 줄 경로와 **같은 분류 함수**를 거친다. */
+  const saveForm = async (): Promise<void> => {
+    if (form.title.trim() === "") return;
+    const payload = toPayload(form);
+    const result =
+      formEditId === null
+        ? await call(
+            "/api/calendar",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            },
+            "일정을 등록했습니다.",
+          )
+        : await call(
+            "/api/calendar",
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ...payload, eventId: formEditId }),
+            },
+            "일정을 고쳤습니다.",
+          );
+    if (result !== null) {
+      setForm(emptyFormValue(selectedDate));
+      setFormEditId(null);
+    }
+  };
+
   const saveEdit = async (eventId: number): Promise<void> => {
     if (editLine.trim() === "") return;
     const result = await call(
@@ -293,6 +345,58 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
     return () => window.removeEventListener("keydown", onKey);
   }, [month]);
 
+  // 가져오기 기본 시작점은 서버가 정한다(설정값일 수 있어 화면이 추측하지 않는다).
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await fetch("/api/calendar/import");
+        const data = (await res.json()) as { ok?: boolean; from?: string };
+        if (alive && data.ok === true && typeof data.from === "string") {
+          setImportFromDate((prev) => (prev === "" ? data.from as string : prev));
+        }
+      } catch {
+        // 못 읽으면 입력칸이 비어 있고, 누르면 서버가 기본값을 쓴다.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /**
+   * Jira 에 이미 있는 작업을 캘린더로 가져온다.
+   *
+   * 사람이 눌러야 돈다 — 몇백 건을 훑는 조회라 느리고, 자동으로 돌면 "왜 과거
+   * 일정이 갑자기 생겼나" 를 설명할 수 없다. 여러 번 눌러도 중복되지 않는다.
+   */
+  async function runImport(): Promise<void> {
+    setImporting(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/calendar/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: importFromDate }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        message?: string;
+        created?: number;
+        unmatchedAssignee?: number;
+      };
+      setMessage({
+        tone: data.ok !== true ? "error" : (data.unmatchedAssignee ?? 0) > 0 ? "warn" : "ok",
+        text: data.message ?? "가져왔습니다.",
+      });
+      if (data.ok === true) await reload();
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setImporting(false);
+    }
+  }
+
   const open = events.find((e) => e.eventId === openId) ?? null;
   const [year, mon] = month.split("-").map(Number) as [number, number];
 
@@ -300,8 +404,41 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
     <>
       {message !== null && <Notice tone={message.tone}>{message.text}</Notice>}
 
-      {/* ── 한 줄 입력 ─────────────────────────────────── */}
+      {/* ── 일정 입력 ─────────────────────────────────── */}
       <Card style={{ padding: "14px 16px", marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center" }}>
+          <Tab active={mode === "form"} onClick={() => setMode("form")}>
+            자세히 입력
+          </Tab>
+          <Tab active={mode === "line"} onClick={() => setMode("line")}>
+            한 줄로
+          </Tab>
+          {formEditId !== null && (
+            <span style={{ fontSize: 12, color: COLOR.accent, marginLeft: 6 }}>
+              일정 #{formEditId} 수정 중
+            </span>
+          )}
+        </div>
+
+        {mode === "form" ? (
+          <EventForm
+            value={form}
+            members={members}
+            busy={busy}
+            submitLabel={formEditId === null ? "일정 등록" : "수정 저장"}
+            onChange={setForm}
+            onSubmit={() => void saveForm()}
+            onCancel={
+              formEditId === null
+                ? undefined
+                : () => {
+                    setFormEditId(null);
+                    setForm(emptyFormValue(selectedDate));
+                  }
+            }
+          />
+        ) : (
+        <>
         <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{
             fontSize: 12, fontWeight: 600, color: COLOR.body,
@@ -341,23 +478,41 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
           미리보기. 파서가 틀리게 읽었으면 Enter 전에 눈에 보인다 —
           이게 한 줄 입력을 믿게 만드는 장치다.
         */}
-        <div style={{ marginTop: 9, fontSize: 12.5, minHeight: 34 }}>
-          {preview === null ? (
-            <span style={{ color: COLOR.faint }}>
-              날짜 · 시간 · <strong>@담당</strong> · <strong>#망</strong>(운영·개발·DR·AWS) ·
-              {" "}<strong>#법인</strong>(은·중·본) · #성격(점검·작업·장애) — 순서는 상관없습니다.
-            </span>
-          ) : preview.error !== "" ? (
-            <span style={{ color: COLOR.waitUs }}>{preview.error}</span>
-          ) : (
-            <>
-              <div style={{ color: COLOR.body }}>{preview.read}</div>
-              {preview.jira !== "" && (
-                <div style={{ color: COLOR.accent, fontSize: 12, marginTop: 2 }}>{preview.jira}</div>
-              )}
-            </>
-          )}
+        {/*
+          읽은 결과는 **설명을 지우지 않고** 그 위에 덧붙인다.
+          전에는 한 글자만 쳐도 문법 설명이 사라지고 다른 글이 그 자리에 들어왔다 —
+          외우지 못한 사람은 그 순간 무엇을 적어야 하는지 알 길이 없어졌다.
+        */}
+        {preview !== null && (
+          <div style={{
+            marginTop: 10, padding: "9px 11px", borderRadius: RADIUS.control,
+            background: preview.error !== "" ? COLOR.waitUsBg : COLOR.ground, fontSize: 12.5,
+          }}>
+            {preview.error !== "" ? (
+              <span style={{ color: COLOR.waitUs }}>{preview.error}</span>
+            ) : (
+              <>
+                <div style={{ color: COLOR.body }}>{preview.read}</div>
+                {preview.jira !== "" && (
+                  <div style={{ color: COLOR.accent, fontSize: 12, marginTop: 2 }}>{preview.jira}</div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        <div style={{ marginTop: 10, fontSize: 12, color: COLOR.muted, lineHeight: 1.9 }}>
+          <div><strong>날짜</strong> 11/25 · 11/25~27 · 25~27 · 내일 · 모레 (없으면 왼쪽 날짜)</div>
+          <div><strong>시간</strong> 14:00 · 14:00-16:00 (없으면 종일)</div>
+          <div><strong>@담당</strong> 팀원 이름이나 아이디</div>
+          <div>
+            <strong>#망</strong> 운영·개발·DR·AWS·검증·안성 ·{" "}
+            <strong>#법인</strong> 은·중·본 · <strong>#성격</strong> 점검·작업·장애·회의
+          </div>
+          <div style={{ color: COLOR.faint }}>순서는 상관없습니다. 태그는 여러 개 적을 수 있습니다.</div>
         </div>
+        </>
+        )}
       </Card>
 
       {/* ── 달 이동 ────────────────────────────────────── */}
@@ -374,8 +529,29 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
         <a href="/calendar" style={{ ...controlStyle, textDecoration: "none", fontSize: 12 }}>
           오늘
         </a>
-        <div style={{ marginLeft: "auto", fontSize: 11.5, color: COLOR.faint }}>
-          n 입력 · ← → 달 이동 · t 오늘 · Esc 닫기
+        <div style={{
+          marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+        }}>
+          <span style={{ fontSize: 11.5, color: COLOR.faint }}>
+            n 입력 · ← → 달 · t 오늘 · Esc 닫기
+          </span>
+          <span style={{ width: 1, height: 18, background: COLOR.line }} />
+          <input
+            type="date"
+            value={importFromDate}
+            onChange={(e) => setImportFromDate(e.target.value)}
+            title="이 날짜 이후에 시작한 Jira 작업을 가져옵니다"
+            style={{ ...controlStyle, padding: "5px 8px", fontSize: 12, cursor: "text" }}
+          />
+          <button
+            type="button"
+            onClick={() => void runImport()}
+            disabled={importing || busy}
+            title="Jira 에 이미 있는 작업을 캘린더로 가져옵니다. 여러 번 눌러도 중복되지 않습니다."
+            style={{ ...controlStyle, padding: "5px 10px", fontSize: 12, opacity: importing ? 0.6 : 1 }}
+          >
+            {importing ? "가져오는 중…" : "Jira 에서 가져오기"}
+          </button>
         </div>
       </div>
 
@@ -403,7 +579,10 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
                 key={date}
                 onClick={() => {
                   setSelectedDate(date);
-                  inputRef.current?.focus();
+                  // 폼으로 적고 있을 때도 그 날짜가 따라와야 한다 — 칸을 눌렀는데
+                  // 폼의 날짜가 그대로면 "눌러도 아무 일이 없는" 화면이 된다.
+                  if (formEditId === null) setForm((prev) => ({ ...prev, startDate: date, endDate: date }));
+                  if (mode === "line") inputRef.current?.focus();
                 }}
                 style={{
                   minHeight: 96, padding: "6px 7px 8px", cursor: "pointer",
@@ -461,15 +640,21 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
         </div>
       </Card>
 
-      <WeeklyDigestCard today={today} />
-
       {open !== null && (
         <EventPanel
           event={open}
           members={members}
           busy={busy}
           onClose={() => setOpenId(null)}
-          onEdit={() => {
+          onEditForm={() => {
+            // 폼으로 고친다. 날짜·망·법인을 **보고 고를 수 있어야** 또 고치러 오지 않는다.
+            setForm(formValueOf(open));
+            setFormEditId(open.eventId);
+            setMode("form");
+            setOpenId(null);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+          onEditLine={() => {
             setEditLine(
               formatQuickAddLine({
                 startDate: open.startDate,
@@ -497,6 +682,24 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
         상태 전이로도 따라갑니다. 달의 날 수: {daysInMonth(year, mon)}일.
       </p>
     </>
+  );
+}
+
+function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: "6px 13px", borderRadius: RADIUS.control, fontSize: 12.5, cursor: "pointer",
+        fontFamily: "inherit", fontWeight: active ? 700 : 400,
+        border: `1px solid ${active ? COLOR.accent : COLOR.field}`,
+        background: active ? COLOR.waitThemBg : COLOR.surface,
+        color: active ? COLOR.accent : COLOR.body,
+      }}
+    >
+      {children}
+    </button>
   );
 }
 

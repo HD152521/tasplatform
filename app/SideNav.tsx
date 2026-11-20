@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { activeNavHref } from "../lib/navActive.ts";
 import { COLOR, MONO_STACK, RADIUS } from "./ui.tsx";
 import { SessionDot } from "./SessionDot.tsx";
@@ -26,11 +26,40 @@ interface UserChip {
   role: "owner" | "member";
 }
 
+interface NavItem {
+  href: string;
+  label: string;
+  count: number | null;
+  badge: number;
+}
+
+interface NavGroup {
+  /** 큰 카테고리 이름. 빈 문자열이면 묶음 없이 단독으로 그린다. */
+  title: string;
+  items: NavItem[];
+}
+
+/** 접힘 상태를 브라우저에 남겨 둘 키. */
+const COLLAPSE_KEY = "sr_nav_collapsed";
+
 /**
  * 좌측 네비게이션.
  *
- * 상단 가로 메뉴 대신 세로로 둔 이유는 각 항목의 건수를 항상 보이게 하기 위해서다.
- * "어디에 몇 건이 있고, 그중 몇 건이 내 확인을 기다리는가"가 이 도구의 첫 질문이다.
+ * 세로로 둔 이유는 각 항목의 건수를 항상 보이게 하기 위해서다 — "어디에 몇 건이 있고,
+ * 그중 몇 건이 내 확인을 기다리는가" 가 이 도구의 첫 질문이다.
+ *
+ * ## 큰 카테고리 · 세부 항목 · 접기
+ *
+ * 항목이 열두 개가 되면서 평평한 목록으로는 읽히지 않았다. 그래서 **큰 카테고리**로
+ * 묶고, 카테고리를 **눌러 접을 수 있게** 했다. 매일 쓰는 것은 둘셋뿐이고 나머지(설정·
+ * 로그)는 가끔 쓰는데, 그것들이 늘 펼쳐져 있으면 쓰는 것이 아래로 밀린다.
+ *
+ * 접힘 상태는 `localStorage` 에 남긴다 — 사람마다 접어 두는 것이 다르고, 그걸 서버에
+ * 저장할 가치는 없다. 저장이 막힌 환경(사생활 보호 모드 등)에서도 **그냥 펼친 채로**
+ * 동작해야 하므로 읽기·쓰기를 try 로 감싼다.
+ *
+ * **지금 보고 있는 화면이 든 카테고리는 접히지 않는다.** 접힌 채로 그 안의 항목이
+ * 활성이면, 어디에 있는지 알 수 없는 상태가 된다.
  */
 export function SideNav({
   counts, signedIn, expiresAt, authSlot, user,
@@ -43,19 +72,7 @@ export function SideNav({
 }) {
   const path = usePathname();
 
-  /**
-   * 메뉴를 **카테고리로 묶는다.**
-   *
-   * 항목이 열한 개가 되면서 평평한 목록으로는 무엇이 무엇인지 읽히지 않았다
-   * ("정기점검" 과 "수집 로그" 와 "LLM 연결" 이 같은 높이로 붙어 있었다).
-   * 묶음의 기준은 **무엇에 대한 화면인가** 다 — SR / 일정 / 참고 / 설정.
-   *
-   * 대시보드는 묶음 밖에 둔다. "지금 볼 것" 은 분류가 아니라 입구다.
-   */
-  const groups: Array<{
-    title: string;
-    items: Array<{ href: string; label: string; count: number | null; badge: number }>;
-  }> = [
+  const groups: NavGroup[] = [
     {
       title: "",
       items: [{ href: "/dashboard", label: "대시보드", count: null, badge: 0 }],
@@ -76,32 +93,59 @@ export function SideNav({
       ],
     },
     {
-      title: "참고",
+      title: "참고 자료",
       items: [
         { href: "/cves", label: "보안 공지", count: counts.cves, badge: counts.criticalCves },
         { href: "/kb", label: "기술 문서", count: counts.kb, badge: counts.kbMatch },
       ],
     },
     {
-      title: "설정 · 운영",
+      title: "팀 설정",
       items: [
-        { href: "/team", label: "팀", count: null, badge: 0 },
+        { href: "/team", label: "팀 · 팀원", count: null, badge: 0 },
         { href: "/settings/account", label: "브로드컴 계정", count: null, badge: 0 },
         // "연동 설정" 은 걷어냈다 — 아무 일도 하지 않는 화면이었다(app/settings/page.tsx).
         // `/settings` 는 LLM 연결로 리다이렉트된다.
         { href: "/settings/llm", label: "LLM 연결", count: null, badge: 0 },
+      ],
+    },
+    {
+      title: "내 설정 · 운영",
+      items: [
+        { href: "/me", label: "내 설정", count: null, badge: 0 },
         { href: "/logs", label: "수집 로그", count: null, badge: 0 },
       ],
     },
   ];
-  const items = groups.flatMap((g) => g.items);
 
   // 지금 어느 항목에 있나. **가장 깊게 맞는 것 하나만** 켠다.
   //
   // 전에는 `path.startsWith(item.href)` 였다. 그러면 `/settings/llm` 에서 `/settings`
   // 도 걸려 **두 항목이 같이 켜져 보였다** — 어디에 있는지 알 수 없다.
   // 이 규칙은 lib/navActive.ts 에 두고 단위 시험으로 잠근다.
-  const activeHref = activeNavHref(path, items.map((i) => i.href));
+  const activeHref = activeNavHref(path, groups.flatMap((g) => g.items).map((i) => i.href));
+
+  const [collapsed, setCollapsed] = useState<readonly string[]>([]);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(COLLAPSE_KEY);
+      if (raw !== null) setCollapsed(JSON.parse(raw) as string[]);
+    } catch {
+      // 저장이 막힌 환경에서도 그냥 펼친 채로 동작한다.
+    }
+  }, []);
+
+  function toggle(title: string): void {
+    setCollapsed((prev) => {
+      const next = prev.includes(title) ? prev.filter((t) => t !== title) : [...prev, title];
+      try {
+        window.localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
+      } catch {
+        // 못 저장해도 이번 화면에서는 접힌다.
+      }
+      return next;
+    });
+  }
 
   return (
     <aside style={{
@@ -110,81 +154,86 @@ export function SideNav({
       display: "flex", flexDirection: "column",
       position: "sticky", top: 0, height: "100vh",
     }}>
-      <div style={{ padding: "22px 20px 18px", borderBottom: `1px solid ${COLOR.divider}` }}>
+      <div style={{ padding: "22px 20px 16px", borderBottom: `1px solid ${COLOR.divider}` }}>
         <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em" }}>Broadcom SR</div>
         <div style={{ fontSize: 12, color: COLOR.muted, marginTop: 2 }}>
-          {user.teamName === "" ? "데이터솔루션 지원팀" : user.teamName}
+          {user.teamName === "" ? "소속 팀 없음" : user.teamName}
         </div>
       </div>
 
-      <nav style={{ padding: "12px 12px 16px", display: "flex", flexDirection: "column", overflowY: "auto" }}>
-        {groups.map((group, gi) => (
-          <div key={group.title === "" ? `g${gi}` : group.title} style={{ marginBottom: 10 }}>
-            {group.title !== "" && (
-              <div style={{
-                fontSize: 10.5, fontWeight: 700, color: COLOR.faint, letterSpacing: "0.04em",
-                padding: "8px 12px 5px", textTransform: "uppercase",
-              }}>
-                {group.title}
-              </div>
-            )}
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              {group.items.map((item) => {
-                const active = item.href === activeHref;
-                return (
-                  <Link key={item.href} href={item.href} style={{
+      <nav style={{ padding: "10px 12px 16px", display: "flex", flexDirection: "column", overflowY: "auto" }}>
+        {groups.map((group, gi) => {
+          const hasActive = group.items.some((i) => i.href === activeHref);
+          // 보고 있는 화면이 든 카테고리는 접지 않는다 — 접힌 채 활성이면 길을 잃는다.
+          const open = group.title === "" || hasActive || !collapsed.includes(group.title);
+          return (
+            <div key={group.title === "" ? `g${gi}` : group.title} style={{ marginBottom: 6 }}>
+              {group.title !== "" && (
+                <button
+                  type="button"
+                  onClick={() => toggle(group.title)}
+                  aria-expanded={open}
+                  style={{
                     display: "flex", alignItems: "center", justifyContent: "space-between",
-                    padding: "9px 12px", borderRadius: 8, fontSize: 13, textDecoration: "none",
-                    fontWeight: active ? 600 : 400,
-                    color: active ? COLOR.ink : "#4b5563",
-                    background: active ? "#eef1f6" : "transparent",
+                    width: "100%", background: "transparent", border: "none",
+                    padding: "9px 12px 5px", cursor: hasActive ? "default" : "pointer",
+                    fontFamily: "inherit", textAlign: "left",
+                  }}
+                >
+                  <span style={{
+                    fontSize: 10.5, fontWeight: 700, color: COLOR.faint,
+                    letterSpacing: "0.04em",
                   }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                      <span style={{
-                        width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                        background: active ? COLOR.accent : "#c7ccd4",
-                      }} />
-                      {item.label}
-                    </span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      {item.badge > 0 && (
-                        <span style={{
-                          fontFamily: MONO_STACK, fontSize: 11, fontWeight: 600, color: "#ffffff",
-                          background: COLOR.waitUs, padding: "1px 6px", borderRadius: RADIUS.badge,
-                        }}>
-                          {item.badge}
-                        </span>
-                      )}
-                      {item.count !== null && (
-                        <span style={{
-                          fontFamily: MONO_STACK, fontVariantNumeric: "tabular-nums",
-                          fontSize: 12, color: COLOR.faint,
-                        }}>
-                          {item.count}
-                        </span>
-                      )}
-                    </span>
-                  </Link>
-                );
-              })}
+                    {group.title}
+                  </span>
+                  <span style={{
+                    fontSize: 9, color: COLOR.faint,
+                    // 접힘은 눌러서 바뀌는 것이니 화살표가 그 상태를 말한다.
+                    transform: open ? "rotate(90deg)" : "none",
+                    transition: "transform 120ms ease",
+                  }}>
+                    ▶
+                  </span>
+                </button>
+              )}
+
+              {open && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  {group.items.map((item) => (
+                    <NavLink key={item.href} item={item} active={item.href === activeHref} />
+                  ))}
+                </div>
+              )}
+
+              {/* 접혀 있어도 그 안에 기다리는 일이 있으면 숫자로 알린다. */}
+              {!open && groupBadge(group) > 0 && (
+                <div style={{ padding: "0 12px 4px" }}>
+                  <span style={{
+                    fontFamily: MONO_STACK, fontSize: 10.5, fontWeight: 600, color: "#ffffff",
+                    background: COLOR.waitUs, padding: "1px 6px", borderRadius: RADIUS.badge,
+                  }}>
+                    {groupBadge(group)}
+                  </span>
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
 
       <div style={{ marginTop: "auto" }}>
         {/*
           아래 두 칸은 **서로 다른 로그인**이다. 위가 이 도구를 쓰는 사람,
-          아래가 공용 브로드컴 포털 세션이다. 섞이면 "로그아웃" 을 눌렀을 때
+          아래가 그 팀이 공유하는 브로드컴 포털 세션이다. 섞이면 "로그아웃" 을 눌렀을 때
           수집이 멈추는 쪽을 끊어 버린다 — 그래서 라벨을 분명히 갈라 둔다.
         */}
         <div style={{ padding: "14px 20px", borderTop: `1px solid ${COLOR.divider}` }}>
           <UserChipRow user={user} />
         </div>
 
-        <div style={{ padding: "14px 20px 16px", borderTop: `1px solid ${COLOR.divider}` }}>
+        <div style={{ padding: "12px 20px 16px", borderTop: `1px solid ${COLOR.divider}` }}>
           <div style={{ fontSize: 11, color: COLOR.faint, marginBottom: 7, fontWeight: 600 }}>
-            브로드컴 포털 세션
+            브로드컴 포털 세션 {user.teamName === "" ? "" : `· ${user.teamName}`}
           </div>
           {/*
             밑줄까지 SessionDot 이 그린다. 표시등은 포털에 물어 고쳐 그리는데 밑줄은
@@ -195,6 +244,49 @@ export function SideNav({
         </div>
       </div>
     </aside>
+  );
+}
+
+/** 접힌 카테고리가 숨기고 있는 "기다리는 일" 의 수. */
+function groupBadge(group: NavGroup): number {
+  return group.items.reduce((sum, item) => sum + item.badge, 0);
+}
+
+function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+  return (
+    <Link href={item.href} style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "8px 12px", borderRadius: 8, fontSize: 13, textDecoration: "none",
+      fontWeight: active ? 600 : 400,
+      color: active ? COLOR.ink : "#4b5563",
+      background: active ? "#eef1f6" : "transparent",
+    }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 9 }}>
+        <span style={{
+          width: 5, height: 5, borderRadius: "50%", flexShrink: 0,
+          background: active ? COLOR.accent : "#c7ccd4",
+        }} />
+        {item.label}
+      </span>
+      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {item.badge > 0 && (
+          <span style={{
+            fontFamily: MONO_STACK, fontSize: 11, fontWeight: 600, color: "#ffffff",
+            background: COLOR.waitUs, padding: "1px 6px", borderRadius: RADIUS.badge,
+          }}>
+            {item.badge}
+          </span>
+        )}
+        {item.count !== null && (
+          <span style={{
+            fontFamily: MONO_STACK, fontVariantNumeric: "tabular-nums",
+            fontSize: 12, color: COLOR.faint,
+          }}>
+            {item.count}
+          </span>
+        )}
+      </span>
+    </Link>
   );
 }
 
@@ -215,7 +307,7 @@ function UserChipRow({ user }: { user: UserChip }) {
 
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-      <div style={{ minWidth: 0 }}>
+      <Link href="/me" style={{ minWidth: 0, textDecoration: "none", color: "inherit" }}>
         <div style={{
           fontSize: 13, fontWeight: 600, whiteSpace: "nowrap",
           overflow: "hidden", textOverflow: "ellipsis",
@@ -233,7 +325,7 @@ function UserChipRow({ user }: { user: UserChip }) {
         }}>
           {user.loginId}
         </div>
-      </div>
+      </Link>
       <button
         type="button"
         onClick={signOut}

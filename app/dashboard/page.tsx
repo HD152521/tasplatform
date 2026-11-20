@@ -1,26 +1,32 @@
 /**
  * 대시보드 — "지금 내가 봐야 할 것" 한 장.
  *
- * ## 왜 목록이 아니라 이 화면이 첫 장인가
+ * ## 무엇을 뺐나
  *
- * 전에는 들어오면 바로 **진행중 케이스 목록**이었다. 그 목록은 "무엇이 있나" 를
- * 말하지만 "내가 무엇을 해야 하나" 는 말하지 않는다. 답을 얻으려면 메뉴를 네 번
- * 돌아야 했다 — 미읽음 답변, 이번 주 내 일정, 임박한 보안 공지, 수집이 살아 있나.
+ * 처음 만들 때는 "돌아가는 상태"(포털 세션·마지막 수집)를 카드로 뒀다. **사이드바 아래에
+ * 이미 있는 것**이라 같은 말을 두 번 하고 있었다. 그래서 그 카드를 없애고, 손을 써야 할
+ * 때(세션 끊김·Jira 반영 실패)만 **맨 위에 띠로** 올린다 — 평소에는 보이지 않는다.
  *
- * 그래서 **행동이 필요한 것만** 모은다. 건수가 0 인 칸은 조용히 비워 두지 않고
- * "없음" 이라고 말한다 — 비어 있는 것과 못 읽은 것은 다르다.
+ * ## 숫자를 그림으로
  *
- * 모든 조회를 try 로 감싼다. 한 칸이 실패해도 나머지는 보여야 한다 — 대시보드가
+ * "완료 4 · 진행 2 · 예정 7" 은 읽어서 비교해야 한다. 같은 것을 길이로 보여 주면 보는
+ * 순간 비율이 들어온다(app/dashboard/Charts.tsx). 다만 숫자를 지우지는 않는다 — 그림만
+ * 있으면 정확한 값을 알 수 없다.
+ *
+ * 차트 라이브러리는 쓰지 않는다(의존성 0). div 와 인라인 SVG 로 그린다.
+ *
+ * 모든 조회를 각각 try 로 감싼다. 한 칸이 실패해도 나머지는 보여야 한다 — 대시보드가
  * 통째로 500 이 되면 그게 가장 쓸모없는 화면이다.
  */
 import Link from "next/link";
 import { requireUser } from "../../lib/appAuth.ts";
-import { listEventsBetween, type TeamEventView } from "../../lib/calendar.ts";
+import { listEventsBetween, type EventState, type TeamEventView } from "../../lib/calendar.ts";
 import { openDb } from "../../lib/db.ts";
 import { getLastRun, listCasesSplit, type CaseListRow } from "../../lib/queries.ts";
 import { getSessionStatus } from "../../lib/sessionFile.ts";
 import { describeWeek, weekRange } from "../../lib/weekRange.ts";
-import { COLOR, Card, MONO_STACK, Notice, RADIUS, formatStamp } from "../ui.tsx";
+import { COLOR, Card, MONO_STACK, Notice, RADIUS } from "../ui.tsx";
+import { BarList, Donut, StackBar, type BarRow } from "./Charts.tsx";
 
 export const dynamic = "force-dynamic";
 
@@ -29,11 +35,12 @@ function todayKst(): string {
   return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
-interface JiraTrouble {
-  readonly eventId: number;
-  readonly title: string;
-  readonly state: string;
-}
+const STATE_COLOR: Record<EventState, string> = {
+  done: COLOR.ok,
+  doing: COLOR.warn,
+  planned: COLOR.waitThem,
+  canceled: COLOR.faint,
+};
 
 export default async function DashboardPage() {
   const me = await requireUser("/dashboard");
@@ -43,7 +50,7 @@ export default async function DashboardPage() {
   let openCases: CaseListRow[] = [];
   let lastRun: Awaited<ReturnType<typeof getLastRun>> = null;
   let events: TeamEventView[] = [];
-  let jiraTrouble: JiraTrouble[] = [];
+  let jiraFailed = 0;
   const errors: string[] = [];
 
   try {
@@ -54,24 +61,19 @@ export default async function DashboardPage() {
   try {
     lastRun = await getLastRun();
   } catch {
-    // 수집 이력이 없을 수 있다. 아래에서 "기록 없음" 으로 보인다.
+    // 수집 이력이 없을 수 있다.
   }
 
   if (me.teamId !== "") {
     const db = await openDb();
     try {
       events = await listEventsBetween(db, me.teamId, week.from, week.to);
-      const rows = await db.all<{ event_id: number; title: string; jira_state: string }>(
-        `SELECT event_id, title, jira_state FROM team_events
-          WHERE team_id = ? AND jira_state IN ('failed','unknown')
-          ORDER BY event_id DESC LIMIT 5`,
+      const row = await db.get<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM team_events
+          WHERE team_id = ? AND jira_state IN ('failed','unknown')`,
         [me.teamId],
       );
-      jiraTrouble = rows.map((r) => ({
-        eventId: Number(r.event_id),
-        title: r.title,
-        state: r.jira_state,
-      }));
+      jiraFailed = Number(row?.n ?? 0);
     } catch (error) {
       errors.push(`일정: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -82,27 +84,55 @@ export default async function DashboardPage() {
   const unread = openCases.filter((c) => c.unread_replies > 0);
   const mine = events.filter((e) => e.assigneeUserId === me.userId);
   const todays = events.filter((e) => e.startDate <= today && e.endDate >= today);
-  const undone = events.filter((e) => e.state === "planned" || e.state === "doing");
-  const portal = getSessionStatus();
+  const done = events.filter((e) => e.state === "done").length;
+  const portal = getSessionStatus(me.teamId === "" ? undefined : me.teamId);
   const portalLive = portal.exists && !portal.expired;
   const collectBroken = lastRun !== null && lastRun.status !== "success";
 
+  // 사람별 — 나를 강조한다. 담당 미지정은 맨 뒤.
+  const byPerson: BarRow[] = (() => {
+    const map = new Map<string, { value: number; highlight: boolean }>();
+    for (const e of events) {
+      const name = e.assigneeName === "" ? "담당 미지정" : e.assigneeName;
+      const cur = map.get(name) ?? { value: 0, highlight: e.assigneeUserId === me.userId };
+      map.set(name, { value: cur.value + 1, highlight: cur.highlight || e.assigneeUserId === me.userId });
+    }
+    return [...map.entries()]
+      .map(([label, v]) => ({ label, value: v.value, highlight: v.highlight }))
+      .sort((a, b) => {
+        if (a.label === "담당 미지정") return 1;
+        if (b.label === "담당 미지정") return -1;
+        return b.value - a.value || a.label.localeCompare(b.label, "ko");
+      });
+  })();
+
+  // 망별 — 여러 망에 걸친 일정은 각 망에 센다(제목 대괄호가 그렇게 돼 있다).
+  const byScope: BarRow[] = (() => {
+    const map = new Map<string, number>();
+    for (const e of events) {
+      for (const scope of e.scopes.split("/").filter((p) => p !== "")) {
+        map.set(scope, (map.get(scope) ?? 0) + 1);
+      }
+    }
+    return [...map.entries()]
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+  })();
+
   return (
     <>
-      <header style={{ marginBottom: 18 }}>
+      <header style={{ marginBottom: 16 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
           {me.displayName === "" ? me.loginId : me.displayName} 님, 오늘 볼 것
         </h1>
         <p style={{ margin: "7px 0 0", fontSize: 13, color: COLOR.muted }}>
-          {today} · 이번 주 {describeWeek(today)}
+          {today} ({describeWeek(today)})
           {me.teamName !== "" && ` · ${me.teamName}`}
         </p>
       </header>
 
       {errors.length > 0 && (
-        <Notice tone="warn">
-          일부를 불러오지 못했습니다 — {errors.join(" / ")}
-        </Notice>
+        <Notice tone="warn">일부를 불러오지 못했습니다 — {errors.join(" / ")}</Notice>
       )}
       {me.teamId === "" && (
         <Notice tone="warn">
@@ -111,43 +141,55 @@ export default async function DashboardPage() {
         </Notice>
       )}
 
-      {/* ── 숫자 한 줄 ─────────────────────────────────── */}
-      <div style={{
-        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-        gap: 12, marginBottom: 18,
-      }}>
-        <Stat
-          label="내 답변 기다리는 SR"
-          value={unread.length}
-          href="/"
-          tone={unread.length > 0 ? "alert" : "calm"}
-        />
-        <Stat label="오늘 일정" value={todays.length} href="/calendar" tone="calm" />
-        <Stat
-          label="이번 주 내 담당"
-          value={mine.length}
-          href="/calendar"
-          tone={mine.length > 0 ? "accent" : "calm"}
-        />
-        <Stat
-          label="이번 주 미완료"
-          value={undone.length}
-          href="/calendar"
-          tone={undone.length > 0 ? "warn" : "calm"}
-        />
-      </div>
+      {/*
+        손을 써야 할 때만 띠로 올린다. 평소에는 보이지 않는다 —
+        늘 보이는 "상태 카드" 는 사이드바 아래와 겹쳐 같은 말을 두 번 하는 것이었다.
+      */}
+      {(!portalLive || collectBroken || jiraFailed > 0) && (
+        <div style={{
+          display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center",
+          background: COLOR.waitUsBg, border: `1px solid #f3c7c2`,
+          borderRadius: RADIUS.card, padding: "11px 15px", marginBottom: 16,
+          fontSize: 12.5, lineHeight: 1.6,
+        }}>
+          <strong style={{ color: COLOR.waitUs }}>손 볼 것</strong>
+          {!portalLive && (
+            <Link href="/settings/account" style={{ color: COLOR.waitUs }}>
+              포털 세션 끊김 — 재로그인 필요
+            </Link>
+          )}
+          {collectBroken && (
+            <Link href="/logs" style={{ color: COLOR.waitUs }}>
+              마지막 수집 실패 ({lastRun?.status})
+            </Link>
+          )}
+          {jiraFailed > 0 && (
+            <Link href="/calendar" style={{ color: COLOR.waitUs }}>
+              Jira 반영 실패 {jiraFailed}건
+            </Link>
+          )}
+        </div>
+      )}
 
       <div style={{
-        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16,
+        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16,
       }}>
         {/* ── 내 답변을 기다리는 SR ─────────────────────── */}
         <Card style={{ padding: 18 }}>
           <SectionTitle title="내 답변을 기다리는 SR" href="/" linkLabel="전체" />
+          <div style={{ marginBottom: 14 }}>
+            <Donut
+              done={unread.length}
+              total={openCases.length}
+              label="진행중 중 미확인 답변"
+              color={unread.length > 0 ? COLOR.waitUs : COLOR.ok}
+            />
+          </div>
           {unread.length === 0 ? (
             <Empty>상대 답변 중 확인하지 않은 것이 없습니다.</Empty>
           ) : (
             <ul style={listStyle}>
-              {unread.slice(0, 6).map((c) => (
+              {unread.slice(0, 5).map((c) => (
                 <li key={c.request_id} style={itemStyle}>
                   <Link href={`/cases/${c.request_id}`} style={{ color: COLOR.ink, textDecoration: "none" }}>
                     <span style={{ fontFamily: MONO_STACK, fontSize: 11.5, color: COLOR.muted, marginRight: 7 }}>
@@ -156,7 +198,7 @@ export default async function DashboardPage() {
                     {c.subject === "" ? "(제목 없음)" : c.subject}
                   </Link>
                   <span style={{
-                    marginLeft: 7, fontSize: 11, fontWeight: 700, color: "#fff",
+                    fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0,
                     background: COLOR.waitUs, padding: "1px 6px", borderRadius: RADIUS.badge,
                   }}>
                     {c.unread_replies}
@@ -167,23 +209,59 @@ export default async function DashboardPage() {
           )}
         </Card>
 
-        {/* ── 이번 주 내 일정 ───────────────────────────── */}
+        {/* ── 이번 주 진행 ──────────────────────────────── */}
         <Card style={{ padding: 18 }}>
+          <SectionTitle title="이번 주 진행" href="/calendar" linkLabel="캘린더" />
+          <div style={{ marginBottom: 14 }}>
+            <Donut done={done} total={events.length} label="이번 주 완료율" />
+          </div>
+          <StackBar
+            slices={(["done", "doing", "planned", "canceled"] as EventState[]).map((state) => ({
+              label: { done: "완료", doing: "진행", planned: "예정", canceled: "취소" }[state],
+              value: events.filter((e) => e.state === state).length,
+              color: STATE_COLOR[state],
+            }))}
+          />
+          <div style={{
+            marginTop: 14, paddingTop: 12, borderTop: `1px solid ${COLOR.divider}`,
+            fontSize: 12.5, color: COLOR.body, display: "flex", gap: 16, flexWrap: "wrap",
+          }}>
+            <span>오늘 <strong style={{ fontFamily: MONO_STACK }}>{todays.length}</strong>건</span>
+            <span>내 담당 <strong style={{ fontFamily: MONO_STACK }}>{mine.length}</strong>건</span>
+          </div>
+        </Card>
+
+        {/* ── 사람별 ────────────────────────────────────── */}
+        <Card style={{ padding: 18 }}>
+          <SectionTitle title="이번 주 사람별" href="/calendar" linkLabel="캘린더" />
+          <BarList rows={byPerson} />
+        </Card>
+
+        {/* ── 망별 ──────────────────────────────────────── */}
+        <Card style={{ padding: 18 }}>
+          <SectionTitle title="이번 주 전산망별" href="/calendar" linkLabel="캘린더" />
+          <BarList rows={byScope} />
+          {byScope.length === 0 && events.length > 0 && (
+            <p style={{ margin: "10px 0 0", fontSize: 11.5, color: COLOR.faint, lineHeight: 1.7 }}>
+              일정에 전산망(#운영·#개발·#DR·#AWS)을 적으면 여기에 모입니다. Jira 제목의
+              대괄호도 그 값으로 들어갑니다.
+            </p>
+          )}
+        </Card>
+
+        {/* ── 내 담당 일정 ──────────────────────────────── */}
+        <Card style={{ padding: 18, gridColumn: "1 / -1" }}>
           <SectionTitle title="이번 주 내 담당 일정" href="/calendar" linkLabel="캘린더" />
           {mine.length === 0 ? (
-            <Empty>
-              이번 주에 내가 담당인 일정이 없습니다. 캘린더에서 한 줄로 등록할 수 있습니다.
-            </Empty>
+            <Empty>이번 주에 내가 담당인 일정이 없습니다.</Empty>
           ) : (
             <ul style={listStyle}>
-              {mine.slice(0, 8).map((e) => (
+              {mine.map((e) => (
                 <li key={e.eventId} style={itemStyle}>
-                  <Link
-                    href={`/calendar?event=${e.eventId}`}
-                    style={{ color: COLOR.ink, textDecoration: "none" }}
-                  >
+                  <Link href={`/calendar?event=${e.eventId}`} style={{ color: COLOR.ink, textDecoration: "none" }}>
                     <span style={{ fontFamily: MONO_STACK, fontSize: 11.5, color: COLOR.muted, marginRight: 7 }}>
                       {e.startDate.slice(5).replace("-", "/")}
+                      {e.endDate !== e.startDate && `~${e.endDate.slice(5).replace("-", "/")}`}
                     </span>
                     {e.scopes !== "" && (
                       <span style={{ color: COLOR.accent, fontSize: 11.5, marginRight: 5 }}>
@@ -192,136 +270,16 @@ export default async function DashboardPage() {
                     )}
                     {e.title}
                   </Link>
-                  <StateDot state={e.state} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-
-        {/* ── 돌아가는 상태 ─────────────────────────────── */}
-        <Card style={{ padding: 18 }}>
-          <SectionTitle title="돌아가는 상태" href="/logs" linkLabel="수집 로그" />
-          <ul style={listStyle}>
-            <li style={itemStyle}>
-              <span>포털 세션</span>
-              <span style={{ color: portalLive ? COLOR.ok : COLOR.waitUs, fontWeight: 600 }}>
-                {portalLive ? "살아 있음" : "끊김 — 재로그인 필요"}
-              </span>
-            </li>
-            <li style={itemStyle}>
-              <span>마지막 수집</span>
-              <span style={{ color: collectBroken ? COLOR.waitUs : COLOR.body }}>
-                {lastRun === null
-                  ? "기록 없음"
-                  : `${formatStamp(Date.parse(lastRun.started_at))} · ${lastRun.status}`}
-              </span>
-            </li>
-            <li style={itemStyle}>
-              <span>Jira 반영 실패</span>
-              <span style={{ color: jiraTrouble.length > 0 ? COLOR.waitUs : COLOR.body }}>
-                {jiraTrouble.length === 0 ? "없음" : `${jiraTrouble.length}건`}
-              </span>
-            </li>
-          </ul>
-
-          {!portalLive && (
-            <p style={{ margin: "12px 0 0", fontSize: 12, color: COLOR.waitUs, lineHeight: 1.7 }}>
-              포털 세션이 끊기면 수집과 SR 쓰기가 멈춥니다.{" "}
-              <Link href="/settings/account" style={{ color: COLOR.waitUs }}>브로드컴 계정</Link>
-              에서 상태를 확인하세요.
-            </p>
-          )}
-          {jiraTrouble.length > 0 && (
-            <ul style={{ ...listStyle, marginTop: 10 }}>
-              {jiraTrouble.map((t) => (
-                <li key={t.eventId} style={{ ...itemStyle, fontSize: 12 }}>
-                  <Link href={`/calendar?event=${t.eventId}`} style={{ color: COLOR.waitUs }}>
-                    {t.title}
-                  </Link>
-                  <span style={{ color: COLOR.faint, fontSize: 11 }}>
-                    {t.state === "unknown" ? "만들어졌는지 확인 중" : "실패"}
+                  <span style={{ fontSize: 11, color: STATE_COLOR[e.state], flexShrink: 0 }}>
+                    {{ done: "완료", doing: "진행", planned: "예정", canceled: "취소" }[e.state]}
                   </span>
                 </li>
               ))}
             </ul>
           )}
         </Card>
-
-        {/* ── 이번 주 팀 전체 ───────────────────────────── */}
-        <Card style={{ padding: 18 }}>
-          <SectionTitle title="이번 주 팀 전체" href="/calendar" linkLabel="캘린더" />
-          {events.length === 0 ? (
-            <Empty>이번 주에 등록된 일정이 없습니다.</Empty>
-          ) : (
-            <>
-              <p style={{ margin: "0 0 10px", fontSize: 12.5, color: COLOR.body, lineHeight: 1.8 }}>
-                일정 <strong>{events.length}</strong>건 · 완료{" "}
-                {events.filter((e) => e.state === "done").length} · 진행{" "}
-                {events.filter((e) => e.state === "doing").length} · 예정{" "}
-                {events.filter((e) => e.state === "planned").length}
-                {events.filter((e) => e.state === "canceled").length > 0 &&
-                  ` · 취소 ${events.filter((e) => e.state === "canceled").length}`}
-              </p>
-              <ul style={listStyle}>
-                {perPerson(events).map(([person, count]) => (
-                  <li key={person} style={itemStyle}>
-                    <span>{person}</span>
-                    <span style={{ fontFamily: MONO_STACK, color: COLOR.muted }}>{count}건</span>
-                  </li>
-                ))}
-              </ul>
-              <p style={{ margin: "12px 0 0", fontSize: 12, color: COLOR.faint, lineHeight: 1.7 }}>
-                주간 정리는 캘린더 화면 아래 「주간 정리」 에서 만듭니다.
-              </p>
-            </>
-          )}
-        </Card>
       </div>
     </>
-  );
-}
-
-/** 사람별 건수. 담당 미지정은 맨 뒤로 보낸다. */
-function perPerson(events: readonly TeamEventView[]): Array<[string, number]> {
-  const map = new Map<string, number>();
-  for (const e of events) {
-    const name = e.assigneeName === "" ? "담당 미지정" : e.assigneeName;
-    map.set(name, (map.get(name) ?? 0) + 1);
-  }
-  return [...map.entries()].sort((a, b) => {
-    if (a[0] === "담당 미지정") return 1;
-    if (b[0] === "담당 미지정") return -1;
-    return b[1] - a[1] || a[0].localeCompare(b[0], "ko");
-  });
-}
-
-function Stat({
-  label, value, href, tone,
-}: {
-  label: string;
-  value: number;
-  href: string;
-  tone: "calm" | "accent" | "warn" | "alert";
-}) {
-  const color = {
-    calm: COLOR.muted,
-    accent: COLOR.accent,
-    warn: COLOR.warn,
-    alert: COLOR.waitUs,
-  }[tone];
-  return (
-    <Link href={href} style={{ textDecoration: "none" }}>
-      <Card style={{ padding: "14px 16px" }}>
-        <div style={{ fontSize: 11.5, color: COLOR.muted, fontWeight: 600 }}>{label}</div>
-        <div style={{
-          fontSize: 26, fontWeight: 700, color, marginTop: 4,
-          fontFamily: MONO_STACK, fontVariantNumeric: "tabular-nums", lineHeight: 1.1,
-        }}>
-          {value}
-        </div>
-      </Card>
-    </Link>
   );
 }
 
@@ -341,22 +299,7 @@ function SectionTitle({ title, href, linkLabel }: { title: string; href: string;
 
 /** 비어 있는 것과 못 읽은 것은 다르다. 비었으면 그렇다고 말한다. */
 function Empty({ children }: { children: React.ReactNode }) {
-  return (
-    <p style={{ margin: 0, fontSize: 12.5, color: COLOR.faint, lineHeight: 1.7 }}>{children}</p>
-  );
-}
-
-function StateDot({ state }: { state: string }) {
-  const map: Record<string, { color: string; label: string }> = {
-    planned: { color: COLOR.waitThem, label: "예정" },
-    doing: { color: COLOR.warn, label: "진행" },
-    done: { color: COLOR.ok, label: "완료" },
-    canceled: { color: COLOR.faint, label: "취소" },
-  };
-  const it = map[state] ?? map.planned;
-  return (
-    <span style={{ fontSize: 11, color: it?.color, flexShrink: 0 }}>{it?.label}</span>
-  );
+  return <p style={{ margin: 0, fontSize: 12.5, color: COLOR.faint, lineHeight: 1.7 }}>{children}</p>;
 }
 
 const listStyle: React.CSSProperties = {

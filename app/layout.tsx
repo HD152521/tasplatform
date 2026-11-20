@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { currentUser } from "../lib/appAuth.ts";
-import { DEFAULT_TEAM_ID } from "../lib/config.ts";
 import { getSessionStatus } from "../lib/sessionFile.ts";
 import { hydrateTeamSessionFromDb } from "../lib/sessionStore.ts";
 import { countsForNav } from "../lib/queries.ts";
@@ -38,12 +37,17 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
 
   if (appUser !== null) {
     // 재시작으로 세션 파일이 없으면 DB 백업에서 복원한다(파일이 있으면 즉시 반환 — 저렴).
+    //
+    // **그 사람의 팀 세션**을 복원한다. 전에는 기본 팀을 박아 썼다 — 팀이 둘이면
+    // 2번 팀 사람에게 1번 팀의 포털 세션 상태가 보이고, 2번 팀 세션은 영원히
+    // 복원되지 않아 "세션 없음" 에서 못 벗어났다.
+    const teamId = appUser.teamId === "" ? undefined : appUser.teamId;
     try {
-      await hydrateTeamSessionFromDb(DEFAULT_TEAM_ID);
+      if (teamId !== undefined) await hydrateTeamSessionFromDb(teamId);
     } catch {
       // 세션 복원 실패가 화면 렌더를 막지 않는다.
     }
-    const session = getSessionStatus();
+    const session = getSessionStatus(teamId);
     portalSignedIn = session.exists && !session.expired;
     expiresAt = session.expiresAt;
 

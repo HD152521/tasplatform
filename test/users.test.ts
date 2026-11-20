@@ -14,7 +14,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { openDb, type Db } from "../lib/db.ts";
+import { assertValidTeamId } from "../lib/config.ts";
+import { getTeam, openDb, type Db } from "../lib/db.ts";
 import {
   SignupError,
   addTeamMember,
@@ -273,4 +274,71 @@ test("이름과 Jira 계정을 바꿀 수 있다", async () => {
   const after = await getUserWithTeam(db, user.userId);
   assert.equal(after?.displayName, "새 이름");
   assert.equal(after?.jiraAccountId, "5d1234abcd", "공백은 떼고 저장한다");
+});
+
+/* ------------------------------------------------------------------ *
+ * 새 팀 만들기 — 브로드컴 계정이 팀에 귀속되므로 팀이 먼저 있어야 한다
+ * ------------------------------------------------------------------ */
+
+test("가입할 때 새 팀을 만들고 그 팀의 owner 가 된다", async () => {
+  await signup(db, FIRST);
+
+  const made = await signup(db, {
+    loginId: "second",
+    displayName: "둘째",
+    password: "abcdefgh",
+    inviteCode: "",
+    mode: "create",
+    teamName: "데이터솔루션 2팀",
+  });
+
+  assert.notEqual(made.teamId, "default", "기본 팀에 끼어 들어가면 안 된다");
+  assert.equal(made.role, "owner");
+  assert.equal(made.teamName, "데이터솔루션 2팀");
+
+  // 새 팀은 **가입이 닫힌 채로** 시작한다. owner 가 코드를 만들어야 사람이 들어온다.
+  const team = await getTeam(db, made.teamId);
+  assert.equal(team?.invite_code, "");
+  assert.equal(team?.broadcom_username, "", "공용 계정은 아직 비어 있다");
+});
+
+test("새 팀 id 는 영숫자·하이픈뿐이다 — 경로로 쓰이기 때문이다", async () => {
+  await signup(db, FIRST);
+  const made = await signup(db, {
+    loginId: "second", displayName: "둘째", password: "abcdefgh",
+    inviteCode: "", mode: "create", teamName: "한글 이름 팀",
+  });
+  // 세션 파일 경로가 data/teams/<팀>/ 라서 한글·슬래시가 들어가면 안 된다.
+  assert.match(made.teamId, /^[A-Za-z0-9_-]+$/);
+  assert.doesNotThrow(() => assertValidTeamId(made.teamId));
+});
+
+test("새 팀 이름이 비면 거절한다", async () => {
+  await signup(db, FIRST);
+  await assert.rejects(
+    () => signup(db, {
+      loginId: "second", displayName: "둘째", password: "abcdefgh",
+      inviteCode: "", mode: "create", teamName: "   ",
+    }),
+    /새 팀의 이름/,
+  );
+});
+
+test("두 팀은 서로 다른 id 를 받는다", async () => {
+  await signup(db, FIRST);
+  const a = await signup(db, {
+    loginId: "a2", displayName: "가", password: "abcdefgh",
+    inviteCode: "", mode: "create", teamName: "같은 이름",
+  });
+  const b = await signup(db, {
+    loginId: "b2", displayName: "나", password: "abcdefgh",
+    inviteCode: "", mode: "create", teamName: "같은 이름",
+  });
+  assert.notEqual(a.teamId, b.teamId, "이름이 같아도 다른 팀이다");
+});
+
+test("첫 사용자도 새 팀을 만들 수 있다", async () => {
+  const made = await signup(db, { ...FIRST, mode: "create", teamName: "처음부터 내 팀" });
+  assert.notEqual(made.teamId, "default");
+  assert.equal(made.role, "owner");
 });

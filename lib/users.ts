@@ -250,8 +250,32 @@ export interface SignupInput {
   readonly loginId: string;
   readonly displayName: string;
   readonly password: string;
-  /** 팀 초대 코드. **첫 사용자**(사용자가 0명)일 때만 비워도 된다. */
+  /** 팀 초대 코드. 참여(invite)일 때 쓴다. **첫 사용자**는 비워도 된다. */
   readonly inviteCode: string;
+  /**
+   * 어떻게 팀에 들어가나.
+   *
+   *   invite : 초대 코드로 **기존 팀에 참여**한다(기본)
+   *   create : **새 팀을 만들고** 그 팀의 owner 가 된다
+   *
+   * 팀을 만들 수 있어야 하는 이유: 브로드컴 공용 계정이 팀에 귀속되므로, 다른 계정을
+   * 쓰는 조직이 들어오면 **새 팀이 먼저 있어야** 한다. 그게 없으면 남의 팀에 끼어
+   * 들어가 그 팀의 공용 계정을 보게 된다.
+   */
+  readonly mode?: "invite" | "create";
+  /** mode 가 create 일 때 쓸 팀 이름. */
+  readonly teamName?: string;
+}
+
+/**
+ * 새 팀의 id.
+ *
+ * 팀 이름에서 뽑지 않는다 — 이름이 한글이라 그대로 쓸 수 없고(team_id 는 영숫자·
+ * 하이픈·밑줄만 허용된다 — lib/config.ts assertValidTeamId), 억지로 옮기면 서로 다른
+ * 두 팀이 같은 id 가 될 수 있다. 사람이 읽는 이름은 team_name 에 그대로 둔다.
+ */
+export function newTeamId(): string {
+  return "team-" + randomBytes(4).toString("hex");
 }
 
 /**
@@ -280,10 +304,23 @@ export async function signup(db: Db, input: SignupInput): Promise<UserWithTeam> 
 
   const first = (await countUsers(db)) === 0;
   const code = input.inviteCode.trim();
+  const mode = input.mode ?? "invite";
 
   let teamId: string;
   let role: TeamRole;
-  if (first) {
+  if (mode === "create") {
+    // **새 팀을 만든다.** 그 팀은 자기 브로드컴 공용 계정을 따로 설정한다.
+    const teamName = (input.teamName ?? "").trim();
+    if (teamName === "") throw new SignupError("새 팀의 이름을 입력해 주세요.");
+    teamId = newTeamId();
+    await db.run(
+      "INSERT INTO teams (team_id, team_name, broadcom_username, invite_code, created_at) VALUES (?,?,'','',?)",
+      [teamId, teamName, isoNow()],
+    );
+    role = "owner";
+  } else if (first) {
+    // 첫 사용자는 코드 없이 기본 팀 owner 가 된다 — 코드는 로그인해야 보이는 값이라
+    // 아무도 없을 때 요구하면 아무도 들어올 수 없다.
     teamId = DEFAULT_TEAM_ID;
     role = "owner";
   } else {

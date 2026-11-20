@@ -75,11 +75,9 @@ export function TeamPanel({ teamId, teamName, initialInviteCode, members, me }: 
     return (
       <Card style={{ padding: 20 }}>
         <p style={{ margin: 0, fontSize: 13.5, color: COLOR.body, lineHeight: 1.75 }}>
-          속한 팀이 없어 팀 정보를 보여줄 수 없습니다. 아래에서 내 계정은 바꿀 수 있습니다.
+          속한 팀이 없어 팀 정보를 보여줄 수 없습니다. 내 이름·비밀번호는{" "}
+          <a href="/me" style={{ color: COLOR.accent }}>내 설정</a> 에서 바꿀 수 있습니다.
         </p>
-        <div style={{ marginTop: 20 }}>
-          <MyAccount me={me} post={post} busy={busy} />
-        </div>
       </Card>
     );
   }
@@ -235,118 +233,21 @@ export function TeamPanel({ teamId, teamName, initialInviteCode, members, me }: 
 
       {/* ── 내 계정 ──────────────────────────────────────── */}
       <Card style={{ padding: 20 }}>
-        <MyAccount me={me} post={post} busy={busy} />
+        <h2 style={sectionTitle}>이 팀의 브로드컴 계정</h2>
+        <p style={{ margin: 0, fontSize: 12.5, color: COLOR.muted, lineHeight: 1.8 }}>
+          수집·SR 쓰기가 쓰는 <strong>포털 공용 계정은 팀에 귀속</strong>됩니다. 팀마다 다른
+          계정을 쓰고, 세션·기기신뢰·잠금 방지 상태도 팀별로 따로 갑니다 — 다른 팀의 계정이
+          이 팀에 영향을 주지 않습니다.
+        </p>
+        <div style={{ marginTop: 12, display: "flex", gap: 9, flexWrap: "wrap" }}>
+          <a href="/settings/account" style={{ ...controlStyle, textDecoration: "none" }}>
+            브로드컴 계정 설정 →
+          </a>
+          <a href="/me" style={{ ...controlStyle, textDecoration: "none" }}>
+            내 설정(이름·비밀번호·Jira) →
+          </a>
+        </div>
       </Card>
-    </>
-  );
-}
-
-function MyAccount({
-  me, post, busy,
-}: {
-  me: MeView;
-  post: (url: string, body: unknown, okText: string) => Promise<unknown>;
-  busy: boolean;
-}) {
-  const [displayName, setDisplayName] = useState(me.displayName);
-  const [jira, setJira] = useState(me.jiraAccountId);
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-
-  return (
-    <>
-      <h2 style={sectionTitle}>내 계정</h2>
-
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 18 }}>
-        <div style={{ flex: "1 1 220px", minWidth: 180 }}>
-          <label style={labelStyle}>표시 이름</label>
-          <input
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            style={{ ...controlStyle, width: "100%", cursor: "text" }}
-          />
-        </div>
-        <button
-          type="button"
-          disabled={busy || displayName.trim() === "" || displayName === me.displayName}
-          onClick={() => void post("/api/me", { action: "display_name", displayName }, "이름을 바꿨습니다.")}
-          style={{ ...controlStyle, opacity: busy ? 0.6 : 1 }}
-        >
-          저장
-        </button>
-      </div>
-
-      <div style={{ paddingTop: 18, borderTop: `1px solid ${COLOR.divider}`, marginBottom: 18 }}>
-        <label style={labelStyle}>Jira 계정 id (accountId)</label>
-        <p style={{ margin: "0 0 10px", fontSize: 12.5, color: COLOR.muted, lineHeight: 1.7 }}>
-          캘린더 일정을 Jira 에 올릴 때 <strong>담당자</strong>로 쓰는 값입니다. Jira 에서 내 프로필을
-          열면 주소 끝에 붙어 있습니다(<span style={{ fontFamily: MONO_STACK }}>…/jira/people/<b>이 부분</b></span>).
-          비워 두면 담당자 없이 올라갑니다.
-        </p>
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
-          <input
-            value={jira}
-            onChange={(e) => setJira(e.target.value)}
-            placeholder="5d1234abcd…"
-            style={{ ...controlStyle, flex: "1 1 260px", cursor: "text", fontFamily: MONO_STACK }}
-          />
-          <button
-            type="button"
-            disabled={busy || jira === me.jiraAccountId}
-            onClick={() => void post("/api/me", { action: "jira_account", jiraAccountId: jira }, "Jira 계정을 저장했습니다.")}
-            style={{ ...controlStyle, opacity: busy ? 0.6 : 1 }}
-          >
-            저장
-          </button>
-        </div>
-      </div>
-
-      <div style={{ paddingTop: 18, borderTop: `1px solid ${COLOR.divider}` }}>
-        <label style={labelStyle}>비밀번호 변경</label>
-        <p style={{ margin: "0 0 10px", fontSize: 12.5, color: COLOR.muted, lineHeight: 1.7 }}>
-          바꾸면 <strong>모든 기기에서 로그아웃</strong>됩니다(이 브라우저까지). 다시 로그인해야 합니다.
-        </p>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <input
-            type="password"
-            value={current}
-            onChange={(e) => setCurrent(e.target.value)}
-            placeholder="지금 비밀번호"
-            autoComplete="current-password"
-            style={{ ...controlStyle, flex: "1 1 180px", cursor: "text" }}
-          />
-          <input
-            type="password"
-            value={next}
-            onChange={(e) => setNext(e.target.value)}
-            placeholder="새 비밀번호 (8자 이상)"
-            autoComplete="new-password"
-            style={{ ...controlStyle, flex: "1 1 180px", cursor: "text" }}
-          />
-          <button
-            type="button"
-            disabled={busy || current === "" || next.length < 8}
-            onClick={async () => {
-              const data = (await post(
-                "/api/me",
-                { action: "password", currentPassword: current, newPassword: next },
-                "비밀번호를 바꿨습니다.",
-              )) as { signedOut?: boolean } | null;
-              setCurrent("");
-              setNext("");
-              if (data?.signedOut === true) {
-                // 세션이 끊겼으므로 로그인 화면으로 보낸다.
-                window.setTimeout(() => {
-                  window.location.href = "/signin";
-                }, 1500);
-              }
-            }}
-            style={{ ...controlStyle, opacity: busy ? 0.6 : 1 }}
-          >
-            비밀번호 변경
-          </button>
-        </div>
-      </div>
     </>
   );
 }

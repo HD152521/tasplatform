@@ -31,6 +31,8 @@ export async function POST(request: Request) {
       displayName: str("displayName"),
       password: str("password"),
       inviteCode: str("inviteCode"),
+      mode: body.mode === "create" ? "create" : "invite",
+      teamName: str("teamName"),
     });
 
     const session = await createUserSession(db, user.userId);

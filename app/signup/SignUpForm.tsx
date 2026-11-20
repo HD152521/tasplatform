@@ -13,17 +13,26 @@ export function SignUpForm({ firstRun }: Props) {
   const [password, setPassword] = useState("");
   const [again, setAgain] = useState("");
   const [inviteCode, setInviteCode] = useState("");
+  /**
+   * 팀에 어떻게 들어가나.
+   *
+   * 브로드컴 공용 계정이 **팀에 귀속**되므로, 다른 계정을 쓰는 조직이 들어오면 새 팀이
+   * 먼저 있어야 한다. 그게 없으면 남의 팀에 끼어 들어가 그 팀 계정을 보게 된다.
+   */
+  const [mode, setMode] = useState<"invite" | "create">("invite");
+  const [teamName, setTeamName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const mismatch = again !== "" && password !== again;
+  const teamReady = firstRun || (mode === "create" ? teamName.trim() !== "" : inviteCode.trim() !== "");
   const ready =
     loginId.trim() !== "" &&
     displayName.trim() !== "" &&
     password.length >= 8 &&
     !mismatch &&
     again !== "" &&
-    (firstRun || inviteCode.trim() !== "");
+    teamReady;
 
   async function submit(event: React.FormEvent): Promise<void> {
     event.preventDefault();
@@ -33,7 +42,7 @@ export function SignUpForm({ firstRun }: Props) {
       const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ loginId, displayName, password, inviteCode }),
+        body: JSON.stringify({ loginId, displayName, password, inviteCode, mode, teamName }),
       });
       const data = (await res.json()) as { ok?: boolean; message?: string };
       if (data.ok === true) {
@@ -102,20 +111,49 @@ export function SignUpForm({ firstRun }: Props) {
 
         {!firstRun && (
           <>
-            <label style={labelStyle}>팀 초대 코드</label>
-            <input
-              value={inviteCode}
-              onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-              placeholder="ABCDE-FGHIJ"
-              style={{
-                ...controlStyle,
-                width: "100%",
-                cursor: "text",
-                marginBottom: 18,
-                fontFamily: "ui-monospace, Consolas, monospace",
-                letterSpacing: "0.04em",
-              }}
-            />
+            <label style={labelStyle}>팀</label>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <ModeButton
+                active={mode === "invite"}
+                onClick={() => setMode("invite")}
+                title="기존 팀에 참여"
+                hint="초대 코드가 있어요"
+              />
+              <ModeButton
+                active={mode === "create"}
+                onClick={() => setMode("create")}
+                title="새 팀 만들기"
+                hint="우리 팀 계정을 따로 씁니다"
+              />
+            </div>
+
+            {mode === "invite" ? (
+              <input
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+                placeholder="ABCDE-FGHIJ"
+                style={{
+                  ...controlStyle,
+                  width: "100%",
+                  cursor: "text",
+                  marginBottom: 6,
+                  fontFamily: "ui-monospace, Consolas, monospace",
+                  letterSpacing: "0.04em",
+                }}
+              />
+            ) : (
+              <input
+                value={teamName}
+                onChange={(e) => setTeamName(e.target.value)}
+                placeholder="예: 데이터솔루션 2팀"
+                style={{ ...controlStyle, width: "100%", cursor: "text", marginBottom: 6 }}
+              />
+            )}
+            <p style={{ margin: "0 0 18px", fontSize: 11.5, color: COLOR.faint, lineHeight: 1.7 }}>
+              {mode === "invite"
+                ? "팀 관리자에게 받은 코드를 넣으세요. 그 팀의 브로드컴 계정을 함께 쓰게 됩니다."
+                : "새 팀의 관리자가 됩니다. 가입 뒤 「브로드컴 계정」 화면에서 이 팀이 쓸 포털 계정을 넣어야 수집이 시작됩니다."}
+            </p>
           </>
         )}
 
@@ -154,6 +192,38 @@ export function SignUpForm({ firstRun }: Props) {
         하세요.
       </div>
     </Card>
+  );
+}
+
+/** 참여 / 새 팀 중 하나를 고르는 큰 버튼. 라디오보다 눌러야 할 것이 분명하다. */
+function ModeButton({
+  active, onClick, title, hint,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title: string;
+  hint: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        flex: 1,
+        textAlign: "left",
+        padding: "9px 11px",
+        borderRadius: 8,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        border: `1px solid ${active ? COLOR.accent : COLOR.field}`,
+        background: active ? COLOR.waitThemBg : COLOR.surface,
+      }}
+    >
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: active ? COLOR.accent : COLOR.ink }}>
+        {title}
+      </div>
+      <div style={{ fontSize: 11, color: COLOR.muted, marginTop: 2 }}>{hint}</div>
+    </button>
   );
 }
 

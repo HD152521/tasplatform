@@ -23,10 +23,14 @@ interface Initial {
   guard: LoginGuardState;
 }
 
-async function readInitial(): Promise<Initial> {
+/** **그 팀의** 계정·잠금 상태. 공용 계정은 팀에 귀속된다. */
+async function readInitial(teamId: string): Promise<Initial> {
   const db = await openDb();
   try {
-    return { credentials: await getPortalCredentialsMeta(db), guard: await readLoginGuard(db) };
+    return {
+      credentials: await getPortalCredentialsMeta(db, teamId),
+      guard: await readLoginGuard(db, teamId),
+    };
   } finally {
     await db.close();
   }
@@ -40,12 +44,12 @@ export default async function AccountSettingsPage() {
   // 팀 공용 계정이므로 **팀에 속한 사람**만 본다. owner 로 좁히지 않는 이유: 비밀번호가
   // 회전된 날 계정을 고쳐야 하는 사람이 owner 가 아닐 수 있고, 그때 막히면 수집이 멈춘
   // 채로 기다리게 된다(그 비용이 더 크다).
-  await requireTeamUser("/settings/account");
+  const me = await requireTeamUser("/settings/account");
 
   let initial: Initial | null = null;
   let loadError: string | null = null;
   try {
-    initial = await readInitial();
+    initial = await readInitial(me.teamId);
   } catch (error) {
     loadError = error instanceof Error ? error.message : String(error);
   }

@@ -18,7 +18,7 @@ function formatWhen(ms: number): string {
  * DB 를 못 열어도 로그인 화면 자체는 떠야 한다 — 로그인은 DB 없이도 되는 동작이고,
  * 여기서 터지면 사람이 세션을 복구할 유일한 창구가 닫힌다.
  */
-async function readAccount(): Promise<{
+async function readAccount(teamId: string): Promise<{
   username: string;
   hasStored: boolean;
   guard: LoginGuardState | null;
@@ -26,11 +26,11 @@ async function readAccount(): Promise<{
   try {
     const db = await openDb();
     try {
-      const meta = await getPortalCredentialsMeta(db);
+      const meta = await getPortalCredentialsMeta(db, teamId);
       return {
         username: meta.username,
         hasStored: meta.hasPassword,
-        guard: await readLoginGuard(db),
+        guard: await readLoginGuard(db, teamId),
       };
     } finally {
       await db.close();
@@ -42,9 +42,11 @@ async function readAccount(): Promise<{
 
 export default async function LoginPage() {
   // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
-  await requireUser("/login");
-  const session = getSessionStatus();
-  const account = await readAccount();
+  const me = await requireUser("/login");
+  // 포털 세션·자격·잠금은 **팀별**이다. 팀이 없으면 기본 팀으로 떨어진다.
+  const teamId = me.teamId === "" ? undefined : me.teamId;
+  const session = getSessionStatus(teamId);
+  const account = await readAccount(me.teamId);
   const guard = account.guard;
 
   return (

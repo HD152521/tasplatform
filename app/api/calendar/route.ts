@@ -154,8 +154,19 @@ export async function POST(request: Request) {
         createdBy: me.userId,
       };
     } else {
-      const matched = matchAssignee(str("assignee"), members);
-      const tags = classifyTags(str("kind") === "" ? [] : [str("kind")]);
+      // 폼에서 온 경로. 태그를 **배열로** 받아 한 줄 입력과 **같은 분류 함수**를 쓴다 —
+      // 두 경로가 다르게 분류하면 같은 일정이 어떻게 적었느냐에 따라 다른 Jira 제목이 된다.
+      const tagList = Array.isArray(body.tags)
+        ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string")
+        : str("kind") === ""
+          ? []
+          : [str("kind")];
+      const tags = classifyTags(tagList);
+      // 담당자는 폼이 **id 로** 보낸다. 이름 맞추기보다 확실하다(동명이인이 없다).
+      const pickedId = Number(body.assigneeUserId);
+      const matched = Number.isInteger(pickedId) && pickedId > 0
+        ? members.find((m) => m.userId === pickedId) ?? null
+        : matchAssignee(str("assignee"), members);
       input = {
         teamId: me.teamId,
         title: str("title"),
@@ -167,7 +178,7 @@ export async function POST(request: Request) {
         startTime: str("startTime"),
         endTime: str("endTime"),
         assigneeUserId: matched?.userId ?? null,
-        assigneeLabel: str("assignee"),
+        assigneeLabel: matched?.displayName ?? str("assignee"),
         body: str("body"),
         createdBy: me.userId,
       };
@@ -251,7 +262,32 @@ export async function PATCH(request: Request) {
     } else {
       patch = {};
       if (typeof body.title === "string") patch = { ...patch, title: body.title };
-      if (typeof body.kind === "string") patch = { ...patch, kind: body.kind };
+      if (Array.isArray(body.tags)) {
+        // 폼 수정. 태그를 다시 가른다 — 한 줄 수정과 같은 함수를 쓴다.
+        const tags = classifyTags(
+          (body.tags as unknown[]).filter((t): t is string => typeof t === "string"),
+        );
+        patch = {
+          ...patch,
+          kind: tags.rest[0] ?? "",
+          scopes: tags.scopes.join("/"),
+          corp: tags.corp ?? "",
+        };
+      } else if (typeof body.kind === "string") {
+        patch = { ...patch, kind: body.kind };
+      }
+      if (body.assigneeUserId !== undefined) {
+        const picked = Number(body.assigneeUserId);
+        const ok = Number.isInteger(picked) && picked > 0;
+        const member = ok
+          ? (await listTeamMembers(db, me.teamId)).find((m) => m.userId === picked) ?? null
+          : null;
+        patch = {
+          ...patch,
+          assigneeUserId: member?.userId ?? null,
+          assigneeLabel: member?.displayName ?? "",
+        };
+      }
       if (typeof body.body === "string") patch = { ...patch, body: body.body };
       if (typeof body.startDate === "string") patch = { ...patch, startDate: body.startDate };
       if (typeof body.endDate === "string") patch = { ...patch, endDate: body.endDate };

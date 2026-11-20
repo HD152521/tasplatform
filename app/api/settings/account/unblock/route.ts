@@ -11,8 +11,7 @@
  * 비밀번호를 바꿨다면 이 버튼이 아니라 **저장**이 맞다(그쪽은 처음부터 다시 센다).
  */
 import { NextResponse } from "next/server";
-import { actorOf, userFromRequest } from "../../../../../lib/appAuth.ts";
-import { DEFAULT_TEAM_ID } from "../../../../../lib/config.ts";
+import { actorOf, userFromRequestWith } from "../../../../../lib/appAuth.ts";
 import { openDb, recordAudit } from "../../../../../lib/db.ts";
 import { clearLoginGuard, readLoginGuard } from "../../../../../lib/loginGuard.ts";
 
@@ -20,26 +19,25 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  let actor = "";
-  try {
-    const body = (await request.json()) as Record<string, unknown>;
-    actor = typeof body.actor === "string" ? body.actor.trim() : "";
-  } catch {
-    // 본문이 없어도 동작한다 — 누른 사람만 모르는 것으로 남는다.
-  }
-
-  // 누른 사람은 세션에서 읽는다 — 본문 값은 비어 오는 것이 보통이었다.
-  const signedIn = await userFromRequest(request).catch(() => null);
-  if (signedIn !== null) actor = actorOf(signedIn);
-
   const db = await openDb();
   try {
-    await clearLoginGuard(db, DEFAULT_TEAM_ID, "화면에서 「한 번만 다시 시도」", "one");
+    // 누르는 사람과 **그 사람의 팀**을 세션에서 읽는다. 공용 계정은 팀에 귀속되므로
+    // 남의 팀 잠금을 풀어 주면 그 팀의 IdP 실패 횟수를 대신 쓰게 된다.
+    const me = await userFromRequestWith(db, request);
+    if (me === null) {
+      return NextResponse.json({ ok: false, message: "로그인이 필요합니다." }, { status: 401 });
+    }
+    if (me.teamId === "") {
+      return NextResponse.json({ ok: false, message: "속한 팀이 없습니다." }, { status: 400 });
+    }
+    const actor = actorOf(me);
+
+    await clearLoginGuard(db, me.teamId, "화면에서 「한 번만 다시 시도」", "one");
     await recordAudit(db, {
-      actor, teamId: DEFAULT_TEAM_ID, action: "portal_login_unblock", requestId: null,
+      actor, teamId: me.teamId, action: "portal_login_unblock", requestId: null,
       result: "ok", detail: "",
     });
-    return NextResponse.json({ ok: true, guard: await readLoginGuard(db) });
+    return NextResponse.json({ ok: true, guard: await readLoginGuard(db, me.teamId) });
   } catch (error) {
     return NextResponse.json(
       { ok: false, message: error instanceof Error ? error.message : String(error) },

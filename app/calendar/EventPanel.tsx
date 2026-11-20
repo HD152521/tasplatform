@@ -12,13 +12,14 @@ import type { MemberChip } from "./CalendarBoard.tsx";
  * 정리(S6)의 재료가 된다. 그래서 적기 쉬워야 한다 — 한 칸, Enter 로 저장.
  */
 export function EventPanel({
-  event, members, busy, onClose, onEdit, onDelete, onChanged, onMessage,
+  event, members, busy, onClose, onEditForm, onEditLine, onDelete, onChanged, onMessage,
 }: {
   event: TeamEventView;
   members: readonly MemberChip[];
   busy: boolean;
   onClose: () => void;
-  onEdit: () => void;
+  onEditForm: () => void;
+  onEditLine: () => void;
   onDelete: () => void;
   onChanged: () => Promise<void> | void;
   onMessage: (m: { tone: "ok" | "error" | "warn"; text: string } | null) => void;
@@ -262,7 +263,15 @@ export function EventPanel({
         marginTop: 18, paddingTop: 14, borderTop: `1px solid ${COLOR.divider}`,
         display: "flex", gap: 9,
       }}>
-        <button type="button" onClick={onEdit} disabled={busy} style={{ ...controlStyle }}>
+        <button
+          type="button"
+          onClick={onEditForm}
+          disabled={busy}
+          style={{ ...controlStyle, fontWeight: 600 }}
+        >
+          수정
+        </button>
+        <button type="button" onClick={onEditLine} disabled={busy} style={{ ...controlStyle, fontSize: 12 }}>
           한 줄로 수정
         </button>
         <button
