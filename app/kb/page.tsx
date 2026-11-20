@@ -1,3 +1,4 @@
+import { requireUser } from "../../lib/appAuth.ts";
 import { kbTranslationRefs } from "../../lib/kbTranslate.ts";
 import {
   countKbScanned, listKbArticles, loadCaseTranslations, type KbViewRow,
@@ -9,6 +10,8 @@ import { KbList } from "./KbList.tsx";
 export const dynamic = "force-dynamic";
 
 export default async function KbPage() {
+  // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
+  await requireUser("/kb");
   let rows: KbViewRow[] = [];
   let scanned = 0;
   let loadError: string | null = null;

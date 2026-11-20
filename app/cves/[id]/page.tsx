@@ -1,3 +1,4 @@
+import { requireUser } from "../../../lib/appAuth.ts";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
@@ -46,6 +47,8 @@ export default async function CveDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
+  await requireUser();
   const { id } = await params;
   const rows = await getCve(decodeURIComponent(id));
   if (rows.length === 0) notFound();

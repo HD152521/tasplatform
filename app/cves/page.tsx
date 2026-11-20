@@ -1,3 +1,4 @@
+import { requireUser } from "../../lib/appAuth.ts";
 import { listCves, type CveViewRow } from "../../lib/queries.ts";
 import { CollectButton } from "../CollectButton.tsx";
 import { COLOR, Card, Notice } from "../ui.tsx";
@@ -6,6 +7,8 @@ import { CveList } from "./CveList.tsx";
 export const dynamic = "force-dynamic";
 
 export default async function CvesPage() {
+  // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
+  await requireUser("/cves");
   let cves: CveViewRow[] = [];
   let loadError: string | null = null;
 

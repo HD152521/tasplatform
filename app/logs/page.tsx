@@ -1,3 +1,4 @@
+import { requireUser } from "../../lib/appAuth.ts";
 import { listRuns, openDb } from "../../lib/db.ts";
 import { getSessionStatus } from "../../lib/sessionFile.ts";
 import type { RunRow, RunStatus } from "../../lib/types.ts";
@@ -28,6 +29,8 @@ function formatTime(iso: string | null): string {
 }
 
 export default async function LogsPage() {
+  // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
+  await requireUser("/logs");
   let runs: RunRow[] = [];
   let loadError: string | null = null;
 

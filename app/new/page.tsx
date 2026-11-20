@@ -1,3 +1,4 @@
+import { requireUser } from "../../lib/appAuth.ts";
 import { mergeCatalog } from "../../lib/productCatalog.ts";
 import { selectableProducts } from "../../lib/productCategory.ts";
 import { listProductComponents, type ProductComponent } from "../../lib/queries.ts";
@@ -9,6 +10,8 @@ import { QuickFillProvider } from "./QuickFillBus.tsx";
 export const dynamic = "force-dynamic";
 
 export default async function NewCasePage() {
+  // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
+  await requireUser("/new");
   let combos: ProductComponent[] = [];
   // 조회 실패와 "아직 수집된 게 없음" 을 구분한다. 예전엔 둘 다 빈 목록이라
   // 선택지가 사라진 이유를 화면에서 알 수 없었다.

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { actorOf, userFromRequest } from "../../../lib/appAuth.ts";
 import { isClosedStatus, getCase } from "../../../lib/queries.ts";
 import { postReply } from "../../../lib/reply.ts";
 import { fetchClient } from "../../../collector/httpClient.ts";
@@ -35,7 +36,12 @@ export async function POST(request: Request) {
 
   // actor/team 없이 호출하는 기존 뷰어 화면과 하위호환: team 미제공시 기본 팀,
   // actor 미제공시 빈 문자열로 처리한다. team 형식이 잘못됐을 때만 여기서 걸린다.
-  const actorTeam = resolveActorTeam(body);
+  // 감사 로그의 actor 를 **세션에서** 채운다. 본문의 actor 는 호출자가 적어 보내는
+  // 값이고, 화면은 그 칸을 늘 비워 보냈다 — 그래서 이 도구의 모든 쓰기가 '누가
+  // 시켰는지' 없이 기록돼 왔다. 세션이 없는 호출(MCP·챗봇)은 예전 동작 그대로다.
+  const signedIn = await userFromRequest(request).catch(() => null);
+  const session = signedIn === null ? null : { actor: actorOf(signedIn), teamId: signedIn.teamId };
+  const actorTeam = resolveActorTeam(body, session);
   if (!actorTeam.ok) {
     return NextResponse.json({ ok: false, message: actorTeam.message }, { status: 400 });
   }

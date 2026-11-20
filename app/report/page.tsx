@@ -1,3 +1,4 @@
+import { requireUser } from "../../lib/appAuth.ts";
 import { COLOR } from "../ui.tsx";
 import { listCasesInMonth } from "../../lib/queries.ts";
 import { listMonths, loadMonth, previousMonthOf, resolvePrevious } from "../../lib/instanceStore.ts";
@@ -29,6 +30,8 @@ export default async function ReportPage({
 }: {
   searchParams: Promise<{ month?: string; step?: string }>;
 }) {
+  // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
+  await requireUser("/report");
   const params = await searchParams;
   const month = params.month ?? defaultMonth();
   const step = readStep(params.step);

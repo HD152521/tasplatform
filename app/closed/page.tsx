@@ -1,3 +1,4 @@
+import { requireUser } from "../../lib/appAuth.ts";
 import { listCasesSplit, countSummaries, type CaseListRow } from "../../lib/queries.ts";
 import { CaseList } from "../CaseList.tsx";
 import { COLOR, Card, Notice } from "../ui.tsx";
@@ -6,6 +7,8 @@ import { AutoPublishKick } from "./AutoPublishKick.tsx";
 export const dynamic = "force-dynamic";
 
 export default async function ClosedCasesPage() {
+  // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
+  await requireUser("/closed");
   let closed: CaseListRow[] = [];
   let summaries = 0;
   let loadError: string | null = null;

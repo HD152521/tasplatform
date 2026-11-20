@@ -299,6 +299,8 @@ CREATE TABLE IF NOT EXISTS teams (
   team_id           TEXT PRIMARY KEY,
   team_name         TEXT NOT NULL DEFAULT '',
   broadcom_username TEXT NOT NULL DEFAULT '',
+  -- 가입 초대 코드. 이 코드로 가입하면 이 팀의 member 가 된다. 비면 가입을 받지 않는다.
+  invite_code       TEXT NOT NULL DEFAULT '',
   created_at        TEXT NOT NULL
 );
 
@@ -375,6 +377,56 @@ CREATE TABLE IF NOT EXISTS team_session_state (
   updated_at   TEXT NOT NULL DEFAULT ''
 );
 
+-- 포털(브로드컴) 공용 계정. 자동 로그인이 쓰는 그 계정이다.
+--
+-- 전에는 .env 의 SR_USERNAME/SR_PASSWORD 뿐이었다. 그런데 이 계정은 주기적으로
+-- 비밀번호를 바꾸는 공용 계정이고, .env 는 **세 군데(이 PC·수집기 VM·드롭릿)**에
+-- 사본이 있어서 회전마다 사람이 파일을 찾아 고치고 재배포해야 했다. 한 곳만
+-- 빠뜨리면 그 프로세스가 옛 비밀번호로 계속 로그인을 시도한다(= 계정 잠금).
+-- 그래서 화면에서 바꿀 수 있게 DB 로 옮긴다. 두 경로 모두 같은 DB 를 본다.
+--
+-- password_enc 는 AES-256-GCM(lib/secretBox.ts). 평문은 여기 절대 들어가지 않고,
+-- 키(SR_SECRET_KEY)가 없으면 저장 자체를 거부한다 — 평문 폴백은 없다.
+-- 이 행이 없으면 .env 로 폴백한다(lib/portalCredentials.ts). 기존 설치가 그대로 돈다.
+CREATE TABLE IF NOT EXISTS portal_credentials (
+  team_id      TEXT PRIMARY KEY,
+  username     TEXT NOT NULL DEFAULT '',
+  password_enc TEXT NOT NULL DEFAULT '',
+  updated_at   TEXT NOT NULL DEFAULT '',
+  -- 누가 바꿨나. 공용 계정이라 "언제 누가 돌렸는지" 가 사고 조사의 출발점이다.
+  updated_by   TEXT NOT NULL DEFAULT ''
+);
+
+-- 자동 로그인 잠금 방지 상태.
+--
+-- 왜 DB 인가: 수집기는 회차마다 **새 프로세스**로 뜬다(worker 가 collect.ts 를 자식으로
+-- 돌린다). 메모리 카운터는 매번 0 에서 시작하므로 "두 번 틀렸으면 멈춘다" 를 지킬 수
+-- 없다. 프로세스 밖에 남아야 한다.
+--
+-- fail_count   연속 실패 횟수. **비밀번호를 실제로 제출한** 시도만 센다
+--              (입력칸을 못 찾아 끝난 회차는 IdP 의 실패 카운터와 무관하다).
+-- blocked      1 이면 자동 시도를 하지 않는다. **시간이 지나도 저절로 풀리지 않는다** —
+--              사람이 새 비밀번호를 저장하거나 로그인 버튼을 눌러야 풀린다.
+-- blocked_at   언제 멈췄는지(ISO). 화면 표기용.
+--
+-- 쿨다운(몇 시간 뒤 자동 재시도)을 두지 않는 이유: 비밀번호가 틀린 상태는 시간이 지나도
+-- 그대로다. 몇 시간 뒤에 혼자 다시 찔러 보면 IdP 의 실패 카운터만 한 칸 더 올린다.
+-- 고칠 수 있는 것은 사람뿐이므로, 사람이 손을 쓸 때까지 **가만히 있는다.**
+--
+-- OTP 를 요구받은 회차는 **성공에 가깝게** 취급해 카운터를 0 으로 되돌린다 — OTP 화면이
+-- 떴다는 것은 비밀번호가 통과했다는 뜻이다. 이걸 실패로 세면 기기신뢰가 만료된 날
+-- 멀쩡한 비밀번호를 잠금 위험으로 오인해 수집을 멈춘다.
+CREATE TABLE IF NOT EXISTS portal_login_guard (
+  team_id         TEXT PRIMARY KEY,
+  fail_count      INTEGER NOT NULL DEFAULT 0,
+  blocked         INTEGER NOT NULL DEFAULT 0,
+  blocked_at      TEXT NOT NULL DEFAULT '',
+  last_attempt_at TEXT NOT NULL DEFAULT '',
+  last_result     TEXT NOT NULL DEFAULT '',
+  last_reason     TEXT NOT NULL DEFAULT '',
+  updated_at      TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS llm_connections (
   llm_id        TEXT PRIMARY KEY,
   name          TEXT    NOT NULL DEFAULT '',
@@ -444,5 +496,149 @@ CREATE TABLE IF NOT EXISTS text_translations (
   model      TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (scope, ref_id, lang)
+);
+
+-- ── 앱 사용자(신원) ─────────────────────────────────────────────────
+--
+-- 지금까지 이 앱에는 "누가 쓰고 있는지" 라는 개념이 없었다. 감사 로그의 actor 는
+-- 화면이 보내는 값이라 **빈 문자열**이었고, 캘린더·작업 기록처럼 "누가" 가 핵심인
+-- 기능은 그 칸을 둘 곳이 없었다. 여기서 신원을 만든다.
+--
+-- 목적은 **방어가 아니라 귀속**이다(사내망 전제). 그래서 비밀번호 정책·2단계 인증·
+-- 잠금 같은 장치는 두지 않는다. 대신 다음 둘은 지킨다.
+--   1. 비밀번호 원문은 어디에도 저장하지 않는다(scrypt 해시만).
+--   2. 세션 토큰 원문도 저장하지 않는다(SHA-256 해시만) — team_tokens 와 같은 방식이다.
+--
+-- login_id 는 소문자로 정규화해 넣는다(대소문자가 다른 같은 사람을 둘로 만들지 않게).
+-- jira_account_id 는 캘린더 일정을 Jira 에 올릴 때 assignee 로 쓴다. 비면 담당자
+-- 없이 올리고 화면이 그 사실을 알려 준다(조용히 넘기지 않는다).
+CREATE TABLE IF NOT EXISTS users (
+  user_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id        TEXT    NOT NULL,
+  display_name    TEXT    NOT NULL DEFAULT '',
+  password_hash   TEXT    NOT NULL DEFAULT '',
+  jira_account_id TEXT    NOT NULL DEFAULT '',
+  created_at      TEXT    NOT NULL,
+  last_login_at   TEXT    NOT NULL DEFAULT '',
+  -- 1 이면 로그인을 거부한다. 지우지 않는 이유: 이 사람이 등록한 일정·기록의 작성자
+  -- 표시가 사라지면 "누가 했는지" 를 복원할 수 없다.
+  disabled        INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login ON users(login_id);
+
+-- 앱 로그인 세션. 쿠키에 담기는 토큰의 **해시**만 둔다.
+-- expires_at 을 넘기면 거부하고, revoked = 1 이면(로그아웃) 즉시 거부한다.
+CREATE TABLE IF NOT EXISTS user_sessions (
+  token_hash   TEXT PRIMARY KEY,
+  user_id      INTEGER NOT NULL,
+  created_at   TEXT NOT NULL,
+  expires_at   TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL DEFAULT '',
+  revoked      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
+
+-- 사람 ↔ 팀. 한 사람이 여러 팀에 속할 수 있다(지원 인력이 두 팀을 겸하는 경우).
+-- role: owner = 팀 설정·초대 코드·브로드컴 계정을 바꿀 수 있다 / member = 나머지.
+CREATE TABLE IF NOT EXISTS team_members (
+  team_id   TEXT    NOT NULL,
+  user_id   INTEGER NOT NULL,
+  role      TEXT    NOT NULL DEFAULT 'member',
+  joined_at TEXT    NOT NULL,
+  PRIMARY KEY (team_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id);
+
+-- ── 팀 캘린더 ────────────────────────────────────────────────────────
+--
+-- "누가 언제 무엇을 하는가" 를 팀이 한 화면에서 본다. 일정은 **팀 전체 공개**다
+-- (개인 비공개 일정을 두지 않는다 — 공유가 목적이고, 숨은 일정이 있으면 주간 정리의
+-- 집계가 조용히 틀어진다).
+--
+-- ## 날짜를 왜 문자열 날짜·시각으로 쪼개 두나
+--
+-- start_date/end_date 는 'YYYY-MM-DD', start_time/end_time 은 'HH:MM' 이고
+-- 시각이 비면 **종일**이다. epoch 나 ISO 타임스탬프 하나로 두지 않는 이유:
+--
+--   1. 달 그리드는 "그 날짜 칸에 걸치는가" 만 묻는다. 날짜 문자열 비교로 끝난다.
+--   2. 이 앱은 KST 로 쓰는데 서버는 UTC 일 수 있다. 타임스탬프로 두면 자정 무렵 일정이
+--      **하루 밀려** 다른 칸에 그려진다(lib/jiraWrite.ts 의 today() 가 같은 함정을 보정
+--      하고 있다). "11월 25일" 은 시간대가 아니라 날짜다 — 그대로 저장한다.
+--
+-- state: planned(예정) | doing(진행) | done(완료) | canceled(취소)
+--   취소는 **일정을 지우는 것과 다르다.** 취소는 "하기로 했는데 안 했다" 는 기록이고
+--   삭제는 "그 일정이 없었다" 다. 주간 정리에서 둘을 다르게 센다.
+--
+-- jira_*: 캘린더 → Jira 연동(S5)이 쓰는 칸. jira_state:
+--   none    아직 올리지 않았다
+--   ok      올라갔고 jira_key 가 유효하다
+--   unknown **만들어졌는지 모른다**(타임아웃·5xx). 멱등 라벨로 찾아 입양해야 한다
+--   failed  거절당했다(사유는 jira_error)
+CREATE TABLE IF NOT EXISTS team_events (
+  event_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id          TEXT    NOT NULL,
+  title            TEXT    NOT NULL DEFAULT '',
+  body             TEXT    NOT NULL DEFAULT '',
+  kind             TEXT    NOT NULL DEFAULT '',
+  start_date       TEXT    NOT NULL,
+  end_date         TEXT    NOT NULL,
+  start_time       TEXT    NOT NULL DEFAULT '',
+  end_time         TEXT    NOT NULL DEFAULT '',
+  -- 담당자. users.user_id. 팀원과 못 맞춘 이름은 assignee_label 에 글자로 남긴다
+  -- (조용히 버리면 "@민수" 라고 적은 사람은 담당자가 들어갔다고 믿는다).
+  assignee_user_id INTEGER,
+  assignee_label   TEXT    NOT NULL DEFAULT '',
+  state            TEXT    NOT NULL DEFAULT 'planned',
+  created_by       INTEGER,
+  created_at       TEXT    NOT NULL,
+  updated_at       TEXT    NOT NULL,
+  jira_key         TEXT    NOT NULL DEFAULT '',
+  jira_url         TEXT    NOT NULL DEFAULT '',
+  jira_state       TEXT    NOT NULL DEFAULT 'none',
+  jira_error       TEXT    NOT NULL DEFAULT '',
+  -- 몇 번 시도했나. 조건으로 대상을 고르는 구조라(sr_jira_links.publish_tries 와 같은
+  -- 이유) 영구히 실패하는 건을 매 회차 다시 집어 Jira 를 때린다. 상한을 두려고 센다.
+  jira_tries       INTEGER NOT NULL DEFAULT 0,
+  jira_synced_at   TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_events_team_date ON team_events(team_id, start_date);
+CREATE INDEX IF NOT EXISTS idx_team_events_jira ON team_events(jira_state, event_id);
+
+-- 일정에 달리는 메모 — "누가 무슨 내용을 했는지" 적어 두는 자리.
+-- 이게 그대로 **주간 자동 정리(S6)의 재료**다. 그래서 작성자를 반드시 남긴다.
+CREATE TABLE IF NOT EXISTS event_notes (
+  note_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id   INTEGER NOT NULL,
+  user_id    INTEGER,
+  author     TEXT    NOT NULL DEFAULT '',
+  body       TEXT    NOT NULL DEFAULT '',
+  created_at TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_notes_event ON event_notes(event_id, note_id);
+
+-- 주간 자동 정리.
+--
+-- 그 주의 일정(team_events)과 메모(event_notes)를 모아 개조식으로 정리한 글.
+-- "누가 무엇을 했는지 적어두면 알아서 정리된다" 의 결과물이 여기 쌓인다.
+--
+-- week 는 그 주 **월요일**의 'YYYY-MM-DD'. 주의 기준을 한 값으로 고정해 두면
+-- 같은 주를 두 번 만들어도 덮어쓰기로 끝난다((team_id, week) 기본키).
+--
+-- source: llm = LLM 이 다듬은 것 / rule = 규칙 기반 집계.
+--   **LLM 이 없거나 실패해도 정리는 나온다.** 이 레포의 기존 철학과 같다(요약이
+--   실패해도 알림은 나간다). 어느 쪽으로 만들어졌는지 화면이 말해 준다.
+CREATE TABLE IF NOT EXISTS weekly_digests (
+  team_id    TEXT NOT NULL,
+  week       TEXT NOT NULL,
+  body       TEXT NOT NULL DEFAULT '',
+  source     TEXT NOT NULL DEFAULT 'rule',
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (team_id, week)
 );
 `;

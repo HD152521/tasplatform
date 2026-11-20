@@ -1,3 +1,4 @@
+import { requireUser } from "../../../lib/appAuth.ts";
 import Link from "next/link";
 import { AttachmentLink } from "./AttachmentLink.tsx";
 import { InlineImages } from "./InlineImages.tsx";
@@ -26,6 +27,8 @@ export default async function CaseDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ lang?: string }>;
 }) {
+  // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
+  await requireUser();
   const { id } = await params;
   // 기본은 원문이다. 원문이 정본이고 번역은 읽기를 돕는 보조다.
   const lang = (await searchParams).lang === "ko" ? "ko" : "en";

@@ -203,12 +203,63 @@ test("세션 파일이 있는 팀은 true", () => {
   }
 });
 
-test("기본 팀은 기존 SESSION_FILE 경로로 세션 유무를 확인한다 (하위호환)", () => {
+test("기본 팀은 기존 SESSION_FILE 경로를 본다 (하위호환)", () => {
   // sessionFileForTeam(DEFAULT_TEAM_ID) 은 기존 SESSION_FILE 과 동일한 경로다.
-  // 실제 로그인 여부에 따라 값이 달라질 수 있으므로, 같은 경로 계산으로
-  // 일관된 값을 주는지만 확인한다(경로 계산 자체가 바뀌지 않았음을 보장).
-  const expected = existsSync(resolve(sessionFileForTeam(DEFAULT_TEAM_ID)));
-  assert.equal(hasTeamSession(DEFAULT_TEAM_ID), expected);
+  // 파일이 없으면 무조건 false 여야 한다 — 경로 계산이 바뀌면 여기서 걸린다.
+  if (!existsSync(resolve(sessionFileForTeam(DEFAULT_TEAM_ID)))) {
+    assert.equal(hasTeamSession(DEFAULT_TEAM_ID), false);
+  }
+});
+
+/*
+ * 만료 판정 — "파일이 있다" 로는 모자랐다.
+ *
+ * 전에는 existsSync 한 줄이어서 **한 달 넘게 만료된 세션도 문턱을 통과했다**. 첨부는
+ * 큐에 멀쩡히 들어가고 수십 초 뒤 수집기에서 실패했다 — 사람은 그 긴 시간을 기다린
+ * 끝에 영문 모를 사유만 봤다. 그래서 세 경우를 각각 못박는다.
+ */
+
+/** sspsession 쿠키 하나로 만료 시각을 정한다(초 단위 — Playwright 가 그렇게 저장한다). */
+function writeSession(teamId: string, expiresAtMs: number | null): string {
+  const path = resolve(sessionFileForTeam(teamId));
+  mkdirSync(dirname(path), { recursive: true });
+  const cookies = expiresAtMs === null
+    ? [{ name: "sspsession", domain: "access.broadcom.com", expires: -1 }]
+    : [{ name: "sspsession", domain: "access.broadcom.com", expires: expiresAtMs / 1000 }];
+  writeFileSync(path, JSON.stringify({ cookies }));
+  return path;
+}
+
+test("만료된 세션은 false — 헛걸음을 입구에서 막는다", () => {
+  const teamId = `audit-precheck-expired-${Date.now()}`;
+  const path = writeSession(teamId, Date.now() - 36 * 60 * 60 * 1000);
+  try {
+    assert.equal(hasTeamSession(teamId), false);
+  } finally {
+    rmSync(dirname(path), { recursive: true, force: true });
+  }
+});
+
+test("살아 있는 세션은 true", () => {
+  const teamId = `audit-precheck-live-${Date.now()}`;
+  const path = writeSession(teamId, Date.now() + 6 * 60 * 60 * 1000);
+  try {
+    assert.equal(hasTeamSession(teamId), true);
+  } finally {
+    rmSync(dirname(path), { recursive: true, force: true });
+  }
+});
+
+test("만료 시각을 못 읽으면 통과시킨다 — 틀리게 막는 것이 더 나쁘다", () => {
+  // sspsession 이 세션 쿠키(만료 음수)로 저장되는 모양이 있다. 그걸 만료로 보면
+  // 정상인 세션에서 쓰기가 전부 멈춘다.
+  const teamId = `audit-precheck-nodate-${Date.now()}`;
+  const path = writeSession(teamId, null);
+  try {
+    assert.equal(hasTeamSession(teamId), true);
+  } finally {
+    rmSync(dirname(path), { recursive: true, force: true });
+  }
 });
 
 test("세션 없음(failed:session) 이 reply/create 양쪽에서 같은 모양으로 기록된다 (대칭)", async () => {

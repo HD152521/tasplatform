@@ -131,6 +131,8 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: string 
   { table: "instance_counts", column: "prev_central_prod", ddl: "REAL NOT NULL DEFAULT 0" },
   { table: "instance_counts", column: "prev_central_dev", ddl: "REAL NOT NULL DEFAULT 0" },
   { table: "attachment_jobs", column: "team_id", ddl: "TEXT NOT NULL DEFAULT ''" },
+  // 팀 초대 코드. S1(신원)에서 들어왔다 — 이미 돌고 있는 DB 에는 teams 표가 있으니 ALTER 로 더한다.
+  { table: "teams", column: "invite_code", ddl: "TEXT NOT NULL DEFAULT ''" },
   // sr_jira_links 는 이미 배포돼 있으므로(PR #62) ALTER 로 더한다.
   { table: "sr_jira_links", column: "publish_tries", ddl: "INTEGER NOT NULL DEFAULT 0" },
   { table: "sr_jira_links", column: "comment_tries", ddl: "INTEGER NOT NULL DEFAULT 0" },
@@ -411,6 +413,8 @@ export interface TeamRow {
   team_id: string;
   team_name: string;
   broadcom_username: string;
+  /** 가입 초대 코드. 비면 이 팀에는 가입할 수 없다. */
+  invite_code: string;
   created_at: string;
 }
 
@@ -424,7 +428,10 @@ export async function getTeam(db: Db, teamId: string): Promise<TeamRow | null> {
   return row ? ({ ...(row as object) } as TeamRow) : null;
 }
 
-export async function upsertTeam(db: Db, team: Omit<TeamRow, "created_at">): Promise<void> {
+export async function upsertTeam(
+  db: Db,
+  team: { team_id: string; team_name: string; broadcom_username: string },
+): Promise<void> {
   await db.run(
     `INSERT INTO teams (team_id, team_name, broadcom_username, created_at)
      VALUES (?,?,?,?)

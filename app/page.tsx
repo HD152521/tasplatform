@@ -1,3 +1,4 @@
+import { requireUser } from "../lib/appAuth.ts";
 import { getLastRun, listCasesSplit, type CaseListRow } from "../lib/queries.ts";
 import { CaseList } from "./CaseList.tsx";
 import { CollectButton } from "./CollectButton.tsx";
@@ -11,6 +12,8 @@ function formatRunTime(iso: string): string {
 }
 
 export default async function CaseListPage() {
+  // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
+  await requireUser("/");
   let open: CaseListRow[] = [];
   let lastRun = null;
   let loadError: string | null = null;

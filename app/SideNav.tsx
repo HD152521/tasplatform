@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { activeNavHref } from "../lib/navActive.ts";
 import { COLOR, MONO_STACK, RADIUS } from "./ui.tsx";
 import { SessionDot } from "./SessionDot.tsx";
@@ -17,6 +18,14 @@ interface Counts {
   kbMatch: number;
 }
 
+/** 지금 이 화면을 보는 사람. 레이아웃이 세션에서 읽어 넘긴다. */
+interface UserChip {
+  displayName: string;
+  loginId: string;
+  teamName: string;
+  role: "owner" | "member";
+}
+
 /**
  * 좌측 네비게이션.
  *
@@ -24,12 +33,13 @@ interface Counts {
  * "어디에 몇 건이 있고, 그중 몇 건이 내 확인을 기다리는가"가 이 도구의 첫 질문이다.
  */
 export function SideNav({
-  counts, signedIn, expiresAt, authSlot,
+  counts, signedIn, expiresAt, authSlot, user,
 }: {
   counts: Counts;
   signedIn: boolean;
   expiresAt: number | null;
   authSlot: ReactNode;
+  user: UserChip;
 }) {
   const path = usePathname();
 
@@ -37,13 +47,16 @@ export function SideNav({
     { href: "/", label: "진행중", count: counts.open, badge: counts.unread },
     { href: "/closed", label: "종료", count: counts.closed, badge: 0 },
     { href: "/new", label: "SR 작성", count: null, badge: 0 },
+    { href: "/calendar", label: "팀 캘린더", count: null, badge: 0 },
     { href: "/cves", label: "보안 공지", count: counts.cves, badge: counts.criticalCves },
     { href: "/kb", label: "기술 문서", count: counts.kb, badge: counts.kbMatch },
     { href: "/report", label: "정기점검", count: null, badge: 0 },
     { href: "/logs", label: "수집 로그", count: null, badge: 0 },
+    { href: "/team", label: "팀", count: null, badge: 0 },
     // "연동 설정" 은 걷어냈다 — 아무 일도 하지 않는 화면이었다(app/settings/page.tsx).
     // `/settings` 는 여기로 리다이렉트된다.
     { href: "/settings/llm", label: "LLM 연결", count: null, badge: 0 },
+    { href: "/settings/account", label: "브로드컴 계정", count: null, badge: 0 },
   ];
 
   // 지금 어느 항목에 있나. **가장 깊게 맞는 것 하나만** 켠다.
@@ -62,10 +75,12 @@ export function SideNav({
     }}>
       <div style={{ padding: "22px 20px 18px", borderBottom: `1px solid ${COLOR.divider}` }}>
         <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em" }}>Broadcom SR</div>
-        <div style={{ fontSize: 12, color: COLOR.muted, marginTop: 2 }}>데이터솔루션 지원팀</div>
+        <div style={{ fontSize: 12, color: COLOR.muted, marginTop: 2 }}>
+          {user.teamName === "" ? "데이터솔루션 지원팀" : user.teamName}
+        </div>
       </div>
 
-      <nav style={{ padding: "14px 12px", display: "flex", flexDirection: "column", gap: 2 }}>
+      <nav style={{ padding: "14px 12px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" }}>
         {items.map((item) => {
           const active = item.href === activeHref;
           return (
@@ -106,14 +121,80 @@ export function SideNav({
         })}
       </nav>
 
-      <div style={{ marginTop: "auto", padding: "16px 20px", borderTop: `1px solid ${COLOR.divider}` }}>
+      <div style={{ marginTop: "auto" }}>
         {/*
-          밑줄까지 SessionDot 이 그린다. 표시등은 포털에 물어 고쳐 그리는데 밑줄은
-          쿠키 기준으로 남으면, 세션이 죽은 상태에서 "…까지" 가 같이 보여 엇갈린다.
+          아래 두 칸은 **서로 다른 로그인**이다. 위가 이 도구를 쓰는 사람,
+          아래가 공용 브로드컴 포털 세션이다. 섞이면 "로그아웃" 을 눌렀을 때
+          수집이 멈추는 쪽을 끊어 버린다 — 그래서 라벨을 분명히 갈라 둔다.
         */}
-        <SessionDot signedIn={signedIn} expiresAt={expiresAt} />
-        <div style={{ marginTop: 9, paddingLeft: 15 }}>{authSlot}</div>
+        <div style={{ padding: "14px 20px", borderTop: `1px solid ${COLOR.divider}` }}>
+          <UserChipRow user={user} />
+        </div>
+
+        <div style={{ padding: "14px 20px 16px", borderTop: `1px solid ${COLOR.divider}` }}>
+          <div style={{ fontSize: 11, color: COLOR.faint, marginBottom: 7, fontWeight: 600 }}>
+            브로드컴 포털 세션
+          </div>
+          {/*
+            밑줄까지 SessionDot 이 그린다. 표시등은 포털에 물어 고쳐 그리는데 밑줄은
+            쿠키 기준으로 남으면, 세션이 죽은 상태에서 "…까지" 가 같이 보여 엇갈린다.
+          */}
+          <SessionDot signedIn={signedIn} expiresAt={expiresAt} />
+          <div style={{ marginTop: 9, paddingLeft: 15 }}>{authSlot}</div>
+        </div>
       </div>
     </aside>
+  );
+}
+
+/** 지금 로그인한 사람과 앱 로그아웃. */
+function UserChipRow({ user }: { user: UserChip }) {
+  const [busy, setBusy] = useState(false);
+
+  async function signOut(): Promise<void> {
+    setBusy(true);
+    try {
+      await fetch("/api/auth/signout", { method: "POST" });
+      // 쿠키가 지워졌으므로 전체 이동으로 서버가 로그인 화면을 그리게 한다.
+      window.location.href = "/signin";
+    } catch {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{
+          fontSize: 13, fontWeight: 600, whiteSpace: "nowrap",
+          overflow: "hidden", textOverflow: "ellipsis",
+        }}>
+          {user.displayName === "" ? user.loginId : user.displayName}
+          {user.role === "owner" && (
+            <span style={{ color: COLOR.accent, fontSize: 10, marginLeft: 5, fontWeight: 700 }}>
+              OWNER
+            </span>
+          )}
+        </div>
+        <div style={{
+          fontSize: 11, color: COLOR.faint, fontFamily: MONO_STACK,
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>
+          {user.loginId}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={signOut}
+        disabled={busy}
+        style={{
+          fontSize: 11, color: COLOR.muted, background: "transparent",
+          border: `1px solid ${COLOR.field}`, borderRadius: RADIUS.badge,
+          padding: "4px 8px", cursor: "pointer", fontFamily: "inherit", flexShrink: 0,
+        }}
+      >
+        {busy ? "…" : "로그아웃"}
+      </button>
+    </div>
   );
 }
