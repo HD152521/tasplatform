@@ -14,7 +14,6 @@ import {
   ALLOWED_PARTY_SITES,
   API_HEADERS,
   API_ORIGIN,
-  CREDENTIALS,
   DEFAULT_TEAM_ID,
   REQUEST_DELAY_MS,
   sessionFileForTeam,
@@ -22,7 +21,14 @@ import {
 import { filterAllowedParties } from "../lib/partyFilter.ts";
 import { browserClient, fetchClient, type ApiClient } from "./httpClient.ts";
 import { loginContextOptions } from "../lib/browserIdentity.ts";
-import { OtpRequiredError, performCredentialLogin, saveSession } from "./autoLogin.ts";
+import {
+  CredentialsMissingError, OtpRequiredError, performCredentialLogin, saveSession,
+} from "./autoLogin.ts";
+import { getPortalCredentials } from "../lib/portalCredentials.ts";
+import {
+  LoginBlockedError, assertAutoLoginAllowed, failLimit, recordLoginAttempt,
+} from "../lib/loginGuard.ts";
+import { LoginAttemptError, outcomeOf } from "../lib/loginOutcome.ts";
 import { isoNow } from "../lib/dates.ts";
 import {
   finishRun, getExistingCaseIndex, getKnownThreadIds, getOpenCases, inTransaction,
@@ -141,8 +147,21 @@ async function acquireFastSession(teamId: string = DEFAULT_TEAM_ID): Promise<Col
  * 저장된 세션이 유효하면 그대로 쓰고, 만료됐으면 계정이 있을 때 한 번만 재로그인한다.
  * 재로그인도 실패하면 예외를 그대로 올려 'session_expired' 로 기록되게 한다.
  * (조용히 빈 결과를 돌려주면 '새 답변 없음'과 구분되지 않는다)
+ *
+ * ## 계정 잠금 방지
+ *
+ * 이 함수가 **15분마다** 불린다. 비밀번호가 바뀐 걸 모르면 틀린 비밀번호를 한 시간에
+ * 네 번 IdP 로 보내고, 그러면 공용 계정이 잠긴다. 그래서
+ *
+ *   1. 브라우저를 띄우기 **전에** 차단 여부를 본다(assertAutoLoginAllowed). 차단 중이면
+ *      로그인 화면까지 가지도 않는다 — 가면 비밀번호를 또 넣게 된다.
+ *   2. 결과를 반드시 기록한다(recordLoginAttempt). 성공·OTP 는 초기화, 거절은 가산.
+ *
+ * db 를 인자로 받는 이유도 이것이다 — 카운터는 프로세스 밖(DB)에 있어야 회차를 넘어
+ * 살아남는다. 자격도 DB 가 먼저다(설정 화면에서 바꾼 값).
  */
 async function acquireBrowserSession(
+  db: Db,
   teamId: string = DEFAULT_TEAM_ID,
 ): Promise<Awaited<ReturnType<typeof openSavedSession>>> {
   // 컨테이너 등 브라우저를 못 돌리는 환경에서는 아예 띄우지 않는다(디스크 ENOSPC·무한 재시도 방지).
@@ -153,6 +172,10 @@ async function acquireBrowserSession(
         "  브라우저가 되는 로컬/VM 에서 'npm run login' → 'npm run seed:session' 으로 세션을 다시 심으세요.",
     );
   }
+  // 자격을 먼저 읽는다. DB(설정 화면) → .env 순. 복호화가 깨지면 여기서 터지고,
+  // 그게 맞다 — 조용히 옛 비밀번호로 내려가면 그게 잠금으로 간다.
+  const credentials = await getPortalCredentials(db, teamId);
+
   try {
     const existing = await openSavedSession(teamId);
     try {
@@ -160,13 +183,21 @@ async function acquireBrowserSession(
       return existing;
     } catch (error) {
       await existing.close();
-      if (CREDENTIALS === null) throw error;
+      if (credentials === null) throw error;
       console.log("세션이 만료되어 저장된 계정으로 재로그인합니다.");
     }
   } catch (error) {
-    if (CREDENTIALS === null) throw error;
+    if (credentials === null) throw error;
     if (!(error instanceof SessionMissingError)) throw error;
     console.log("세션이 없어 저장된 계정으로 로그인합니다.");
+  }
+
+  if (credentials === null) throw new CredentialsMissingError();
+
+  // 차단 중이면 브라우저를 띄우지 않고 여기서 끝낸다(LoginBlockedError).
+  const before = await assertAutoLoginAllowed(db, teamId);
+  if (before.failCount > 0) {
+    console.log(`직전 로그인 실패 ${before.failCount}회 — ${before.remaining}회 더 실패하면 멈춥니다.`);
   }
 
   const browser = await launchBrowser(true);
@@ -180,7 +211,7 @@ async function acquireBrowserSession(
     // 기기 신뢰 쿠키를 넘겨야 무인 재로그인이 OTP 에 막히지 않는다.
     const context = await browser.newContext(loginContextOptions(browser, teamId));
     const page = await context.newPage();
-    await performCredentialLogin(page);
+    await performCredentialLogin(page, credentials);
     await page.close().catch(() => undefined);
     await saveSession(context, teamId);
 
@@ -192,19 +223,52 @@ async function acquireBrowserSession(
       },
     };
     await ensureSessionValid(session.context);
+    // 여기까지 왔으면 자격은 확실히 맞다. 카운터를 지운다.
+    await recordLoginAttempt(db, { outcome: "ok", reason: "", passwordSubmitted: true }, teamId);
     return session;
   } catch (error) {
     await browser.close().catch(() => undefined);
-    throw error;
+    throw await noteLoginFailure(db, teamId, error);
   }
 }
 
+/**
+ * 로그인 실패를 카운터에 기록하고, 사람이 읽을 한 줄을 붙여 되던진다.
+ *
+ * 기록이 실패해도 **원래 오류를 그대로 올린다** — 잠금 방지 기록이 수집 실패 보고를
+ * 가로채면 정작 무슨 일이 있었는지 모르게 된다.
+ */
+async function noteLoginFailure(db: Db, teamId: string, error: unknown): Promise<unknown> {
+  const facts = outcomeOf(error);
+  let note = "";
+  try {
+    const state = await recordLoginAttempt(db, facts, teamId);
+    if (state.blocked) {
+      note =
+        `\n  계정 잠금을 막기 위해 자동 로그인을 멈췄습니다. **스스로 다시 시도하지 않습니다.**` +
+        `\n  설정 화면(/settings/account)에서 새 비밀번호를 저장하거나, 로그인 화면에서 직접 로그인하세요.`;
+    } else if (facts.outcome !== "otp" && state.failCount > 0) {
+      note = `\n  (연속 실패 ${state.failCount}/${failLimit()}회 — ${state.remaining}회 더 실패하면 자동 시도를 멈춥니다)`;
+    }
+  } catch (recordError) {
+    console.error(
+      "[login] 잠금 방지 기록 실패:",
+      recordError instanceof Error ? recordError.message : String(recordError),
+    );
+  }
+
+  if (note === "" || !(error instanceof Error)) return error;
+  // 종류(instanceof)를 지켜야 위쪽 분류가 유지된다 — 메시지만 덧붙인다.
+  error.message = `${error.message}${note}`;
+  return error;
+}
+
 /** 빠른 경로를 먼저 시도하고, 안 되면 브라우저로 넘어간다. */
-async function acquireSession(teamId: string = DEFAULT_TEAM_ID): Promise<CollectSession> {
+async function acquireSession(db: Db, teamId: string = DEFAULT_TEAM_ID): Promise<CollectSession> {
   const fast = await acquireFastSession(teamId);
   if (fast !== null) return fast;
 
-  const browser = await acquireBrowserSession(teamId);
+  const browser = await acquireBrowserSession(db, teamId);
   return {
     client: browserClient(browser.context.request),
     persist: () => persistSession(browser.context, teamId),
@@ -305,7 +369,7 @@ async function main(): Promise<void> {
     // 덮어쓴다" 였는데 그건 refreshTeamSessionFromDb 의 동작이고 이 함수의 것이 아니다.
     // 그 오해로 "DB 가 항상 이긴다" 고 믿고 고치면 방금 회전된 세션을 되돌리게 된다.
     await hydrateTeamSessionFromDb(DEFAULT_TEAM_ID, db);
-    session = await acquireSession();
+    session = await acquireSession(db);
     // 접속하는 순간 서버가 세션 쿠키를 회전시킨다.
     // 갱신분을 저장하지 않으면 파일에 남은 옛 쿠키가 무효화되어 다음 실행이 실패한다.
     // 이는 데이터 쓰기가 아니므로 dry-run 에서도 반드시 저장한다.
@@ -385,10 +449,15 @@ async function main(): Promise<void> {
     report(cases.length, changes.length, replies);
     await announceReplies(replies);
   } catch (error) {
+    // 자격·세션 문제는 '수집 실패' 와 구분해 알린다. 사람이 할 일이 다르다
+    // (하나는 로그인/비밀번호, 하나는 코드·망 문제).
     const expired =
       error instanceof SessionExpiredError ||
       error instanceof SessionMissingError ||
-      error instanceof OtpRequiredError;
+      error instanceof OtpRequiredError ||
+      error instanceof CredentialsMissingError ||
+      error instanceof LoginBlockedError ||
+      error instanceof LoginAttemptError;
     const message = error instanceof Error ? error.message : String(error);
 
     await finishRun(db, runId, {

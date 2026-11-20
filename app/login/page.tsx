@@ -1,4 +1,8 @@
+import { requireUser } from "../../lib/appAuth.ts";
 import { getSessionStatus } from "../../lib/sessionFile.ts";
+import { openDb } from "../../lib/db.ts";
+import { getPortalCredentialsMeta } from "../../lib/portalCredentials.ts";
+import { readLoginGuard, type LoginGuardState } from "../../lib/loginGuard.ts";
 import { COLOR, Card } from "../ui.tsx";
 import { LoginForm } from "./LoginForm.tsx";
 
@@ -8,8 +12,40 @@ function formatWhen(ms: number): string {
   return new Date(ms).toLocaleString("ko-KR");
 }
 
-export default function LoginPage() {
+/**
+ * 저장된 계정과 잠금 방지 상태.
+ *
+ * DB 를 못 열어도 로그인 화면 자체는 떠야 한다 — 로그인은 DB 없이도 되는 동작이고,
+ * 여기서 터지면 사람이 세션을 복구할 유일한 창구가 닫힌다.
+ */
+async function readAccount(): Promise<{
+  username: string;
+  hasStored: boolean;
+  guard: LoginGuardState | null;
+}> {
+  try {
+    const db = await openDb();
+    try {
+      const meta = await getPortalCredentialsMeta(db);
+      return {
+        username: meta.username,
+        hasStored: meta.hasPassword,
+        guard: await readLoginGuard(db),
+      };
+    } finally {
+      await db.close();
+    }
+  } catch {
+    return { username: "", hasStored: false, guard: null };
+  }
+}
+
+export default async function LoginPage() {
+  // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
+  await requireUser("/login");
   const session = getSessionStatus();
+  const account = await readAccount();
+  const guard = account.guard;
 
   return (
     <div style={{ maxWidth: 460, margin: "0 auto" }}>
@@ -42,8 +78,25 @@ export default function LoginPage() {
         </div>
       </Card>
 
+      {guard !== null && guard.blocked && (
+        <Card style={{
+          padding: "14px 16px", marginBottom: 18, fontSize: 13, lineHeight: 1.7,
+          background: COLOR.waitUsBg, borderColor: `${COLOR.waitUs}33`, color: COLOR.waitUs,
+        }}>
+          <b>저장된 비밀번호로는 자동 로그인을 멈춘 상태입니다 (계정 잠금 방지)</b>
+          <div style={{ marginTop: 4 }}>
+            {guard.lastReason || "자격이 거절되었습니다"}
+            {guard.blockedAt !== "" && <> · {new Date(guard.blockedAt).toLocaleString("ko-KR")} 부터 멈춤</>}
+          </div>
+          <div style={{ marginTop: 6, color: COLOR.body }}>
+            여기서 <b>새 비밀번호로 로그인</b>하면(아래 체크박스를 켠 채) 저장된 값도 함께
+            바뀌어 자동 로그인이 바로 복구됩니다.
+          </div>
+        </Card>
+      )}
+
       <Card style={{ padding: "20px 22px" }}>
-        <LoginForm />
+        <LoginForm storedUsername={account.username} hasStored={account.hasStored} />
       </Card>
     </div>
   );

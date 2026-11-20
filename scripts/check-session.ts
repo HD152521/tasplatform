@@ -18,6 +18,10 @@ import { DEFAULT_TEAM_ID, sessionFileForTeam } from "../lib/config.ts";
 import { resolveDbTarget } from "../lib/dbConn.ts";
 import { openDb } from "../lib/db.ts";
 import { getSessionStatus, sessionStatusFromJson } from "../lib/sessionFile.ts";
+import {
+  getPortalCredentialsMeta, type PortalCredentialsMeta,
+} from "../lib/portalCredentials.ts";
+import { readLoginGuard, type LoginGuardState } from "../lib/loginGuard.ts";
 
 function line(label: string, value: string): void {
   console.log(`  ${label.padEnd(18)} ${value}`);
@@ -66,11 +70,17 @@ async function main(): Promise<void> {
   console.log("\n[3] DB 백업 (team_session_state)");
   const db = await openDb();
   let backup: { updated_at: string; session_json: string } | undefined;
+  let account: PortalCredentialsMeta | null = null;
+  let guard: LoginGuardState | null = null;
   try {
     backup = await db.get<{ updated_at: string; session_json: string }>(
       "SELECT updated_at, session_json FROM team_session_state WHERE team_id = ?",
       [teamId],
     );
+    // 세션이 만료됐을 때 "무인 재로그인이 될 상태인가" 를 같이 본다. 계정이 없거나
+    // 잠금 방지로 차단돼 있으면, 세션이 만료되는 순간부터 사람이 손을 써야 한다.
+    account = await getPortalCredentialsMeta(db);
+    guard = await readLoginGuard(db);
   } catch (error) {
     line("상태", `✗ 읽기 실패: ${error instanceof Error ? error.message : String(error)}`);
     line("뜻", "백업이 동작하지 않는다. 수집기의 '세션 DB 백업 실패' 로그를 봐야 한다.");
@@ -88,7 +98,35 @@ async function main(): Promise<void> {
     line("SSO 세션", describe(remote.expiresAt, remote.expired));
   }
 
-  console.log("\n[4] 판정");
+  console.log("\n[4] 자동 로그인 계정 · 잠금 방지");
+  if (account === null) {
+    line("상태", "✗ 읽지 못했다(위 DB 오류 참고)");
+  } else if (!account.hasPassword) {
+    line("계정", "✗ 없음 — 세션이 만료되면 사람이 매번 로그인해야 한다");
+  } else {
+    line("계정", `${account.username} (${account.source === "db" ? "설정 화면" : ".env"})`);
+    if (account.source === "db" && account.updatedAt !== "") {
+      line("마지막 변경", `${account.updatedAt}${account.updatedBy === "" ? "" : ` (${account.updatedBy})`}`);
+    }
+  }
+  if (guard !== null) {
+    if (guard.blocked) {
+      line("자동 로그인", "✗ 중단됨 (계정 잠금 방지) — 스스로 재시도하지 않는다");
+      line("멈춘 시각", guard.blockedAt || "(기록 없음)");
+      line("사유", guard.lastReason || "(없음)");
+      line("풀는 법", "새 비밀번호를 /settings/account 에 저장 (또는 화면에서 직접 로그인)");
+    } else if (guard.failCount > 0) {
+      line("자동 로그인", `△ 연속 실패 ${guard.failCount}회 — ${guard.remaining}회 더 실패하면 중단`);
+      line("사유", guard.lastReason || "(없음)");
+    } else {
+      line("자동 로그인", "✓ 정상");
+    }
+    if (guard.lastAttemptAt !== "") {
+      line("마지막 시도", `${guard.lastAttemptAt} (${guard.lastResult || "기록 없음"})`);
+    }
+  }
+
+  console.log("\n[5] 판정");
   // 쓰기 경로는 hydrate 후의 상태를 쓴다 — 둘 중 하나라도 살아 있으면 쓸 수 있다.
   if (!local.expired) {
     console.log("\n  ✓ 로컬 세션이 살아 있다. SR 등록·답변이 지금 된다.");
@@ -100,6 +138,15 @@ async function main(): Promise<void> {
     return;
   }
   console.log("\n  ✗ 로컬도 DB 도 만료됐다. 쓰기는 지금 불가능하다.");
+  if (guard !== null && guard.blocked) {
+    // 이 경우 refresh 부터 시키면 안 된다 — --auto 는 차단을 지키므로 실패하고,
+    // 사람은 "명령이 안 듣는다" 고 읽는다. 순서를 먼저 말한다.
+    console.log("    ⚠ 저장된 비밀번호가 거절된 상태라 'npm run refresh' 는 실패한다.");
+    console.log("      먼저 /settings/account 에서 새 비밀번호를 저장하라.");
+    console.log("      (또는 브라우저가 되는 곳에서 'npm run login' 으로 직접 로그인)");
+    process.exitCode = 1;
+    return;
+  }
   console.log("    Playwright 가 있는 곳(수집기 VM)에서 로그인해 DB 까지 올린다:");
   console.log("      npm run refresh");
   console.log(`    SSO 세션은 약 12시간이다 — 로그인 직후에 등록해야 한다.`);

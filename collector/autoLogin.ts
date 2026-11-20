@@ -13,7 +13,6 @@ import type { BrowserContext, Page } from "playwright";
 import {
   API_HEADERS,
   API_ORIGIN,
-  CREDENTIALS,
   DEFAULT_TEAM_ID,
   NAV_TIMEOUT_MS,
   PORTAL_HOME,
@@ -21,24 +20,27 @@ import {
   sessionFileForTeam,
 } from "../lib/config.ts";
 import { saveDeviceState, type StorageState } from "../lib/browserIdentity.ts";
-import { LOGIN_SEL, describeLoginPage, findLoginRoot } from "./loginFields.ts";
+import { LOGIN_SEL, describeLoginPage, findLoginRoot, readLoginError } from "./loginFields.ts";
+import { LoginAttemptError, OtpRequiredError, rejectionMessage } from "../lib/loginOutcome.ts";
 import { warmAttachmentHost } from "../lib/attachmentWarmup.ts";
 
-export class OtpRequiredError extends Error {
-  constructor() {
-    super(
-      "OTP 인증이 필요합니다. 자동 로그인으로는 진행할 수 없습니다.\n" +
-        "  'npm run login' 을 직접 실행해 브라우저에서 OTP를 입력하세요.",
-    );
-    this.name = "OtpRequiredError";
-  }
+// OtpRequiredError 는 lib/loginOutcome.ts 가 정본이다 — 잠금 방지 카운터(lib/loginGuard.ts)가
+// "OTP 는 비밀번호가 통과한 것" 으로 판정해야 해서 판정 쪽에 둔다. 여기서 쓰던 이름은
+// 그대로 내보낸다(collector/login.ts 등이 이 경로로 가져간다).
+export { OtpRequiredError };
+
+/** 로그인에 쓸 자격. .env 또는 DB 에서 온다(lib/portalCredentials.ts). */
+export interface LoginCredentials {
+  readonly username: string;
+  readonly password: string;
 }
 
 export class CredentialsMissingError extends Error {
   constructor() {
     super(
       "자동 로그인 계정이 설정되지 않았습니다.\n" +
-        "  .env 에 SR_USERNAME / SR_PASSWORD 를 넣거나 'npm run login' 을 실행하세요.",
+        "  설정 화면(/settings/account)에서 계정을 저장하거나, .env 에 SR_USERNAME / SR_PASSWORD 를\n" +
+        "  넣거나, 'npm run login' 으로 직접 로그인하세요.",
     );
     this.name = "CredentialsMissingError";
   }
@@ -97,10 +99,26 @@ async function sessionEstablished(page: Page): Promise<boolean> {
 
 /**
  * 로그인 화면에서 ID/비번을 채워 넣는다.
- * 성공하면 true, OTP를 요구받으면 OtpRequiredError.
+ *
+ * 성공하면 그냥 돌아온다. 실패는 **왜 실패했는지로 갈라서** 던진다. 잠금 방지
+ * 카운터(lib/loginGuard.ts)가 그 종류로 "셀 것 / 세지 않을 것" 을 판단하기 때문이다.
+ *
+ *   OtpRequiredError            비밀번호는 통과. 사람이 OTP 를 넣어야 한다
+ *   LoginAttemptError(rejected) 자격 거절 — 다시 보내면 IdP 실패 횟수만 오른다
+ *   LoginAttemptError(locked)   이미 잠겼다 — 더 찔러서 잠금을 늘리지 않는다
+ *   LoginAttemptError(expired)  비밀번호 만료 — 사람이 바꿔야 한다
+ *   LoginAttemptError(failed)   그 외. passwordSubmitted 로 "비번을 넣었는지" 를 구분한다
+ *
+ * 자격은 인자로 받는다. 전에는 모듈 로드 시점의 .env 상수(CREDENTIALS)를 직접 읽었는데,
+ * 그러면 화면에서 비밀번호를 바꿔도(DB) 수집기가 옛 값을 쓴다.
  */
-export async function performCredentialLogin(page: Page): Promise<void> {
-  if (CREDENTIALS === null) throw new CredentialsMissingError();
+export async function performCredentialLogin(
+  page: Page,
+  credentials: LoginCredentials,
+): Promise<void> {
+  if (credentials.username === "" || credentials.password === "") {
+    throw new CredentialsMissingError();
+  }
 
   await page.goto(PORTAL_HOME, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
 
@@ -123,28 +141,53 @@ export async function performCredentialLogin(page: Page): Promise<void> {
 
   const username = root.locator(LOGIN_SEL.username).first();
   if ((await username.count()) > 0 && (await username.isVisible().catch(() => false))) {
-    await username.fill(CREDENTIALS.username);
+    await username.fill(credentials.username);
     // 기기 신뢰를 유지해야 다음 로그인에서 OTP를 다시 묻지 않는다.
     const remember = root.locator(LOGIN_SEL.rememberMe).first();
     if ((await remember.count()) > 0 && !(await remember.isChecked().catch(() => false))) {
       await remember.check().catch(() => undefined);
     }
     await root.locator(LOGIN_SEL.submit).first().click();
-    await root.locator(LOGIN_SEL.password).first()
-      .waitFor({ state: "visible", timeout: NAV_TIMEOUT_MS });
+    try {
+      await root.locator(LOGIN_SEL.password).first()
+        .waitFor({ state: "visible", timeout: NAV_TIMEOUT_MS });
+    } catch (error) {
+      // 비밀번호 칸이 안 뜬 이유가 **아이디 거절**일 수 있다. 전에는 90초 기다린 뒤
+      // "입력칸 없음" 으로 끝나서, 틀린 아이디로 영원히 재시도했다.
+      const rejection = await readLoginError(page);
+      if (rejection !== null) {
+        throw new LoginAttemptError(rejection.kind, rejectionMessage(rejection), {
+          // 비번은 아직 안 넣었지만 IdP 는 자격을 판정했다 — 거절은 세어야 한다.
+          passwordSubmitted: false,
+          hint: rejection.hint,
+        });
+      }
+      throw error;
+    }
   }
-  await root.locator(LOGIN_SEL.password).first().fill(CREDENTIALS.password);
+  await root.locator(LOGIN_SEL.password).first().fill(credentials.password);
   await root.locator(LOGIN_SEL.submit).first().click();
 
-  // 포털 복귀 또는 OTP 화면 중 먼저 오는 쪽을 기다린다.
-  // 세션 발급까지 기다린다. OTP 화면이 먼저 뜨면 우회하지 않고 사람에게 넘긴다.
+  // ── 이 줄 아래의 실패는 모두 "비밀번호를 제출한" 실패다(passwordSubmitted: true).
+  //    그래야 잠금 방지 카운터가 제대로 센다.
+
+  // 세션 발급·OTP·거절 중 먼저 오는 쪽을 기다린다. OTP 는 우회하지 않고 사람에게 넘긴다.
   const deadline = Date.now() + NAV_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await sessionEstablished(page)) return;
     if (await looksLikeOtpScreen(page)) throw new OtpRequiredError();
+    const rejection = await readLoginError(page);
+    if (rejection !== null) {
+      throw new LoginAttemptError(rejection.kind, rejectionMessage(rejection), {
+        passwordSubmitted: true,
+        hint: rejection.hint,
+      });
+    }
     await page.waitForTimeout(1500);
   }
-  throw new Error("로그인 후 세션이 발급되지 않았습니다 (타임아웃).");
+  throw new LoginAttemptError("failed", "로그인 후 세션이 발급되지 않았습니다 (타임아웃).", {
+    passwordSubmitted: true,
+  });
 }
 
 /**

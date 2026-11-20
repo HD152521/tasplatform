@@ -9,18 +9,50 @@
 import { loadEnv } from "../lib/env.ts";
 loadEnv();
 
-import { CREDENTIALS, NAV_TIMEOUT_MS, PORTAL_HOME } from "../lib/config.ts";
+import { DEFAULT_TEAM_ID, NAV_TIMEOUT_MS, PORTAL_HOME } from "../lib/config.ts";
 import { deviceTrustAvailable, loginContextOptions } from "../lib/browserIdentity.ts";
 import { launchBrowser } from "./session.ts";
 import {
   CredentialsMissingError, OtpRequiredError,
   performCredentialLogin, saveSession,
 } from "./autoLogin.ts";
+import { openDb, type Db } from "../lib/db.ts";
+import { getPortalCredentials } from "../lib/portalCredentials.ts";
+import {
+  assertAutoLoginAllowed, clearLoginGuard, readLoginGuard, recordLoginAttempt,
+} from "../lib/loginGuard.ts";
+import { outcomeOf } from "../lib/loginOutcome.ts";
 
 const AUTO = process.argv.includes("--auto");
 const POLL_MS = 3000;
 const MAX_WAIT_MS = 60 * 60 * 1000;
 async function main(): Promise<void> {
+  // 자격과 잠금 방지 상태는 DB 에 있다(설정 화면에서 바꾼 값이 여기로 온다).
+  const db = await openDb();
+  try {
+    await run(db);
+  } finally {
+    await db.close();
+  }
+}
+
+async function run(db: Db): Promise<void> {
+  const credentials = await getPortalCredentials(db);
+  const guard = await readLoginGuard(db);
+
+  // --auto 는 무인 경로다. 차단 중이면 여기서 끝낸다(비밀번호를 또 보내지 않는다).
+  if (AUTO) await assertAutoLoginAllowed(db);
+
+  // 창을 띄우는 경로에서 차단 중이면 **저장된 비밀번호로는 시도하지 않는다.** 이미 두 번
+  // 거절된 값을 또 보내면 잠금만 가까워진다. 사람이 직접 치도록 바로 넘긴다.
+  const autoAllowed = credentials !== null && !guard.blocked;
+  if (credentials !== null && guard.blocked) {
+    console.log(
+      `저장된 계정은 자동 시도가 멈춰 있습니다 — ${guard.lastReason || "거절"}.`,
+    );
+    console.log("저장된 비밀번호로는 시도하지 않습니다. 브라우저에서 직접 로그인하세요.");
+  }
+
   const browser = await launchBrowser(!AUTO ? false : true);
   // 기기 신뢰 쿠키를 넘겨야 IdP 가 같은 기기로 보고 OTP 를 생략한다.
   const context = await browser.newContext(loginContextOptions(browser));
@@ -28,10 +60,17 @@ async function main(): Promise<void> {
   const page = await context.newPage();
 
   try {
-    if (CREDENTIALS !== null) {
-      console.log(`저장된 계정으로 로그인 시도: ${CREDENTIALS.username}`);
-      await performCredentialLogin(page);
+    if (autoAllowed && credentials !== null) {
+      const where = credentials.source === "db" ? "설정 화면" : ".env";
+      console.log(`저장된 계정으로 로그인 시도: ${credentials.username} (${where})`);
+      try {
+        await performCredentialLogin(page, credentials);
+      } catch (error) {
+        await record(db, error);
+        throw error;
+      }
       const path = await saveSession(context);
+      await recordLoginAttempt(db, { outcome: "ok", reason: "", passwordSubmitted: true });
       console.log(`자동 로그인 성공. 세션 저장 -> ${path}`);
       return;
     }
@@ -73,6 +112,39 @@ async function main(): Promise<void> {
 
   await browser.close().catch(() => undefined);
   console.log(`\n세션 저장 완료 -> ${savedPath}`);
+
+  // 사람이 직접 로그인해 세션이 생겼다. 잠금 방지 카운터를 푼다.
+  // 다만 **저장된 비밀번호는 그대로**다 — 그걸 안 바꾸면 다음 무인 회차가 또 거절당한다.
+  // 그 한 줄을 반드시 말해 준다. 이게 "고친 줄 알았는데 또 잠겼다" 를 막는다.
+  if (savedPath !== "") {
+    await clearLoginGuard(db, DEFAULT_TEAM_ID, "사람이 직접 로그인");
+    const stored = await getPortalCredentials(db);
+    if (stored !== null) {
+      const where = stored.source === "db" ? "설정 화면" : ".env";
+      console.log(
+        `주의: 저장된 비밀번호(${where})는 그대로입니다.` +
+          " 비밀번호를 바꾸셨다면 /settings/account 에서 새 값도 저장하세요.",
+      );
+    }
+  }
+}
+
+/** 실패 사유를 잠금 방지 카운터에 넣는다. 기록이 깨져도 로그인 보고를 가리지 않는다. */
+async function record(db: Db, error: unknown): Promise<void> {
+  try {
+    const state = await recordLoginAttempt(db, outcomeOf(error));
+    if (state.blocked) {
+      console.error(
+        "자동 로그인을 멈췄습니다(계정 잠금 방지). 스스로 다시 시도하지 않습니다 —" +
+          " 설정 화면에 새 비밀번호를 저장하거나 여기서 직접 로그인하세요.",
+      );
+    }
+  } catch (recordError) {
+    console.error(
+      "[login] 잠금 방지 기록 실패:",
+      recordError instanceof Error ? recordError.message : String(recordError),
+    );
+  }
 }
 
 main()

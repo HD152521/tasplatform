@@ -19,8 +19,15 @@ import { DEFAULT_TEAM_ID, NAV_TIMEOUT_MS, PORTAL_HOME, deviceFileForTeam, sessio
 import { persistTeamSessionToDb } from "./sessionStore.ts";
 import { loginContextOptions, saveDeviceState, type StorageState } from "./browserIdentity.ts";
 import { launchBrowser } from "../collector/session.ts";
-import { LOGIN_SEL, describeLoginPage, findLoginRoot } from "../collector/loginFields.ts";
+import { LOGIN_SEL, describeLoginPage, findLoginRoot, readLoginError } from "../collector/loginFields.ts";
 import { warmAttachmentHost } from "./attachmentWarmup.ts";
+import { openDb } from "./db.ts";
+import { decryptSecret, encryptSecret } from "./secretBox.ts";
+import { getPortalCredentials, savePortalCredentialsEncrypted } from "./portalCredentials.ts";
+import { recordLoginAttempt } from "./loginGuard.ts";
+import {
+  LoginAttemptError, outcomeOf, rejectionMessage, type AttemptFacts,
+} from "./loginOutcome.ts";
 
 const FLOW_TTL_MS = 10 * 60 * 1000;
 const STEP_TIMEOUT_MS = 60_000;
@@ -34,7 +41,7 @@ const SEL = {
 } as const;
 
 export type LoginResult =
-  | { status: "done" }
+  | { status: "done"; warning?: string }
   | { status: "otp_required"; flowId: string; hint: string }
   | { status: "error"; message: string };
 
@@ -45,6 +52,23 @@ interface Flow {
   createdAt: number;
   /** 어느 팀(공용 계정)의 로그인인지. 세션·기기신뢰 파일 경로를 결정한다. */
   teamId: string;
+  username: string;
+  /**
+   * 방금 입력받은 비밀번호 — **암호문**이다(lib/secretBox.ts).
+   *
+   * OTP 를 기다리는 동안 흐름을 붙잡고 있어야 하는데, 그 사이 평문을 들고 있지 않기 위해
+   * 받은 즉시 암호화해 둔다. 성공하면(그리고 remember 면) 이 값을 그대로 저장한다.
+   */
+  passwordEnc: string;
+  /** 성공 시 이 자격을 자동 로그인용으로 저장할지. */
+  remember: boolean;
+}
+
+export interface StartLoginOptions {
+  /** 성공하면 이 계정을 자동 로그인용으로 저장한다(암호화). */
+  readonly remember?: boolean;
+  /** 감사 로그에 남길 사람. */
+  readonly actor?: string;
 }
 
 /** 진행 중인 로그인 흐름. 개발 모드의 모듈 재적재에도 살아남도록 전역에 둔다. */
@@ -232,7 +256,13 @@ async function otpHint(page: Page): Promise<string> {
   return masked ? `${masked[0]} 으로 발송된 코드를 입력하세요.` : "발송된 인증 코드를 입력하세요.";
 }
 
-/** 포털 복귀 / OTP 입력 중 먼저 오는 쪽을 기다린다. 중간 단계는 눌러서 넘긴다. */
+/**
+ * 포털 복귀 / OTP 입력 중 먼저 오는 쪽을 기다린다. 중간 단계는 눌러서 넘긴다.
+ *
+ * **자격이 거절되면 기다리지 않고 바로 던진다.** 전에는 거절을 알아보지 못해 60초를
+ * 꽉 기다린 뒤 "다음 단계로 넘어가지 못했습니다 + 화면 덤프" 로 끝났다. 사람은 그 덤프를
+ * 읽고 비밀번호가 틀렸다는 걸 추측해야 했고, 잠금 방지 카운터도 올릴 수 없었다.
+ */
 async function settle(page: Page): Promise<"done" | "otp"> {
   const deadline = Date.now() + STEP_TIMEOUT_MS;
   const clicked = new Set<string>();
@@ -240,6 +270,13 @@ async function settle(page: Page): Promise<"done" | "otp"> {
   while (Date.now() < deadline) {
     if (signedIn(page)) return "done";
     if (await hasOtpInput(page)) return "otp";
+    const rejection = await readLoginError(page);
+    if (rejection !== null) {
+      throw new LoginAttemptError(rejection.kind, rejectionMessage(rejection), {
+        passwordSubmitted: true,
+        hint: rejection.hint,
+      });
+    }
     // 방식 선택 화면이 먼저 뜬다. 이메일 옵션을 눌러 코드 발송 단계로 넘긴다.
     if (await chooseFactor(page)) {
       await page.waitForTimeout(3000);
@@ -265,28 +302,81 @@ async function saveSession(context: BrowserContext, teamId: string): Promise<voi
   saveDeviceState(state as StorageState, deviceFileForTeam(teamId));
 }
 
-async function finish(flowId: string, flow: Flow): Promise<void> {
+/**
+ * 로그인이 성공한 뒤의 DB 일거리 — 세션 백업, 자격 저장, 잠금 방지 카운터.
+ *
+ * 돌려주는 문자열은 **화면에 띄울 경고**다(없으면 빈 문자열). 여기서 경고가 나오는
+ * 경우는 하나다: 로그인은 됐는데 **자동 로그인이 쓸 비밀번호는 여전히 옛것**인 경우.
+ * 그대로 두면 수집기가 다음 회차에 옛 비밀번호로 시도하고, 그게 계정을 잠근다.
+ * 사람 입장에서는 "방금 로그인 잘 됐는데 왜?" 라서, 말해 주지 않으면 절대 모른다.
+ */
+async function settleDb(flow: Flow, actor: string): Promise<string> {
+  const db = await openDb();
+  try {
+    // **DB 에도 올린다.** 파일에만 두면 방금 만든 세션이 이 기계 밖으로 나가지 못한다.
+    //
+    // 화면에서 재로그인하면 웹은 로컬 파일로 바로 되지만, 수집기(VM)는 그 세션을 볼 길이
+    // 없어 15분 뒤에도 죽은 세션으로 시도한다. TAS 는 파일시스템이 ephemeral 이라
+    // 그 사이 재시작이 일어나면 방금 로그인한 세션이 통째로 사라지기까지 한다.
+    //
+    // 앞서 "웹이 수집기의 새 세션을 못 본다" 를 고쳤는데, 이건 **반대 방향의 같은 구멍**
+    // 이었다. 백업이 실패해도 로그인 자체는 이미 성공이므로 막지 않는다.
+    await persistTeamSessionToDb(flow.teamId, db);
+
+    if (flow.remember && flow.passwordEnc !== "") {
+      await savePortalCredentialsEncrypted(db, {
+        teamId: flow.teamId,
+        username: flow.username,
+        passwordEnc: flow.passwordEnc,
+        actor,
+      });
+      // savePortalCredentials* 가 카운터까지 지운다 — 사람이 새 값을 넣었으니 즉시 재시도.
+      return "";
+    }
+
+    const stored = await getPortalCredentials(db, flow.teamId).catch(() => null);
+    if (stored === null) {
+      return (
+        "자동 로그인에 쓸 계정이 저장돼 있지 않습니다. 세션이 만료되면(약 12시간) 다시" +
+        " 로그인해야 합니다. 설정 화면에서 저장하면 수집기가 알아서 갱신합니다."
+      );
+    }
+
+    const typed = flow.passwordEnc === "" ? "" : decryptSecret(flow.passwordEnc);
+    const same = stored.username === flow.username && stored.password === typed;
+    if (!same) {
+      // 카운터를 **일부러 지우지 않는다.** 저장된 값은 여전히 거절될 값이므로, 차단이
+      // 걸려 있다면 그대로 두는 쪽이 안전하다(세션은 방금 살아났으니 수집은 돈다).
+      return (
+        "로그인은 성공했지만, 자동 로그인에 저장된 비밀번호는 예전 값입니다." +
+        " 그대로 두면 세션이 만료된 뒤 수집기가 옛 비밀번호로 시도해 계정이 잠길 수 있습니다." +
+        " 설정 화면(/settings/account)에서 새 비밀번호를 저장하세요."
+      );
+    }
+
+    await recordLoginAttempt(db, { outcome: "ok", reason: "", passwordSubmitted: true }, flow.teamId);
+    return "";
+  } finally {
+    await db.close();
+  }
+}
+
+async function finish(flowId: string, flow: Flow, actor = ""): Promise<string> {
   await saveSession(flow.context, flow.teamId);
 
-  // **DB 에도 올린다.** 파일에만 두면 방금 만든 세션이 이 기계 밖으로 나가지 못한다.
-  //
-  // 화면에서 재로그인하면 웹은 로컬 파일로 바로 되지만, 수집기(VM)는 그 세션을 볼 길이
-  // 없어 15분 뒤에도 죽은 세션으로 시도한다. TAS 는 파일시스템이 ephemeral 이라
-  // 그 사이 재시작이 일어나면 방금 로그인한 세션이 통째로 사라지기까지 한다.
-  //
-  // 앞서 "웹이 수집기의 새 세션을 못 본다" 를 고쳤는데, 이건 **반대 방향의 같은 구멍**
-  // 이었다. 백업이 실패해도 로그인 자체는 이미 성공이므로 막지 않는다.
+  let warning = "";
   try {
-    await persistTeamSessionToDb(flow.teamId);
+    warning = await settleDb(flow, actor);
   } catch (error) {
     console.error(
-      "[login] 세션 DB 백업 실패(로그인 자체는 성공):",
+      "[login] 로그인 후처리 실패(로그인 자체는 성공):",
       error instanceof Error ? error.message : String(error),
     );
   }
 
   flows.delete(flowId);
   await flow.browser.close().catch(() => undefined);
+  return warning;
 }
 
 /**
@@ -297,6 +387,7 @@ export async function startLogin(
   username: string,
   password: string,
   teamId: string = DEFAULT_TEAM_ID,
+  options: StartLoginOptions = {},
 ): Promise<LoginResult> {
   sweepExpired();
 
@@ -323,7 +414,21 @@ export async function startLogin(
     browser = await launchBrowser(true);
     const context = await browser.newContext(loginContextOptions(browser, teamId));
     const page = await context.newPage();
-    flow = { browser, context, page, createdAt: Date.now(), teamId };
+    flow = {
+      browser, context, page, createdAt: Date.now(), teamId,
+      username: username.trim(),
+      // 평문을 흐름에 남기지 않는다. 받은 즉시 암호화해 두고 성공한 뒤에만 쓴다.
+      // SR_SECRET_KEY 가 없으면 암호화할 수 없다 — 그때는 저장을 포기하고(빈 문자열)
+      // 로그인만 진행한다. 로그인을 못 하게 막을 이유는 아니다.
+      passwordEnc: (() => {
+        try {
+          return encryptSecret(password);
+        } catch {
+          return "";
+        }
+      })(),
+      remember: options.remember === true,
+    };
 
     await page.goto(PORTAL_HOME, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
 
@@ -355,21 +460,50 @@ export async function startLogin(
     const outcome = await settle(page);
     if (outcome === "done") {
       const id = randomUUID();
-      await finish(id, flow);
-      return { status: "done" };
+      const warning = await finish(id, flow, options.actor ?? "");
+      return warning === "" ? { status: "done" } : { status: "done", warning };
     }
+
+    // OTP 화면이 떴다 = 비밀번호는 통과했다. 잠금 방지 카운터를 되돌린다.
+    await note({ outcome: "otp", reason: "OTP 대기", passwordSubmitted: true }, teamId);
 
     const flowId = randomUUID();
     flows.set(flowId, flow);
     return { status: "otp_required", flowId, hint: await otpHint(page) };
   } catch (error) {
     if (browser !== null) await browser.close().catch(() => undefined);
+    await note(outcomeOf(error), teamId);
     return { status: "error", message: error instanceof Error ? error.message : String(error) };
   }
 }
 
+/**
+ * 시도 결과를 잠금 방지 카운터에 남긴다.
+ *
+ * 화면에서 사람이 치는 로그인도 **IdP 의 같은 실패 횟수를 올린다.** 그래서 여기서도
+ * 센다. 다만 화면 로그인 자체를 막지는 않는다 — 새 비밀번호를 넣는 바로 그 경로이고,
+ * 사람이 보고 있으니 무인 반복과 성질이 다르다.
+ *
+ * 기록이 깨져도 로그인 결과를 가리지 않는다(여기서 던지지 않는다).
+ */
+async function note(facts: AttemptFacts, teamId: string): Promise<void> {
+  try {
+    const db = await openDb();
+    try {
+      await recordLoginAttempt(db, facts, teamId);
+    } finally {
+      await db.close();
+    }
+  } catch (error) {
+    console.error(
+      "[login] 잠금 방지 기록 실패:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
 /** 2단계: OTP 제출. */
-export async function submitOtp(flowId: string, code: string): Promise<LoginResult> {
+export async function submitOtp(flowId: string, code: string, actor = ""): Promise<LoginResult> {
   sweepExpired();
 
   const flow = flows.get(flowId);
@@ -394,8 +528,8 @@ export async function submitOtp(flowId: string, code: string): Promise<LoginResu
       return { status: "error", message: "코드가 맞지 않는 것 같습니다. 다시 입력해 주세요." };
     }
 
-    await finish(flowId, flow);
-    return { status: "done" };
+    const warning = await finish(flowId, flow, actor);
+    return warning === "" ? { status: "done" } : { status: "done", warning };
   } catch (error) {
     return { status: "error", message: error instanceof Error ? error.message : String(error) };
   }

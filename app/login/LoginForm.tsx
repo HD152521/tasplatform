@@ -4,7 +4,7 @@ import { useState } from "react";
 import { COLOR } from "../ui.tsx";
 
 type Result =
-  | { status: "done" }
+  | { status: "done"; warning?: string }
   | { status: "otp_required"; flowId: string; hint: string }
   | { status: "error"; message: string };
 
@@ -21,6 +21,13 @@ const labelStyle = {
   marginBottom: 6, color: COLOR.ink,
 };
 
+interface Props {
+  /** 지금 저장돼 있는 아이디. 비어 있으면 빈 칸으로 시작한다. */
+  readonly storedUsername?: string;
+  /** 자동 로그인용 비밀번호가 이미 저장돼 있는가. 체크박스 설명이 달라진다. */
+  readonly hasStored?: boolean;
+}
+
 async function post(url: string, body: unknown): Promise<Result> {
   const response = await fetch(url, {
     method: "POST",
@@ -30,20 +37,25 @@ async function post(url: string, body: unknown): Promise<Result> {
   return (await response.json()) as Result;
 }
 
-export function LoginForm() {
+export function LoginForm({ storedUsername = "", hasStored = false }: Props) {
   const [stage, setStage] = useState<Stage>("credentials");
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState(storedUsername);
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [flowId, setFlowId] = useState("");
   const [hint, setHint] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
+  // 기본값을 켜 둔다. 이게 꺼져 있으면 비밀번호를 바꾼 사람이 여기서 로그인만 하고
+  // 끝내게 되고, 수집기는 옛 비밀번호로 계속 시도한다 — 그게 계정을 잠근다.
+  const [remember, setRemember] = useState(true);
 
   function apply(result: Result): void {
     if (result.status === "done") {
       setStage("done");
       setPassword("");
+      setWarning(result.warning ?? "");
       return;
     }
     if (result.status === "otp_required") {
@@ -61,7 +73,7 @@ export function LoginForm() {
     setBusy(true);
     setError("");
     try {
-      apply(await post("/api/login/start", { username, password }));
+      apply(await post("/api/login/start", { username, password, remember }));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -100,6 +112,19 @@ export function LoginForm() {
         <div style={{ marginTop: 4 }}>
           세션이 저장됐습니다. 이제 수집기가 재로그인 없이 동작합니다.
         </div>
+        {warning !== "" && (
+          <div style={{
+            marginTop: 10, background: COLOR.warnBg, color: COLOR.warn,
+            border: `1px solid ${COLOR.warn}33`, borderRadius: 8, padding: "10px 12px",
+            fontSize: 13, lineHeight: 1.65,
+          }}>
+            {warning}
+            {" "}
+            <a href="/settings/account" style={{ color: COLOR.warn, fontWeight: 600 }}>
+              계정 설정으로 →
+            </a>
+          </div>
+        )}
         <a href="/" style={{ color: COLOR.accent, textDecoration: "none", display: "inline-block", marginTop: 10 }}>
           케이스 목록으로 →
         </a>
@@ -129,7 +154,7 @@ export function LoginForm() {
               placeholder="name@example.com" style={inputStyle} disabled={busy}
             />
           </div>
-          <div style={{ marginBottom: 18 }}>
+          <div style={{ marginBottom: 14 }}>
             <label htmlFor="p" style={labelStyle}>비밀번호</label>
             <input
               id="p" type="password" autoComplete="current-password" required
@@ -137,6 +162,32 @@ export function LoginForm() {
               style={inputStyle} disabled={busy}
             />
           </div>
+          {/*
+            자동 로그인용으로 저장할지. 로그인이 **성공한 뒤에만** 암호화해 저장한다
+            (틀린 비밀번호는 저장되지 않는다).
+
+            기본값이 켜져 있는 이유: 비밀번호 회전 때 사람이 여기서 로그인만 하고 끝내면,
+            수집기는 저장된 옛 비밀번호로 계속 시도해 공용 계정을 잠근다. 켜 두는 쪽이
+            안전하다.
+          */}
+          <label style={{
+            display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 18,
+            fontSize: 12.5, color: COLOR.body, lineHeight: 1.6, cursor: "pointer",
+          }}>
+            <input
+              type="checkbox" checked={remember} disabled={busy}
+              onChange={(e) => setRemember(e.target.checked)}
+              style={{ marginTop: 2 }}
+            />
+            <span>
+              이 계정을 자동 로그인에 쓰기 (암호화해 저장)
+              <span style={{ display: "block", color: COLOR.faint, fontSize: 11.5 }}>
+                {hasStored
+                  ? "저장된 비밀번호를 이 값으로 바꿉니다. 끄면 이번 로그인에만 쓰입니다."
+                  : "끄면 이번 로그인에만 쓰이고, 세션이 만료되면 또 로그인해야 합니다."}
+              </span>
+            </span>
+          </label>
         </>
       ) : (
         <>
