@@ -16,6 +16,7 @@ import {
 } from "../../lib/quickAdd.ts";
 import { COLOR, Card, MONO_STACK, Notice, RADIUS, controlStyle } from "../ui.tsx";
 import { EventPanel } from "./EventPanel.tsx";
+import { TokenInput } from "./TokenInput.tsx";
 import {
   EventForm,
   emptyFormValue,
@@ -118,7 +119,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
   const [importFromDate, setImportFromDate] = useState("");
   const [importing, setImporting] = useState(false);
 
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const dates = useMemo(() => gridDates(month), [month]);
 
   /** 날짜 칸 → 그 날에 걸치는 일정. 한 번만 만들어 둔다(42칸 × 일정 수를 매번 돌지 않게). */
@@ -447,19 +448,21 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
           }}>
             {selectedDate}
           </div>
-          <input
-            ref={inputRef}
+          {/*
+            `@`·`#` 를 치면 목록이 뜬다(TokenInput). 망·법인·성격·팀원은 정해진 값이라
+            외워 적게 하면 틀리고, 틀린 태그는 조용히 "성격" 으로 떨어져 Jira 제목의
+            대괄호가 비어 버린다.
+          */}
+          <TokenInput
+            focusRef={inputRef}
             value={line}
-            onChange={(e) => setLine(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void add();
-              }
-            }}
-            placeholder="11/25 정기점검 @용식 #운영 #DR #은   (날짜를 안 적으면 왼쪽 날짜)"
+            onChange={setLine}
+            onSubmit={() => void add()}
+            members={members}
+            triggers={["@", "#"]}
             disabled={busy}
-            style={{ ...controlStyle, flex: "1 1 320px", cursor: "text", minWidth: 220 }}
+            placeholder="11/25 정기점검 @용식 #운영 #DR #은   (날짜를 안 적으면 왼쪽 날짜)"
+            inputStyle={{ minWidth: 220 }}
           />
           <button
             type="button"

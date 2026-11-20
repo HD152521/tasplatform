@@ -13,6 +13,7 @@ import {
 import { addDays, weekdayOf } from "../../lib/quickAdd.ts";
 import { COLOR, MONO_STACK, RADIUS, controlStyle } from "../ui.tsx";
 import type { MemberChip } from "./CalendarBoard.tsx";
+import { TokenInput } from "./TokenInput.tsx";
 
 /** 자주 쓰는 업무 성격. 목록에 없는 것도 직접 적을 수 있다. */
 const WORK_KINDS = ["점검", "작업", "장애", "회의", "교육", "휴가"] as const;
@@ -328,15 +329,15 @@ export function EventForm({
       {/* 본문 */}
       {showBody ? (
         <Row label="본문" hint="Jira 이슈 본문에 들어갑니다. @이름 을 적으면 실제 멘션이 됩니다.">
-          <textarea
+          {/* `@` 를 치면 팀원 목록이 뜬다. 고른 이름은 Jira 에서 **실제 멘션**이 된다. */}
+          <TokenInput
             value={value.body}
-            onChange={(e) => set({ body: e.target.value })}
+            onChange={(body) => set({ body })}
+            members={members}
+            triggers={["@"]}
+            multiline
             rows={4}
             placeholder="작업 내용, 확인할 것, @담당자 호출 등"
-            style={{
-              ...controlStyle, width: "100%", cursor: "text", height: "auto",
-              resize: "vertical", lineHeight: 1.7,
-            }}
           />
         </Row>
       ) : (
