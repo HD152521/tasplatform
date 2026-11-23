@@ -37,7 +37,14 @@ import {
   type Scope,
 } from "./jiraHouseStyle.ts";
 import { AtlassianError } from "./atlassian.ts";
-import { getEvent, type EventState, type JiraState, type TeamEvent } from "./calendar.ts";
+import {
+  claimNoteForJira,
+  getEvent,
+  markNotePosted,
+  type EventState,
+  type JiraState,
+  type TeamEvent,
+} from "./calendar.ts";
 import { isoNow } from "./dates.ts";
 import type { Db } from "./db.ts";
 import {
@@ -687,4 +694,76 @@ export async function syncPendingEvents(
  */
 function todayInKst(): string {
   return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+/* ------------------------------------------------------------------ *
+ * 메모 → Jira 코멘트
+ * ------------------------------------------------------------------ */
+
+/**
+ * 메모 한 건을 그 일정의 Jira 이슈에 코멘트로 올린다.
+ *
+ * ## 왜 자동이 아닌가
+ *
+ * 메모에는 고객사 상황이 적힐 수 있고, Jira 코멘트는 **지워도 알림이 이미 간 뒤**다.
+ * 그래서 쓸 때마다 나가지 않고, 올릴 메모를 사람이 고른다. 어느 메모가 밖으로
+ * 나갔는지는 event_notes.jira_posted_at 으로 구분한다.
+ *
+ * ## 두 번 올리지 않는다
+ *
+ * 버튼을 두 번 누르거나 응답이 늦어 다시 누르면 알림이 두 번 간다. 올리기 전에
+ * claimNoteForJira 로 "아직 안 올린 메모" 임을 확인하고, 성공한 뒤에 시각을 박는다.
+ * 그 사이에 터지면 코멘트는 올라갔는데 표시가 안 될 수 있다 — 그 경우 사람은 한 번
+ * 더 누르게 되므로, 메시지에 "이미 올렸습니다" 를 구분해 돌려준다.
+ *
+ * **던지지 않는다.** 캘린더의 다른 Jira 경로와 같은 규약이다.
+ */
+export async function postNoteToJira(
+  db: Db,
+  teamId: string,
+  eventId: number,
+  noteId: number,
+): Promise<{ ok: boolean; message: string }> {
+  const config = jiraSrConfig();
+  if (config === null) {
+    return { ok: false, message: "Jira 연결이 꺼져 있습니다(JIRA_AUTO_CREATE)." };
+  }
+
+  const event = await getEvent(db, teamId, eventId);
+  if (event === null) return { ok: false, message: "그 일정을 찾을 수 없습니다." };
+  if (event.jiraKey === "") {
+    return { ok: false, message: "이 일정에는 아직 Jira 이슈가 없습니다. 먼저 Jira 에 등록하세요." };
+  }
+
+  const note = await claimNoteForJira(db, teamId, eventId, noteId);
+  if (note === null) {
+    return { ok: false, message: "이미 올렸거나 없는 메모입니다." };
+  }
+
+  const people = await mentionable(db, teamId);
+  // 메모 본문이 맨 위, 그 아래에 누가 언제 적은 것인지. 코멘트만 보는 사람도
+  // 출처를 알 수 있어야 한다 — reporter 는 공용 계정이라 단서가 되지 않는다.
+  const written = adfLinesWithMentions(note.body.trim(), people);
+  const foot = textDoc(
+    [
+      `팀 캘린더 메모 · ${note.author === "" ? "작성자 미상" : note.author}`,
+      `${note.createdAt.slice(0, 16).replace("T", " ")} · ${appUrl()}/calendar?event=${eventId}`,
+    ].join("\n"),
+  );
+
+  try {
+    await addSrComment(config, event.jiraKey, adfDoc([...written.nodes, ...foot.content]));
+  } catch (error) {
+    return {
+      ok: false,
+      message: `Jira 코멘트를 올리지 못했습니다: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+
+  await markNotePosted(db, eventId, noteId);
+  const missed =
+    written.unlinked.length === 0
+      ? ""
+      : ` 팀원으로 못 찾은 이름은 글자로 남겼습니다: ${written.unlinked.join(", ")}`;
+  return { ok: true, message: `${event.jiraKey} 에 코멘트로 올렸습니다.${missed}` };
 }

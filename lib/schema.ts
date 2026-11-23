@@ -647,7 +647,13 @@ CREATE TABLE IF NOT EXISTS event_notes (
   user_id    INTEGER,
   author     TEXT    NOT NULL DEFAULT '',
   body       TEXT    NOT NULL DEFAULT '',
-  created_at TEXT    NOT NULL
+  created_at TEXT    NOT NULL,
+  -- Jira 코멘트로 올린 시각. 빈 값이면 아직 안 올렸다.
+  --
+  -- 왜 자동으로 올리지 않나: 메모에는 고객사 상황이 적힐 수 있고, Jira 코멘트는
+  -- 지워도 알림이 이미 간 뒤다. 그래서 **사람이 골라** 올린다. 이 칸은 두 번 올리는
+  -- 것을 막고, 어느 메모가 밖으로 나갔는지 화면에서 구분해 보여 주기 위한 것이다.
+  jira_posted_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_event_notes_event ON event_notes(event_id, note_id);

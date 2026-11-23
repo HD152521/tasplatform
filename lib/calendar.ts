@@ -395,6 +395,8 @@ export interface EventNote {
   readonly author: string;
   readonly body: string;
   readonly createdAt: string;
+  /** Jira 코멘트로 올린 시각. 빈 값이면 아직 안 올렸다(lib/schema.ts event_notes). */
+  readonly jiraPostedAt: string;
 }
 
 /**
@@ -430,6 +432,7 @@ export async function listEventNotes(db: Db, teamId: string, eventId: number): P
     author: string;
     body: string;
     created_at: string;
+    jira_posted_at: string | null;
   }>("SELECT * FROM event_notes WHERE event_id = ? ORDER BY note_id ASC", [eventId]);
 
   return rows.map((row) => ({
@@ -439,6 +442,7 @@ export async function listEventNotes(db: Db, teamId: string, eventId: number): P
     author: row.author,
     body: row.body,
     createdAt: row.created_at,
+    jiraPostedAt: row.jira_posted_at ?? "",
   }));
 }
 
@@ -496,4 +500,50 @@ export function matchAssignee(
     if (found.length > 1) return null;
   }
   return null;
+}
+
+/**
+ * 메모 한 건을 Jira 로 올렸다고 적는다.
+ *
+ * **이미 올린 메모는 다시 올리지 않는다.** 코멘트는 지워도 알림이 이미 간 뒤라서,
+ * 버튼을 두 번 누르거나 응답이 늦어 다시 누른 것이 알림 두 번이 되면 안 된다.
+ * 올린 적이 없을 때만 참을 돌려준다 — 호출부가 이 값을 보고 실제로 올린다.
+ */
+export async function claimNoteForJira(
+  db: Db,
+  teamId: string,
+  eventId: number,
+  noteId: number,
+): Promise<EventNote | null> {
+  const event = await getEvent(db, teamId, eventId);
+  if (event === null) return null;
+  const rows = await db.all<{
+    note_id: number;
+    event_id: number;
+    user_id: number | null;
+    author: string;
+    body: string;
+    created_at: string;
+    jira_posted_at: string | null;
+  }>("SELECT * FROM event_notes WHERE event_id = ? AND note_id = ?", [eventId, noteId]);
+  const row = rows[0];
+  if (row === undefined) return null;
+  if ((row.jira_posted_at ?? "") !== "") return null;
+  return {
+    noteId: Number(row.note_id),
+    eventId: Number(row.event_id),
+    userId: row.user_id === null ? null : Number(row.user_id),
+    author: row.author,
+    body: row.body,
+    createdAt: row.created_at,
+    jiraPostedAt: "",
+  };
+}
+
+/** 올린 시각을 박는다. 올리기가 성공한 뒤에만 부른다. */
+export async function markNotePosted(db: Db, eventId: number, noteId: number): Promise<void> {
+  await db.run(
+    "UPDATE event_notes SET jira_posted_at = ? WHERE event_id = ? AND note_id = ? AND jira_posted_at = ''",
+    [isoNow(), eventId, noteId],
+  );
 }

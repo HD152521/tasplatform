@@ -26,7 +26,7 @@ import {
   updateEvent,
   type EventPatch,
 } from "../../../lib/calendar.ts";
-import { syncEventToJira, removeEventFromJira } from "../../../lib/calendarJira.ts";
+import { postNoteToJira, syncEventToJira, removeEventFromJira } from "../../../lib/calendarJira.ts";
 import { openDb, recordAudit } from "../../../lib/db.ts";
 import { classifyTags } from "../../../lib/jiraHouseStyle.ts";
 import { parseQuickAdd } from "../../../lib/quickAdd.ts";
@@ -116,6 +116,28 @@ export async function POST(request: Request) {
         ok: true,
         notes: await listEventNotes(db, me.teamId, eventId),
       });
+    }
+
+    // 메모 한 건을 Jira 코멘트로 올린다. **사람이 고른 것만** 나간다 —
+    // 메모에는 고객사 상황이 적힐 수 있고 코멘트는 지워도 알림이 이미 간 뒤다
+    // (lib/calendarJira.ts postNoteToJira).
+    if (body.action === "note-to-jira") {
+      const eventId = Number(body.eventId);
+      const noteId = Number(body.noteId);
+      if (!Number.isInteger(eventId) || !Number.isInteger(noteId)) {
+        return NextResponse.json({ ok: false, message: "메모 번호가 올바르지 않습니다." }, { status: 400 });
+      }
+      const result = await postNoteToJira(db, me.teamId, eventId, noteId);
+      await recordAudit(db, {
+        actor: actorOf(me), teamId: me.teamId, action: "note_to_jira", requestId: null,
+        result: result.ok ? "ok" : "failed", detail: `event=${eventId} note=${noteId}`,
+      });
+      // 실패해도 목록은 돌려준다 — 화면이 "올림" 표시를 다시 맞출 수 있어야 한다.
+      return NextResponse.json({
+        ok: result.ok,
+        message: result.message,
+        notes: await listEventNotes(db, me.teamId, eventId),
+      }, { status: result.ok ? 200 : 400 });
     }
 
     const members = (await listTeamMembers(db, me.teamId)).map((m) => ({

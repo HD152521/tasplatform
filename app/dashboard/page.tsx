@@ -24,8 +24,10 @@ import { listEventsBetween, type EventState, type TeamEventView } from "../../li
 import { openDb } from "../../lib/db.ts";
 import { getLastRun, listCasesSplit, type CaseListRow } from "../../lib/queries.ts";
 import { getSessionStatus } from "../../lib/sessionFile.ts";
-import { describeWeek, weekRange } from "../../lib/weekRange.ts";
+import { addDays } from "../../lib/quickAdd.ts";
+import { describeWeek, weekMondayOf, weekRange } from "../../lib/weekRange.ts";
 import { COLOR, Card, MONO_STACK, Notice, RADIUS } from "../ui.tsx";
+import { DigestCard } from "./DigestCard.tsx";
 import { BarList, Donut, StackBar, type BarRow } from "./Charts.tsx";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +48,9 @@ export default async function DashboardPage() {
   const me = await requireUser("/dashboard");
   const today = todayKst();
   const week = weekRange(today);
+  // 지난 주 정리는 **지난 주 월요일**로 찾는다. 일요일이 다음 주로 넘어가지 않게
+  // weekMondayOf 가 -6 을 쓴다(lib/weekRange.ts).
+  const lastWeek = weekMondayOf(addDays(today, -7));
 
   let openCases: CaseListRow[] = [];
   let lastRun: Awaited<ReturnType<typeof getLastRun>> = null;
@@ -54,8 +59,8 @@ export default async function DashboardPage() {
   const errors: string[] = [];
 
   try {
-  // **그 사람과 그 팀 것만.** 전에는 팀을 안 걸러 다른 팀 케이스가 섞였고, 미읽음은
-  // 팀이 공유해 한 사람이 열면 모두의 배지가 사라졌다(lib/schema.ts case_reads_user).
+    // **그 사람과 그 팀 것만.** 전에는 팀을 안 걸러 다른 팀 케이스가 섞였고, 미읽음은
+    // 팀이 공유해 한 사람이 열면 모두의 배지가 사라졌다(lib/schema.ts case_reads_user).
     openCases = (
       await listCasesSplit({
         teamId: me.teamId === "" ? undefined : me.teamId,
@@ -285,6 +290,11 @@ export default async function DashboardPage() {
             </ul>
           )}
         </Card>
+
+        {/* ── 지난 주 정리 ──────────────────────────────── */}
+        {me.teamId !== "" && (
+          <DigestCard week={lastWeek} today={today} label={describeWeek(lastWeek)} />
+        )}
       </div>
     </>
   );

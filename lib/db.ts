@@ -111,6 +111,7 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: string 
   { table: "cases", column: "component_name", ddl: "TEXT NOT NULL DEFAULT ''" },
   // 팀(공용 계정) 소유. 기존 행은 전부 기본 팀에 귀속된다.
   { table: "cases", column: "team_id", ddl: `TEXT NOT NULL DEFAULT '${DEFAULT_TEAM_ID}'` },
+  { table: "event_notes", column: "jira_posted_at", ddl: "TEXT NOT NULL DEFAULT ''" },
   { table: "cves", column: "vector", ddl: "TEXT NOT NULL DEFAULT ''" },
   { table: "cves", column: "attack_vector", ddl: "TEXT NOT NULL DEFAULT ''" },
   { table: "cves", column: "attack_complexity", ddl: "TEXT NOT NULL DEFAULT ''" },

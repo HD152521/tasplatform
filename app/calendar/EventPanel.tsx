@@ -2,7 +2,19 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { EventNote, TeamEventView } from "../../lib/calendar.ts";
-import { COLOR, Card, MONO_STACK, RADIUS, controlStyle, formatStamp } from "../ui.tsx";
+import {
+  COLOR,
+  Card,
+  LEADING,
+  LinkButton,
+  MONO_STACK,
+  RADIUS,
+  SPACE,
+  TEXT,
+  WEIGHT,
+  controlStyle,
+  formatStamp,
+} from "../ui.tsx";
 import type { MemberChip } from "./CalendarBoard.tsx";
 
 /**
@@ -41,6 +53,33 @@ export function EventPanel({
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * 메모 한 건을 Jira 코멘트로 올린다.
+   *
+   * 실패해도 서버가 목록을 돌려주므로 그대로 갈아 끼운다 — 다른 창에서 이미 올렸을
+   * 때 화면의 "올림" 표시가 그 자리에서 맞춰진다.
+   */
+  async function sendNote(noteId: number): Promise<void> {
+    setWorking(true);
+    try {
+      const res = await fetch("/api/calendar", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "note-to-jira", eventId: event.eventId, noteId }),
+      });
+      const data = (await res.json()) as { ok?: boolean; message?: string; notes?: EventNote[] };
+      if (data.notes !== undefined) setNotes(data.notes);
+      onMessage({
+        tone: data.ok === true ? "ok" : "error",
+        text: data.message ?? (data.ok === true ? "올렸습니다." : "올리지 못했습니다."),
+      });
+    } catch (error) {
+      onMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setWorking(false);
+    }
+  }
 
   async function addNote(): Promise<void> {
     if (draft.trim() === "") return;
@@ -218,18 +257,42 @@ export function EventPanel({
           작업 메모 {notes.length > 0 && `${notes.length}건`}
         </div>
         <p style={{ margin: "0 0 10px", fontSize: 11.5, color: COLOR.faint, lineHeight: 1.7 }}>
-          무엇을 했는지 한 줄씩 적어 두면 주간 정리에 그대로 쓰입니다.
+          무엇을 했는지 한 줄씩 적어 두면 주간 정리에 그대로 쓰입니다. 메모는 사내에만
+          남습니다 — Jira 에 알릴 것은 한 건씩 골라 올리세요(@이름 은 멘션이 됩니다).
         </p>
 
         {notes.map((note) => (
           <div key={note.noteId} style={{
-            fontSize: 12.5, lineHeight: 1.75, padding: "7px 0",
+            fontSize: TEXT.base, lineHeight: LEADING.relaxed, padding: `${SPACE.xs + 3}px 0`,
             borderTop: `1px solid ${COLOR.divider}`,
           }}>
-            <span style={{ fontWeight: 600 }}>{note.author === "" ? "(알 수 없음)" : note.author}</span>
-            <span style={{ color: COLOR.faint, fontSize: 11, marginLeft: 7 }}>
-              {formatStamp(Date.parse(note.createdAt))}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm }}>
+              <span style={{ fontWeight: WEIGHT.semibold }}>
+                {note.author === "" ? "(알 수 없음)" : note.author}
+              </span>
+              <span style={{ color: COLOR.faint, fontSize: TEXT.micro }}>
+                {formatStamp(Date.parse(note.createdAt))}
+              </span>
+              <span style={{ flex: 1 }} />
+              {/*
+                **사람이 고른 메모만** Jira 로 나간다. 코멘트는 지워도 알림이 이미 간
+                뒤라서 쓸 때마다 자동으로 보내지 않는다(lib/calendarJira.ts postNoteToJira).
+                이미 올린 것은 버튼을 없애고 올린 시각을 보여 준다 — 두 번 올리면
+                알림도 두 번 간다.
+              */}
+              {note.jiraPostedAt !== "" ? (
+                <span
+                  title={`${formatStamp(Date.parse(note.jiraPostedAt))} 에 Jira 코멘트로 올렸습니다`}
+                  style={{ fontSize: TEXT.micro, color: COLOR.ok, flexShrink: 0 }}
+                >
+                  Jira 에 올림
+                </span>
+              ) : event.jiraKey === "" ? null : (
+                <LinkButton onClick={() => void sendNote(note.noteId)} disabled={working}>
+                  Jira 에 올리기
+                </LinkButton>
+              )}
+            </div>
             <div style={{ color: COLOR.body, whiteSpace: "pre-wrap" }}>{note.body}</div>
           </div>
         ))}
