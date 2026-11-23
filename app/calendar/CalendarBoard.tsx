@@ -17,9 +17,11 @@ import {
 } from "../../lib/quickAdd.ts";
 import {
   Badge,
+  Button,
   COLOR,
   Card,
   Empty,
+  LinkButton,
   MONO_STACK,
   Notice,
   RADIUS,
@@ -131,6 +133,13 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editLine, setEditLine] = useState("");
   const [openId, setOpenId] = useState<number | null>(focusEventId);
+  /**
+   * 입력칸을 펼쳤나.
+   *
+   * 기본은 **닫힘**이다. 이 화면에 들어오는 이유는 대개 "무엇이 있나" 를 보는
+   * 것이고, 입력칸이 늘 펼쳐져 있으면 일정이 아래로 밀린다.
+   */
+  const [composing, setComposing] = useState(false);
   /** Jira 가져오기 시작 날짜. 기본은 서버가 정한다(이번 달 1일 또는 JIRA_IMPORT_FROM). */
   const [importFromDate, setImportFromDate] = useState("");
   const [importing, setImporting] = useState(false);
@@ -257,6 +266,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
     );
     if (result !== null) {
       setLine("");
+      // 한 줄 입력은 **열어 둔다** — 여러 건을 잇따라 적는 방식이라 닫으면 방해다.
       inputRef.current?.focus();
     }
   };
@@ -288,6 +298,8 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
     if (result !== null) {
       setForm(emptyFormValue(selectedDate));
       setFormEditId(null);
+      // 저장하면 닫는다. 이 화면의 주인공은 목록이고, 방금 넣은 것이 거기 보여야 한다.
+      setComposing(false);
     }
   };
 
@@ -349,6 +361,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
 
       if (e.key === "n") {
         e.preventDefault();
+        setComposing(true);
         inputRef.current?.focus();
       } else if (e.key === "ArrowLeft") {
         window.location.href = `/calendar?month=${monthShift(month, -1)}`;
@@ -421,118 +434,6 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
     <>
       {message !== null && <Notice tone={message.tone}>{message.text}</Notice>}
 
-      {/* ── 일정 입력 ─────────────────────────────────── */}
-      <Card style={{ padding: "14px 16px", marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center" }}>
-          <Tab active={mode === "form"} onClick={() => setMode("form")}>
-            자세히 입력
-          </Tab>
-          <Tab active={mode === "line"} onClick={() => setMode("line")}>
-            한 줄로
-          </Tab>
-          {formEditId !== null && (
-            <span style={{ fontSize: 12, color: COLOR.accent, marginLeft: 6 }}>
-              일정 #{formEditId} 수정 중
-            </span>
-          )}
-        </div>
-
-        {mode === "form" ? (
-          <EventForm
-            value={form}
-            members={members}
-            busy={busy}
-            submitLabel={formEditId === null ? "일정 등록" : "수정 저장"}
-            onChange={setForm}
-            onSubmit={() => void saveForm()}
-            onCancel={
-              formEditId === null
-                ? undefined
-                : () => {
-                    setFormEditId(null);
-                    setForm(emptyFormValue(selectedDate));
-                  }
-            }
-          />
-        ) : (
-        <>
-        <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
-          <div style={{
-            fontSize: 12, fontWeight: 600, color: COLOR.body,
-            background: COLOR.ground, padding: "7px 11px", borderRadius: RADIUS.control,
-            fontFamily: MONO_STACK, flexShrink: 0,
-          }}>
-            {selectedDate}
-          </div>
-          {/*
-            `@`·`#` 를 치면 목록이 뜬다(TokenInput). 망·법인·성격·팀원은 정해진 값이라
-            외워 적게 하면 틀리고, 틀린 태그는 조용히 "성격" 으로 떨어져 Jira 제목의
-            대괄호가 비어 버린다.
-          */}
-          <TokenInput
-            focusRef={inputRef}
-            value={line}
-            onChange={setLine}
-            onSubmit={() => void add()}
-            members={members}
-            triggers={["@", "#"]}
-            disabled={busy}
-            placeholder="11/25 정기점검 @용식 #운영 #DR #은   (날짜를 안 적으면 왼쪽 날짜)"
-            inputStyle={{ minWidth: 220 }}
-          />
-          <button
-            type="button"
-            onClick={() => void add()}
-            disabled={busy || line.trim() === ""}
-            style={{
-              ...controlStyle, background: COLOR.accent, color: "#fff", border: "none",
-              fontWeight: 600, opacity: busy || line.trim() === "" ? 0.5 : 1,
-            }}
-          >
-            등록
-          </button>
-        </div>
-
-        {/*
-          미리보기. 파서가 틀리게 읽었으면 Enter 전에 눈에 보인다 —
-          이게 한 줄 입력을 믿게 만드는 장치다.
-        */}
-        {/*
-          읽은 결과는 **설명을 지우지 않고** 그 위에 덧붙인다.
-          전에는 한 글자만 쳐도 문법 설명이 사라지고 다른 글이 그 자리에 들어왔다 —
-          외우지 못한 사람은 그 순간 무엇을 적어야 하는지 알 길이 없어졌다.
-        */}
-        {preview !== null && (
-          <div style={{
-            marginTop: 10, padding: "9px 11px", borderRadius: RADIUS.control,
-            background: preview.error !== "" ? COLOR.waitUsBg : COLOR.ground, fontSize: 12.5,
-          }}>
-            {preview.error !== "" ? (
-              <span style={{ color: COLOR.waitUs }}>{preview.error}</span>
-            ) : (
-              <>
-                <div style={{ color: COLOR.body }}>{preview.read}</div>
-                {preview.jira !== "" && (
-                  <div style={{ color: COLOR.accent, fontSize: 12, marginTop: 2 }}>{preview.jira}</div>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        <div style={{ marginTop: 10, fontSize: 12, color: COLOR.muted, lineHeight: 1.9 }}>
-          <div><strong>날짜</strong> 11/25 · 11/25~27 · 25~27 · 내일 · 모레 (없으면 왼쪽 날짜)</div>
-          <div><strong>시간</strong> 14:00 · 14:00-16:00 (없으면 종일)</div>
-          <div><strong>@담당</strong> 팀원 이름이나 아이디</div>
-          <div>
-            <strong>#망</strong> 운영·개발·DR·AWS·검증·안성 ·{" "}
-            <strong>#법인</strong> 은·중·본 · <strong>#성격</strong> 점검·작업·장애·회의
-          </div>
-          <div style={{ color: COLOR.faint }}>순서는 상관없습니다. 태그는 여러 개 적을 수 있습니다.</div>
-        </div>
-        </>
-        )}
-      </Card>
 
       {/* ── 달 이동 ────────────────────────────────────── */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
@@ -545,9 +446,26 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
         <a href={`/calendar?month=${monthShift(month, 1)}`} style={{ ...controlStyle, textDecoration: "none" }}>
           →
         </a>
-        <a href="/calendar" style={{ ...controlStyle, textDecoration: "none", fontSize: 12 }}>
+        <a href="/calendar" style={{ ...controlStyle, textDecoration: "none", fontSize: TEXT.small }}>
           오늘
         </a>
+        <Button
+          kind={composing ? "default" : "primary"}
+          size="small"
+          onClick={() => {
+            // 닫을 때는 수정 중이던 것도 함께 놓는다 — 닫힌 폼이 수정 상태를
+            // 들고 있으면 다음에 열 때 엉뚱한 일정을 고치게 된다.
+            if (composing) {
+              setComposing(false);
+              setFormEditId(null);
+              setForm(emptyFormValue(selectedDate));
+            } else {
+              setComposing(true);
+            }
+          }}
+        >
+          {composing ? "입력 닫기" : "+ 일정 등록"}
+        </Button>
         <div style={{
           marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
         }}>
@@ -629,6 +547,128 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
       </Card>
 
       {/*
+        입력은 **버튼을 누를 때만** 펼친다.
+
+        전에는 입력칸이 화면 맨 위에 늘 펼쳐져 있었다. 그런데 이 화면에 들어오는
+        이유는 열 번 중 아홉 번 "무엇이 있나" 를 보는 것이고, 등록은 한 번이다.
+        늘 펼쳐 두면 **일정이 아래로 밀려** 스크롤해야 보인다. 보는 것을 먼저,
+        적는 것을 버튼 뒤로 둔다.
+      */}
+      {composing && (
+        <Card style={{ padding: "14px 16px", marginBottom: 16 }}>
+          <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center" }}>
+            <Tab active={mode === "form"} onClick={() => setMode("form")}>
+              자세히 입력
+            </Tab>
+            <Tab active={mode === "line"} onClick={() => setMode("line")}>
+              한 줄로
+            </Tab>
+            {formEditId !== null && (
+              <span style={{ fontSize: 12, color: COLOR.accent, marginLeft: 6 }}>
+                일정 #{formEditId} 수정 중
+              </span>
+            )}
+          </div>
+
+          {mode === "form" ? (
+            <EventForm
+              value={form}
+              members={members}
+              busy={busy}
+              submitLabel={formEditId === null ? "일정 등록" : "수정 저장"}
+              onChange={setForm}
+              onSubmit={() => void saveForm()}
+              onCancel={
+                formEditId === null
+                  ? undefined
+                  : () => {
+                      setFormEditId(null);
+                      setForm(emptyFormValue(selectedDate));
+                    }
+              }
+            />
+          ) : (
+          <>
+          <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{
+              fontSize: 12, fontWeight: 600, color: COLOR.body,
+              background: COLOR.ground, padding: "7px 11px", borderRadius: RADIUS.control,
+              fontFamily: MONO_STACK, flexShrink: 0,
+            }}>
+              {selectedDate}
+            </div>
+            {/*
+              `@`·`#` 를 치면 목록이 뜬다(TokenInput). 망·법인·성격·팀원은 정해진 값이라
+              외워 적게 하면 틀리고, 틀린 태그는 조용히 "성격" 으로 떨어져 Jira 제목의
+              대괄호가 비어 버린다.
+            */}
+            <TokenInput
+              focusRef={inputRef}
+              value={line}
+              onChange={setLine}
+              onSubmit={() => void add()}
+              members={members}
+              triggers={["@", "#"]}
+              disabled={busy}
+              placeholder="11/25 정기점검 @용식 #운영 #DR #은   (날짜를 안 적으면 왼쪽 날짜)"
+              inputStyle={{ minWidth: 220 }}
+            />
+            <button
+              type="button"
+              onClick={() => void add()}
+              disabled={busy || line.trim() === ""}
+              style={{
+                ...controlStyle, background: COLOR.accent, color: "#fff", border: "none",
+                fontWeight: 600, opacity: busy || line.trim() === "" ? 0.5 : 1,
+              }}
+            >
+              등록
+            </button>
+          </div>
+
+          {/*
+            미리보기. 파서가 틀리게 읽었으면 Enter 전에 눈에 보인다 —
+            이게 한 줄 입력을 믿게 만드는 장치다.
+          */}
+          {/*
+            읽은 결과는 **설명을 지우지 않고** 그 위에 덧붙인다.
+            전에는 한 글자만 쳐도 문법 설명이 사라지고 다른 글이 그 자리에 들어왔다 —
+            외우지 못한 사람은 그 순간 무엇을 적어야 하는지 알 길이 없어졌다.
+          */}
+          {preview !== null && (
+            <div style={{
+              marginTop: 10, padding: "9px 11px", borderRadius: RADIUS.control,
+              background: preview.error !== "" ? COLOR.waitUsBg : COLOR.ground, fontSize: 12.5,
+            }}>
+              {preview.error !== "" ? (
+                <span style={{ color: COLOR.waitUs }}>{preview.error}</span>
+              ) : (
+                <>
+                  <div style={{ color: COLOR.body }}>{preview.read}</div>
+                  {preview.jira !== "" && (
+                    <div style={{ color: COLOR.accent, fontSize: 12, marginTop: 2 }}>{preview.jira}</div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          <div style={{ marginTop: 10, fontSize: 12, color: COLOR.muted, lineHeight: 1.9 }}>
+            <div><strong>날짜</strong> 11/25 · 11/25~27 · 25~27 · 내일 · 모레 (없으면 왼쪽 날짜)</div>
+            <div><strong>시간</strong> 14:00 · 14:00-16:00 (없으면 종일)</div>
+            <div><strong>@담당</strong> 팀원 이름이나 아이디</div>
+            <div>
+              <strong>#망</strong> 운영·개발·DR·AWS·검증·안성 ·{" "}
+              <strong>#법인</strong> 은·중·본 · <strong>#성격</strong> 점검·작업·장애·회의
+            </div>
+            <div style={{ color: COLOR.faint }}>순서는 상관없습니다. 태그는 여러 개 적을 수 있습니다.</div>
+          </div>
+          </>
+          )}
+        </Card>
+      )}
+
+      {/*
         고른 날의 **자세한 목록**. 달력 칸에는 "있다" 만 보이고 내용은 여기서 읽는다.
         Jira 를 불러오면 한 날에 열 건이 넘기도 하는데, 그걸 칸 안에 넣으면 제목이
         전부 잘려 아무것도 읽을 수 없었다. 칸은 좁고 이 자리는 넓다.
@@ -637,9 +677,16 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
         <SectionHead
           title={`${selectedDate} (${weekdayOf(selectedDate)}) · ${byDate.get(selectedDate)?.length ?? 0}건`}
           right={
-            <span style={{ fontSize: TEXT.micro, color: COLOR.faint }}>
-              달력에서 날짜를 누르면 그 날이 열립니다
-            </span>
+            <LinkButton
+              onClick={() => {
+                // 고른 날짜를 들고 입력칸을 연다 — 날짜를 다시 고르지 않게.
+                setForm({ ...emptyFormValue(selectedDate) });
+                setFormEditId(null);
+                setComposing(true);
+              }}
+            >
+              + 이 날에 등록
+            </LinkButton>
           }
         />
         <DayList
@@ -664,6 +711,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
           busy={busy}
           onClose={() => setOpenId(null)}
           onEditForm={() => {
+            setComposing(true);
             // 폼으로 고친다. 날짜·망·법인을 **보고 고를 수 있어야** 또 고치러 오지 않는다.
             setForm(formValueOf(open));
             setFormEditId(open.eventId);
@@ -672,6 +720,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
             window.scrollTo({ top: 0, behavior: "smooth" });
           }}
           onEditLine={() => {
+            setComposing(true);
             setEditLine(
               formatQuickAddLine({
                 startDate: open.startDate,
