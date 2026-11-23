@@ -68,9 +68,23 @@ export default async function LoginPage() {
             {session.expiresAt !== null && <> (만료 {formatWhen(session.expiresAt)})</>}.
           </span>
         ) : (
+          /*
+            ## "유효합니다" 라고 단정하지 않는다
+
+            이 판정은 **쿠키에 적힌 만료 시각만** 읽은 것이다. 포털에 물어본 것이
+            아니다. 공용 계정 하나를 웹과 수집기가 같이 쓰므로 수집기가 다시 로그인하면
+            앞선 쿠키는 **적힌 시각 전에도** 무효가 된다.
+
+            전에는 이 화면이 초록색으로 "세션이 유효합니다" 라고 말하는데 SR 작성 화면은
+            "세션이 만료되었습니다" 라고 해서, 둘 중 무엇을 믿어야 할지 알 수 없었다.
+            아는 것만 말한다 — 적힌 시각은 이것이고, 그게 살아 있다는 보장은 아니다.
+          */
           <span style={{ color: COLOR.ok }}>
-            세션이 유효합니다
-            {session.expiresAt !== null && <> — {formatWhen(session.expiresAt)} 까지</>}.
+            세션이 저장돼 있습니다
+            {session.expiresAt !== null && <> — 적힌 만료 시각 {formatWhen(session.expiresAt)}</>}.
+            <span style={{ color: COLOR.muted }}>
+              {" "}포털이 먼저 끊었을 수도 있어, 다른 화면에서 거부되면 여기서 다시 로그인하세요.
+            </span>
           </span>
         )}
         <div style={{ color: COLOR.muted, marginTop: 6 }}>

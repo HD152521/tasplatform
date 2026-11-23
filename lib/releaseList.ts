@@ -58,10 +58,35 @@ const NIGHTLY = /^\d{4}-\d{2}-\d{2}_\d{6}$/;
 /** 한 번에 받아올 상한. 전체를 다 받을 필요는 없다 — 검색어로 좁혀 쓴다. */
 const PAGE = 300;
 
+/**
+ * 릴리스 조회 실패.
+ *
+ * ## code 를 왜 들고 다니나
+ *
+ * 전에는 401 과 403 을 한 문장으로 묶어 **둘 다 "세션이 만료되었습니다. 다시
+ * 로그인하세요."** 라고 했다. 그런데 이 둘은 사람이 할 일이 정반대다:
+ *
+ *   401 → 세션이 죽었다. 다시 로그인하면 풀린다.
+ *   403 → 로그인은 되어 있는데 **그 요청을 할 권한이 없다.** 다시 로그인해도 그대로다.
+ *
+ * 묶어 두면 403 일 때 로그인 화면만 오가며 "유효합니다" 와 "만료되었습니다" 를 번갈아
+ * 보게 된다 — 실제로 그 일이 났다. 그리고 자동 재시도도 401 에만 뜻이 있다.
+ */
 export class ReleaseLookupError extends Error {
-  constructor(message: string) {
+  /** "session" 은 다시 로그인하면 풀린다. 그 밖은 로그인으로 풀리지 않는다. */
+  readonly code: "session" | "forbidden" | "http" | "parse";
+  /** 포털이 준 HTTP 상태. 모르면 0. */
+  readonly status: number;
+
+  constructor(
+    message: string,
+    code: "session" | "forbidden" | "http" | "parse" = "session",
+    status = 0,
+  ) {
     super(message);
     this.name = "ReleaseLookupError";
+    this.code = code;
+    this.status = status;
   }
 }
 
@@ -86,11 +111,27 @@ export async function findReleases(
 
   const status = response.status();
   const raw = await response.text();
-  if (status === 401 || status === 403) {
-    throw new ReleaseLookupError("세션이 만료되었습니다. 다시 로그인하세요.");
+  if (status === 401) {
+    throw new ReleaseLookupError("세션이 만료되었습니다. 다시 로그인하세요.", "session", 401);
+  }
+  if (status === 403) {
+    // 로그인은 되어 있다. 이 계정이 이 조회를 할 수 없는 것이다 — 다시 로그인해도
+    // 풀리지 않으므로 그렇게 말하지 않는다. 릴리스는 손으로 적어 등록할 수 있다.
+    throw new ReleaseLookupError(
+      "포털이 이 조회를 거부했습니다 (HTTP 403 · 권한). 세션 문제가 아니라서 다시 " +
+        "로그인해도 풀리지 않습니다. 릴리스는 직접 입력해 등록할 수 있습니다.",
+      "forbidden",
+      403,
+    );
   }
   if (status !== 200) {
-    throw new ReleaseLookupError(`Release 목록을 받지 못했습니다 (HTTP ${status}).`);
+    // 포털이 로그인 화면을 200 이 아닌 다른 코드로 돌려주는 경우도 있다. 상태를
+    // 그대로 보여 주는 쪽이 "세션 만료" 로 단정하는 것보다 낫다.
+    throw new ReleaseLookupError(
+      `Release 목록을 받지 못했습니다 (HTTP ${status}).`,
+      "http",
+      status,
+    );
   }
 
   let rows: unknown;

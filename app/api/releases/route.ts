@@ -77,7 +77,8 @@ export async function GET(request: Request): Promise<Response> {
 
         사람이 앞에서 기다리는 구간이라 **한 번만** 다시 보낸다.
       */
-      if (!(first instanceof ReleaseLookupError) || !(await refreshTeamSessionFromDb(teamId))) {
+      const retryable = first instanceof ReleaseLookupError && first.code === "session";
+      if (!retryable || !(await refreshTeamSessionFromDb(teamId))) {
         throw first;
       }
       releases = await findReleases(fetchClient(sessionFileForTeam(teamId)), categoryId, q);
@@ -91,7 +92,13 @@ export async function GET(request: Request): Promise<Response> {
     const message = error instanceof ReleaseLookupError || error instanceof Error
       ? error.message
       : String(error);
-    console.error("[api/releases]", error);
-    return NextResponse.json({ ok: false, message }, { status: 502 });
+    const code = error instanceof ReleaseLookupError ? error.code : "http";
+    // 어느 쪽이었는지 로그에 남긴다 — 전에는 401 과 403 을 구분할 길이 없어
+    // "다시 로그인하세요" 만 되풀이됐다.
+    console.error(
+      `[api/releases] code=${code} status=${error instanceof ReleaseLookupError ? error.status : 0}`,
+      error,
+    );
+    return NextResponse.json({ ok: false, code, message }, { status: 502 });
   }
 }
