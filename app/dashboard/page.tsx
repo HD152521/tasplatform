@@ -77,8 +77,12 @@ export default async function DashboardPage() {
   }
 
   if (me.teamId !== "") {
-    const db = await openDb();
+    // openDb 를 try **안**에 둔다. 밖에 있으면 DB 연결 실패가 페이지를 통째로 500 으로
+    // 떨어뜨린다 — 대시보드는 여러 출처를 모아 보여 주는 화면이라, 한 곳이 막혔다고
+    // 화면 자체가 안 열리면 나머지 정보까지 못 본다.
+    let db: Awaited<ReturnType<typeof openDb>> | null = null;
     try {
+      db = await openDb();
       events = await listEventsBetween(db, me.teamId, week.from, week.to);
       const row = await db.get<{ n: number }>(
         `SELECT COUNT(*) AS n FROM team_events
@@ -89,7 +93,7 @@ export default async function DashboardPage() {
     } catch (error) {
       errors.push(`일정: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      await db.close();
+      if (db !== null) await db.close().catch(() => undefined);
     }
   }
 

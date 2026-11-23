@@ -50,24 +50,33 @@ export interface ThreadViewRow {
  * teamId 를 안 주면 빈 문자열이라 전체를 그대로 조회한다.
  */
 /**
- * "이 사람이 어디까지 읽었나" 를 돌려주는 스칼라 식.
+ * "이 답변을 이 사람이 아직 안 봤나" 를 판정하는 조건.
  *
- * 내 기록과 **옛 팀 공유 기록** 중 큰 쪽을 쓴다(lib/schema.ts case_reads_user 머리말).
- * 그래서 사용자별로 바꾸는 날 미읽음 숫자가 치솟지 않는다.
+ * 읽은 시점은 **내 기록과 옛 팀 공유 기록 중 큰 쪽**이다(lib/schema.ts case_reads_user
+ * 머리말). 그래서 사용자별로 바꾸는 날 미읽음 숫자가 치솟지 않는다.
  *
- * 방언을 가리지 않으려고 GREATEST/MAX(a,b) 대신 **UNION ALL 위의 집계 MAX** 를 쓴다 —
- * SQLite 에는 스칼라 MAX 가 있고 Postgres 에는 없다(GREATEST 다). 이 모양은 둘 다 받는다.
+ * ## 큰 쪽을 고르지 않고 둘 다 넘는지 본다
+ *
+ * 처음에는 `MAX(ms)` 를 UNION ALL 위에서 집계해 "큰 쪽" 을 구했다. 그 모양도 두 방언
+ * 모두에서 **돈다**(Postgres 16 에 직접 넣어 확인했다 — 바깥 쿼리 참조는 허용되고,
+ * LATERAL 은 같은 레벨의 FROM 항목을 참조할 때만 필요하다).
+ *
+ * 그래도 이 모양을 쓴다. `x > MAX(a, b)` 는 `x > a AND x > b` 와 같으므로 중첩
+ * FROM 과 집계가 통째로 필요 없고, 읽을 때 "두 기록을 모두 넘어야 안 본 것" 이라는
+ * 뜻이 그대로 보인다. GREATEST/MAX 방언 차이도 애초에 생기지 않는다.
+ *
+ * 두 방언에서 같은 답을 주는지는 시험으로 고정해 뒀다(test/caseReadsUser.test.ts 는
+ * SQLite, Postgres 는 podman 으로 띄워 같은 단정을 돌려 확인했다).
  *
  * `?` 하나를 쓴다(user_id). 파라미터 순서가 SQL 글자 순서와 같아야 하므로, 이 식을
  * 쓰는 쿼리는 **userId 를 맨 앞에** 넘긴다.
  */
-const READ_FLOOR_SQL = `(SELECT COALESCE(MAX(ms), 0) FROM (
-        SELECT u.last_read_thread_ms AS ms FROM case_reads_user u
-          WHERE u.request_id = c.request_id AND u.user_id = ?
-        UNION ALL
-        SELECT r.last_read_thread_ms AS ms FROM case_reads r
-          WHERE r.request_id = c.request_id
-      ) AS reads)`;
+const UNSEEN_SQL = `COALESCE(t.res_date_ms, 0) >
+          COALESCE((SELECT u.last_read_thread_ms FROM case_reads_user u
+                     WHERE u.request_id = c.request_id AND u.user_id = ?), 0)
+      AND COALESCE(t.res_date_ms, 0) >
+          COALESCE((SELECT r.last_read_thread_ms FROM case_reads r
+                     WHERE r.request_id = c.request_id), 0)`;
 
 function caseListSql(whereClause: string): string {
   return `
@@ -82,7 +91,7 @@ SELECT
   (SELECT t.res_date_val FROM threads t WHERE t.request_id = c.request_id ORDER BY t.res_date_ms DESC LIMIT 1) AS latest_at,
   (SELECT COUNT(*) FROM threads t
     WHERE t.request_id = c.request_id AND t.is_ours = 0
-      AND COALESCE(t.res_date_ms, 0) > ${READ_FLOOR_SQL}
+      AND ${UNSEEN_SQL}
   ) AS unread_replies,
   (SELECT s.content FROM case_summaries s
      WHERE s.request_id = c.request_id AND s.kind = 'confluence_published' LIMIT 1) AS confluence_url
@@ -338,7 +347,7 @@ export function countsForNav(options: TeamScopedQueryOptions = {}): Promise<{
       `SELECT c.status AS status,
               (SELECT COUNT(*) FROM threads t
                 WHERE t.request_id = c.request_id AND t.is_ours = 0
-                  AND COALESCE(t.res_date_ms, 0) > ${READ_FLOOR_SQL}) AS unread
+                  AND ${UNSEEN_SQL}) AS unread
        FROM cases c
        ${where}`,
       params,
