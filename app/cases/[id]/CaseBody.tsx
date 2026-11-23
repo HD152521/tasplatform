@@ -16,7 +16,7 @@ import {
   translateControl,
 } from "../../../lib/caseTranslate.ts";
 import { TranslateButton, translateButtonStyle } from "../../TranslateButton.tsx";
-import { COLOR } from "../../ui.tsx";
+import { COLOR, SPACE, TEXT } from "../../ui.tsx";
 
 export function CaseBody({
   requestId, scope, refId, text, translation, translatable, defaultKorean,
@@ -49,7 +49,7 @@ export function CaseBody({
   return (
     <>
       <p style={{
-        margin: 0, fontSize: 14, lineHeight: 1.75, color: COLOR.body,
+        margin: 0, fontSize: TEXT.base, lineHeight: 1.75, color: COLOR.body,
         whiteSpace: "pre-wrap", wordBreak: "break-word",
       }}>
         {showingKorean ? translation : (text === "" ? "(본문 없음)" : text)}
@@ -61,11 +61,11 @@ export function CaseBody({
       */}
       {text !== "" && (
         <div style={{
-          marginTop: 10, display: "flex", justifyContent: "flex-end",
-          alignItems: "center", gap: 8, flexWrap: "wrap",
+          marginTop: SPACE.sm, display: "flex", justifyContent: "flex-end",
+          alignItems: "center", gap: SPACE.sm, flexWrap: "wrap",
         }}>
           {control.kind === "korean" && (
-            <span style={{ fontSize: 11, color: COLOR.faint }}>{control.label}</span>
+            <span style={{ fontSize: TEXT.micro, color: COLOR.faint }}>{control.label}</span>
           )}
           {control.kind === "translate" && (
             <TranslateButton

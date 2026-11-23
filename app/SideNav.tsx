@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { activeNavHref } from "../lib/navActive.ts";
-import { COLOR, MONO_STACK, RADIUS } from "./ui.tsx";
+import { COLOR, MONO_STACK, RADIUS, SPACE, TEXT, WEIGHT } from "./ui.tsx";
 import { SessionDot } from "./SessionDot.tsx";
 
 interface Counts {
@@ -154,20 +154,20 @@ export function SideNav({
       display: "flex", flexDirection: "column",
       position: "sticky", top: 0, height: "100vh",
     }}>
-      <div style={{ padding: "22px 20px 16px", borderBottom: `1px solid ${COLOR.divider}` }}>
-        <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em" }}>Broadcom SR</div>
-        <div style={{ fontSize: 12, color: COLOR.muted, marginTop: 2 }}>
+      <div style={{ padding: `${SPACE.xl}px ${SPACE.xl}px ${SPACE.lg}px`, borderBottom: `1px solid ${COLOR.divider}` }}>
+        <div style={{ fontSize: TEXT.lead, fontWeight: WEIGHT.bold, letterSpacing: "-0.01em" }}>Broadcom SR</div>
+        <div style={{ fontSize: TEXT.small, color: COLOR.muted, marginTop: SPACE.xxs }}>
           {user.teamName === "" ? "소속 팀 없음" : user.teamName}
         </div>
       </div>
 
-      <nav style={{ padding: "10px 12px 16px", display: "flex", flexDirection: "column", overflowY: "auto" }}>
+      <nav style={{ padding: `${SPACE.sm}px ${SPACE.md}px ${SPACE.lg}px`, display: "flex", flexDirection: "column", overflowY: "auto" }}>
         {groups.map((group, gi) => {
           const hasActive = group.items.some((i) => i.href === activeHref);
           // 보고 있는 화면이 든 카테고리는 접지 않는다 — 접힌 채 활성이면 길을 잃는다.
           const open = group.title === "" || hasActive || !collapsed.includes(group.title);
           return (
-            <div key={group.title === "" ? `g${gi}` : group.title} style={{ marginBottom: 6 }}>
+            <div key={group.title === "" ? `g${gi}` : group.title} style={{ marginBottom: SPACE.xs }}>
               {group.title !== "" && (
                 <button
                   type="button"
@@ -176,18 +176,18 @@ export function SideNav({
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "space-between",
                     width: "100%", background: "transparent", border: "none",
-                    padding: "9px 12px 5px", cursor: hasActive ? "default" : "pointer",
+                    padding: `${SPACE.sm}px ${SPACE.md}px ${SPACE.xs}px`, cursor: hasActive ? "default" : "pointer",
                     fontFamily: "inherit", textAlign: "left",
                   }}
                 >
                   <span style={{
-                    fontSize: 10.5, fontWeight: 700, color: COLOR.faint,
+                    fontSize: TEXT.micro, fontWeight: WEIGHT.bold, color: COLOR.faint,
                     letterSpacing: "0.04em",
                   }}>
                     {group.title}
                   </span>
                   <span style={{
-                    fontSize: 9, color: COLOR.faint,
+                    fontSize: TEXT.micro, color: COLOR.faint,
                     // 접힘은 눌러서 바뀌는 것이니 화살표가 그 상태를 말한다.
                     transform: open ? "rotate(90deg)" : "none",
                     transition: "transform 120ms ease",
@@ -198,7 +198,7 @@ export function SideNav({
               )}
 
               {open && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: SPACE.xxs }}>
                   {group.items.map((item) => (
                     <NavLink key={item.href} item={item} active={item.href === activeHref} />
                   ))}
@@ -207,10 +207,10 @@ export function SideNav({
 
               {/* 접혀 있어도 그 안에 기다리는 일이 있으면 숫자로 알린다. */}
               {!open && groupBadge(group) > 0 && (
-                <div style={{ padding: "0 12px 4px" }}>
+                <div style={{ padding: `0 ${SPACE.md}px ${SPACE.xs}px` }}>
                   <span style={{
-                    fontFamily: MONO_STACK, fontSize: 10.5, fontWeight: 600, color: "#ffffff",
-                    background: COLOR.waitUs, padding: "1px 6px", borderRadius: RADIUS.badge,
+                    fontFamily: MONO_STACK, fontSize: TEXT.micro, fontWeight: WEIGHT.semibold, color: COLOR.surface,
+                    background: COLOR.waitUs, padding: `${SPACE.xxs}px ${SPACE.xs}px`, borderRadius: RADIUS.badge,
                   }}>
                     {groupBadge(group)}
                   </span>
@@ -227,12 +227,12 @@ export function SideNav({
           아래가 그 팀이 공유하는 브로드컴 포털 세션이다. 섞이면 "로그아웃" 을 눌렀을 때
           수집이 멈추는 쪽을 끊어 버린다 — 그래서 라벨을 분명히 갈라 둔다.
         */}
-        <div style={{ padding: "14px 20px", borderTop: `1px solid ${COLOR.divider}` }}>
+        <div style={{ padding: `${SPACE.md}px ${SPACE.xl}px`, borderTop: `1px solid ${COLOR.divider}` }}>
           <UserChipRow user={user} />
         </div>
 
-        <div style={{ padding: "12px 20px 16px", borderTop: `1px solid ${COLOR.divider}` }}>
-          <div style={{ fontSize: 11, color: COLOR.faint, marginBottom: 7, fontWeight: 600 }}>
+        <div style={{ padding: `${SPACE.md}px ${SPACE.xl}px ${SPACE.lg}px`, borderTop: `1px solid ${COLOR.divider}` }}>
+          <div style={{ fontSize: TEXT.micro, color: COLOR.faint, marginBottom: SPACE.sm, fontWeight: WEIGHT.semibold }}>
             브로드컴 포털 세션 {user.teamName === "" ? "" : `· ${user.teamName}`}
           </div>
           {/*
@@ -240,7 +240,7 @@ export function SideNav({
             쿠키 기준으로 남으면, 세션이 죽은 상태에서 "…까지" 가 같이 보여 엇갈린다.
           */}
           <SessionDot signedIn={signedIn} expiresAt={expiresAt} />
-          <div style={{ marginTop: 9, paddingLeft: 15 }}>{authSlot}</div>
+          <div style={{ marginTop: SPACE.sm, paddingLeft: SPACE.lg }}>{authSlot}</div>
         </div>
       </div>
     </aside>
@@ -256,23 +256,23 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   return (
     <Link href={item.href} style={{
       display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "8px 12px", borderRadius: 8, fontSize: 13, textDecoration: "none",
+      padding: `${SPACE.sm}px ${SPACE.md}px`, borderRadius: 8, fontSize: TEXT.base, textDecoration: "none",
       fontWeight: active ? 600 : 400,
-      color: active ? COLOR.ink : "#4b5563",
-      background: active ? "#eef1f6" : "transparent",
+      color: active ? COLOR.ink : COLOR.body,
+      background: active ? COLOR.accentWash : "transparent",
     }}>
-      <span style={{ display: "flex", alignItems: "center", gap: 9 }}>
+      <span style={{ display: "flex", alignItems: "center", gap: SPACE.sm }}>
         <span style={{
           width: 5, height: 5, borderRadius: "50%", flexShrink: 0,
-          background: active ? COLOR.accent : "#c7ccd4",
+          background: active ? COLOR.accent : COLOR.line,
         }} />
         {item.label}
       </span>
-      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <span style={{ display: "flex", alignItems: "center", gap: SPACE.xs }}>
         {item.badge > 0 && (
           <span style={{
-            fontFamily: MONO_STACK, fontSize: 11, fontWeight: 600, color: "#ffffff",
-            background: COLOR.waitUs, padding: "1px 6px", borderRadius: RADIUS.badge,
+            fontFamily: MONO_STACK, fontSize: TEXT.micro, fontWeight: WEIGHT.semibold, color: COLOR.surface,
+            background: COLOR.waitUs, padding: `${SPACE.xxs}px ${SPACE.xs}px`, borderRadius: RADIUS.badge,
           }}>
             {item.badge}
           </span>
@@ -280,7 +280,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
         {item.count !== null && (
           <span style={{
             fontFamily: MONO_STACK, fontVariantNumeric: "tabular-nums",
-            fontSize: 12, color: COLOR.faint,
+            fontSize: TEXT.small, color: COLOR.faint,
           }}>
             {item.count}
           </span>
@@ -306,21 +306,21 @@ function UserChipRow({ user }: { user: UserChip }) {
   }
 
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: SPACE.sm }}>
       <Link href="/me" style={{ minWidth: 0, textDecoration: "none", color: "inherit" }}>
         <div style={{
-          fontSize: 13, fontWeight: 600, whiteSpace: "nowrap",
+          fontSize: TEXT.base, fontWeight: WEIGHT.semibold, whiteSpace: "nowrap",
           overflow: "hidden", textOverflow: "ellipsis",
         }}>
           {user.displayName === "" ? user.loginId : user.displayName}
           {user.role === "owner" && (
-            <span style={{ color: COLOR.accent, fontSize: 10, marginLeft: 5, fontWeight: 700 }}>
+            <span style={{ color: COLOR.accent, fontSize: TEXT.micro, marginLeft: SPACE.xs, fontWeight: WEIGHT.bold }}>
               OWNER
             </span>
           )}
         </div>
         <div style={{
-          fontSize: 11, color: COLOR.faint, fontFamily: MONO_STACK,
+          fontSize: TEXT.micro, color: COLOR.faint, fontFamily: MONO_STACK,
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>
           {user.loginId}
@@ -331,9 +331,9 @@ function UserChipRow({ user }: { user: UserChip }) {
         onClick={signOut}
         disabled={busy}
         style={{
-          fontSize: 11, color: COLOR.muted, background: "transparent",
+          fontSize: TEXT.micro, color: COLOR.muted, background: "transparent",
           border: `1px solid ${COLOR.field}`, borderRadius: RADIUS.badge,
-          padding: "4px 8px", cursor: "pointer", fontFamily: "inherit", flexShrink: 0,
+          padding: `${SPACE.xs}px ${SPACE.sm}px`, cursor: "pointer", fontFamily: "inherit", flexShrink: 0,
         }}
       >
         {busy ? "…" : "로그아웃"}

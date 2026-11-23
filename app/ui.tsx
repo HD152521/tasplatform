@@ -398,33 +398,58 @@ export function Tab({
   );
 }
 
-/** 고를 수 있는 값 하나(망·법인·성격). 라디오보다 눌러야 할 것이 분명하다. */
+/**
+ * 고를 수 있는 값 하나(망·법인·성격, 목록 필터). 라디오보다 눌러야 할 것이 분명하다.
+ *
+ * `count` 를 주면 건수를 함께 보여 준다 — 필터로 쓸 때 "눌러 봐야 몇 건인지 아는"
+ * 상황을 없앤다. 숫자는 tabular 라서 칩 폭이 들쭉날쭉하지 않다.
+ *
+ * `tone="danger"` 는 **내 차례**를 뜻하는 필터에만 쓴다(새 답변 등). 강조색을 여러
+ * 뜻으로 쓰면 "빨간 건 내 차례" 규칙이 무너진다.
+ */
 export function Chip({
-  label, active, onClick,
+  label, active, onClick, count, tone = "accent",
 }: {
   label: ReactNode;
   active: boolean;
   onClick: () => void;
+  count?: number;
+  tone?: "accent" | "danger";
 }) {
+  const mark = tone === "danger" ? COLOR.waitUs : COLOR.accent;
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
       style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: SPACE.xs + 2,
         padding: `${SPACE.xs + 1}px ${SPACE.md - 1}px`,
         borderRadius: RADIUS.pill,
         fontSize: TEXT.small,
         fontWeight: active ? WEIGHT.semibold : WEIGHT.normal,
         fontFamily: "inherit",
         cursor: "pointer",
-        border: `1px solid ${active ? COLOR.accent : COLOR.field}`,
-        background: active ? COLOR.accent : COLOR.surface,
+        border: `1px solid ${active ? mark : COLOR.field}`,
+        background: active ? mark : COLOR.surface,
         color: active ? COLOR.onAccent : COLOR.body,
         transition: `background ${MOTION.fast}, border-color ${MOTION.fast}`,
       }}
     >
       {label}
+      {count !== undefined && (
+        <span style={{
+          fontFamily: MONO_STACK,
+          fontSize: TEXT.micro,
+          fontVariantNumeric: "tabular-nums",
+          // 눌린 칩 안에서는 바탕이 진하므로 흰색을 옅게 깔아 둔다.
+          color: active ? "rgba(255,255,255,.72)" : COLOR.faint,
+        }}>
+          {count}
+        </span>
+      )}
     </button>
   );
 }

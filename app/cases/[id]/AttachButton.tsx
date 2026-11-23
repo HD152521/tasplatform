@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { COLOR, RADIUS, controlStyle } from "../../ui.tsx";
+import { COLOR, controlStyle, RADIUS, SPACE, TEXT, WEIGHT } from "../../ui.tsx";
 import { MAX_UPLOAD_LABEL, checkUploadRequest } from "../../../lib/attachmentUpload.ts";
 import { isSessionFailure } from "../../../lib/writeFailure.ts";
 
@@ -262,8 +262,8 @@ export function AttachButton({ requestId }: { requestId: number }) {
         onClick={() => inputRef.current?.click()}
         style={{
           ...controlStyle,
-          display: "inline-flex", alignItems: "baseline", gap: 6,
-          padding: "7px 12px", fontSize: 12.5, fontWeight: 600,
+          display: "inline-flex", alignItems: "baseline", gap: SPACE.xs,
+          padding: `${SPACE.sm}px ${SPACE.md}px`, fontSize: TEXT.small, fontWeight: WEIGHT.semibold,
           color: busy ? COLOR.faint : COLOR.ink,
           background: busy ? COLOR.ground : COLOR.surface,
           cursor: busy ? "default" : "pointer", whiteSpace: "nowrap",
@@ -272,7 +272,7 @@ export function AttachButton({ requestId }: { requestId: number }) {
         {busy
           ? `올리는 중… ${total > 1 ? `${total}개 ` : ""}${elapsed}초`
           : "파일 붙이기"}
-        <span style={{ fontSize: 10.5, fontWeight: 400, color: COLOR.faint }}>
+        <span style={{ fontSize: TEXT.micro, fontWeight: WEIGHT.normal, color: COLOR.faint }}>
           {busy ? "그대로 기다리세요" : "답변과 별개"}
         </span>
       </button>
@@ -291,7 +291,7 @@ export function AttachButton({ requestId }: { requestId: number }) {
           role="status"
           style={{
             flexBasis: "100%", minWidth: 0, order: 1,
-            fontSize: 11.5, lineHeight: 1.6, wordBreak: "break-word",
+            fontSize: TEXT.micro, lineHeight: 1.6, wordBreak: "break-word",
             color: error !== "" ? COLOR.waitUs : warn !== "" ? COLOR.warn : busy ? COLOR.muted : COLOR.ok,
             background: error !== "" ? COLOR.waitUsBg : warn !== "" ? COLOR.warnBg : "transparent",
             border: error !== ""

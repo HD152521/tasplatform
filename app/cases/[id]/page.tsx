@@ -13,7 +13,7 @@ import {
   loadCaseTranslations, markCaseRead,
   type AttachmentViewRow,
 } from "../../../lib/queries.ts";
-import { Badge, COLOR, Card, MONO_STACK, RADIUS, formatStamp, statusColors } from "../../ui.tsx";
+import { Badge, Card, COLOR, formatStamp, MONO_STACK, RADIUS, SPACE, statusColors, TEXT, WEIGHT } from "../../ui.tsx";
 import { ReplyBox } from "./ReplyBox.tsx";
 import { LangToggle } from "./LangToggle.tsx";
 import { SummaryPanel } from "./SummaryPanel.tsx";
@@ -88,36 +88,36 @@ export default async function CaseDetailPage({
 
   return (
     <>
-      <Link href={closed ? "/closed" : "/"} style={{ fontSize: 13, color: COLOR.accent, textDecoration: "none" }}>
+      <Link href={closed ? "/closed" : "/"} style={{ fontSize: TEXT.base, color: COLOR.accent, textDecoration: "none" }}>
         ← {closed ? "종료 케이스" : "진행중 케이스"}
       </Link>
 
-      <header style={{ margin: "14px 0 22px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: MONO_STACK, fontSize: 12, color: COLOR.faint }}>
+      <header style={{ margin: `${SPACE.md}px 0 ${SPACE.xl}px` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm, marginBottom: SPACE.sm, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: MONO_STACK, fontSize: TEXT.small, color: COLOR.faint }}>
             {detail.request_id_formatted}
           </span>
           <Badge fg={tone.fg} bg={tone.bg}>{detail.status}</Badge>
           {detail.unread_replies > 0 && (
             <Badge fg={COLOR.waitUs} bg={COLOR.waitUsBg} strong>새 답변 {detail.unread_replies}</Badge>
           )}
-          <span style={{ fontSize: 11, color: COLOR.muted }}>{detail.priority}</span>
+          <span style={{ fontSize: TEXT.micro, color: COLOR.muted }}>{detail.priority}</span>
         </div>
 
         <h1 style={{
-          fontSize: 21, fontWeight: 600, margin: 0, lineHeight: 1.35,
+          fontSize: TEXT.title, fontWeight: WEIGHT.semibold, margin: 0, lineHeight: 1.35,
           letterSpacing: "-0.015em", textWrap: "pretty",
         }}>
           {detail.subject}
         </h1>
 
-        <div style={{ display: "flex", gap: 14, marginTop: 9, fontSize: 12, color: COLOR.muted, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 500, color: "#4b5563" }}>{detail.party_name}</span>
-          <span style={{ color: "#d6dae0" }}>·</span>
+        <div style={{ display: "flex", gap: SPACE.md, marginTop: SPACE.sm, fontSize: TEXT.small, color: COLOR.muted, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: WEIGHT.medium, color: COLOR.body }}>{detail.party_name}</span>
+          <span style={{ color: COLOR.line }}>·</span>
           <span>{detail.category}</span>
           {detail.case_version !== null && (
             <>
-              <span style={{ color: "#d6dae0" }}>·</span>
+              <span style={{ color: COLOR.line }}>·</span>
               <span style={{ fontFamily: MONO_STACK }}>{`v${detail.case_version}`}</span>
             </>
           )}
@@ -129,10 +129,10 @@ export default async function CaseDetailPage({
 
       {closed && <SummaryPanel requestId={detail.request_id} />}
 
-      <div style={{ display: "flex", gap: 22, alignItems: "flex-start" }}>
+      <div style={{ display: "flex", gap: SPACE.xl, alignItems: "flex-start" }}>
         <section style={{ flex: 1, minWidth: 0 }}>
           {detail.description_text !== "" && (
-            <Card style={{ padding: "18px 20px", marginBottom: 14 }}>
+            <Card style={{ padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md }}>
               <SpeakerRow ours label="최초 등록 내용" at={formatStamp(detail.created_on_ms)} />
               {/* 최초 등록 글도 같은 저장소(scope=case_desc)를 쓰므로 버튼을 함께 붙인다. */}
               <CaseBody
@@ -148,7 +148,7 @@ export default async function CaseDetailPage({
           )}
 
           {threads.length === 0 && detail.description_text === "" && (
-            <Card style={{ padding: 40, textAlign: "center", color: COLOR.faint, fontSize: 13 }}>
+            <Card style={{ padding: SPACE.xxxl, textAlign: "center", color: COLOR.faint, fontSize: TEXT.base }}>
               수집된 대화가 없습니다.
             </Card>
           )}
@@ -159,8 +159,8 @@ export default async function CaseDetailPage({
             const docs = byThread.get(thread.thread_id) ?? [];
             return (
               <Card key={thread.thread_id} style={{
-                padding: "18px 20px", marginBottom: 14,
-                background: ours ? "#fafbfc" : COLOR.surface,
+                padding: `${SPACE.lg}px ${SPACE.xl}px`, marginBottom: SPACE.md,
+                background: ours ? COLOR.ground : COLOR.surface,
                 borderColor: latest ? "#f3c7c2" : COLOR.line,
                 boxShadow: latest ? `0 0 0 3px ${COLOR.waitUsBg}` : undefined,
               }}>
@@ -193,7 +193,7 @@ export default async function CaseDetailPage({
         </section>
 
         <aside style={{ width: 286, flexShrink: 0 }}>
-          <Card style={{ padding: "18px 18px 10px", marginBottom: 14 }}>
+          <Card style={{ padding: `${SPACE.lg}px ${SPACE.lg}px ${SPACE.sm}px`, marginBottom: SPACE.md }}>
             <RailTitle>진행 상황</RailTitle>
             <Fact label="상태" value={detail.status} color={tone.fg} />
             <Fact
@@ -208,12 +208,12 @@ export default async function CaseDetailPage({
           </Card>
 
           {attachments.length > 0 && (
-            <Card style={{ padding: "18px 18px 20px" }}>
+            <Card style={{ padding: `${SPACE.lg}px ${SPACE.lg}px ${SPACE.xl}px` }}>
               <RailTitle>
                 {"첨부파일 "}
                 <span style={{ fontFamily: MONO_STACK, color: COLOR.muted }}>{attachments.length}</span>
               </RailTitle>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: SPACE.xs }}>
                 {attachments.map((doc) => (
                   <FileRow key={doc.document_id} doc={doc} compact />
                 ))}
@@ -230,23 +230,23 @@ function SpeakerRow({
   ours, label, at, latest,
 }: { ours: boolean; label: string; at: string; latest?: boolean }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 11 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm, marginBottom: SPACE.md }}>
       <span style={{
-        width: 26, height: 26, borderRadius: 7, fontSize: 10, fontWeight: 600,
+        width: 26, height: 26, borderRadius: 7, fontSize: TEXT.micro, fontWeight: WEIGHT.semibold,
         display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-        color: ours ? "#4b5563" : COLOR.waitThem,
-        background: ours ? "#eef1f6" : COLOR.waitThemBg,
+        color: ours ? COLOR.body : COLOR.waitThem,
+        background: ours ? COLOR.accentWash : COLOR.waitThemBg,
       }}>
         {ours ? "우리" : "BC"}
       </span>
       <span style={{
-        fontSize: 13, fontWeight: 600, minWidth: 0,
+        fontSize: TEXT.base, fontWeight: WEIGHT.semibold, minWidth: 0,
         overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
       }}>
         {label}
       </span>
       {latest === true && <Badge fg={COLOR.waitUs} bg={COLOR.waitUsBg} strong>최신</Badge>}
-      <span style={{ marginLeft: "auto", fontSize: 12, color: COLOR.faint, flexShrink: 0 }}>{at}</span>
+      <span style={{ marginLeft: "auto", fontSize: TEXT.small, color: COLOR.faint, flexShrink: 0 }}>{at}</span>
     </div>
   );
 }
@@ -254,8 +254,8 @@ function SpeakerRow({
 function RailTitle({ children }: { children: ReactNode }) {
   return (
     <div style={{
-      fontSize: 11, fontWeight: 600, color: COLOR.faint,
-      letterSpacing: "0.04em", marginBottom: 12,
+      fontSize: TEXT.micro, fontWeight: WEIGHT.semibold, color: COLOR.faint,
+      letterSpacing: "0.04em", marginBottom: SPACE.md,
     }}>
       {children}
     </div>
@@ -264,10 +264,10 @@ function RailTitle({ children }: { children: ReactNode }) {
 
 function Fact({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10 }}>
-      <span style={{ width: 68, flexShrink: 0, color: COLOR.faint, fontSize: 12 }}>{label}</span>
+    <div style={{ display: "flex", alignItems: "baseline", gap: SPACE.sm, marginBottom: SPACE.sm }}>
+      <span style={{ width: 68, flexShrink: 0, color: COLOR.faint, fontSize: TEXT.small }}>{label}</span>
       <span style={{
-        fontSize: 13, minWidth: 0,
+        fontSize: TEXT.base, minWidth: 0,
         color: color === undefined ? COLOR.ink : color,
         fontWeight: color === undefined ? 400 : 500,
       }}>
@@ -297,8 +297,8 @@ function extOf(name: string): string {
 function Files({ docs }: { docs: AttachmentViewRow[] }) {
   return (
     <div style={{
-      marginTop: 13, paddingTop: 12, borderTop: `1px dashed ${COLOR.line}`,
-      display: "flex", flexDirection: "column", gap: 6,
+      marginTop: SPACE.md, paddingTop: SPACE.md, borderTop: `1px dashed ${COLOR.line}`,
+      display: "flex", flexDirection: "column", gap: SPACE.xs,
     }}>
       {docs.map((doc) => <FileRow key={doc.document_id} doc={doc} />)}
     </div>
@@ -307,7 +307,7 @@ function Files({ docs }: { docs: AttachmentViewRow[] }) {
 
 function FileRow({ doc, compact = false }: { doc: AttachmentViewRow; compact?: boolean }) {
   const style = {
-    display: "flex", alignItems: "center", gap: 10, padding: "9px 10px",
+    display: "flex", alignItems: "center", gap: SPACE.sm, padding: `${SPACE.sm}px ${SPACE.sm}px`,
     border: `1px solid ${COLOR.divider}`, borderRadius: RADIUS.control,
     textDecoration: "none", background: COLOR.surface,
   } as const;
@@ -316,7 +316,7 @@ function FileRow({ doc, compact = false }: { doc: AttachmentViewRow; compact?: b
     <>
       <span style={{
         width: 30, height: 30, flexShrink: 0, borderRadius: 6,
-        fontSize: 9, fontWeight: 600,
+        fontSize: TEXT.micro, fontWeight: WEIGHT.semibold,
         display: "flex", alignItems: "center", justifyContent: "center",
         color: COLOR.muted, background: "#f0f2f5",
       }}>
@@ -330,8 +330,8 @@ function FileRow({ doc, compact = false }: { doc: AttachmentViewRow; compact?: b
           {doc.doc_name === "" ? "(이름 없음)" : doc.doc_name}
         </span>
         <span style={{
-          display: "block", fontFamily: MONO_STACK, fontSize: 11,
-          color: COLOR.faint, marginTop: 2,
+          display: "block", fontFamily: MONO_STACK, fontSize: TEXT.micro,
+          color: COLOR.faint, marginTop: SPACE.xxs,
         }}>
           {formatSize(doc.file_size)}
           {doc.uploaded_ms === null ? "" : ` · ${formatStamp(doc.uploaded_ms)}`}

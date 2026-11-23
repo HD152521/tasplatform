@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { KbViewRow } from "../../lib/queries.ts";
 import { KB_TRANSLATE_FIELDS, kbShown } from "../../lib/kbTranslate.ts";
 import { TranslateButton } from "../TranslateButton.tsx";
-import { Badge, COLOR, Card, MONO_STACK, RADIUS, formatStamp } from "../ui.tsx";
+import { Badge, Card, COLOR, formatStamp, MONO_STACK, RADIUS, SPACE, TEXT, WEIGHT } from "../ui.tsx";
 
 /** 판정값별 색과 라벨. 앱 전체의 색 의미와 맞춘다(우리 일=빨강 계열). */
 function verdictTone(v: string): { fg: string; bg: string; label: string } {
@@ -74,7 +74,7 @@ export function KbList({
   return (
     <>
       <div style={{
-        display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center", marginBottom: 16,
+        display: "flex", gap: SPACE.sm, flexWrap: "wrap", alignItems: "center", marginBottom: SPACE.lg,
       }}>
         <Chip label="전체" count={rows.length} active={product === "all"}
               onClick={() => setProduct("all")} />
@@ -86,7 +86,7 @@ export function KbList({
         <select
           value={verdict} onChange={(e) => setVerdict(e.target.value)}
           style={{
-            marginLeft: "auto", padding: "7px 11px", fontSize: 12.5,
+            marginLeft: "auto", padding: `${SPACE.sm}px ${SPACE.md}px`, fontSize: TEXT.small,
             border: `1px solid ${COLOR.field}`, borderRadius: RADIUS.control,
             background: COLOR.surface, fontFamily: "inherit",
           }}
@@ -102,7 +102,7 @@ export function KbList({
           value={query} onChange={(e) => setQuery(e.target.value)}
           placeholder="제목 · 증상 검색"
           style={{
-            minWidth: 200, flex: "1 1 200px", padding: "8px 12px", fontSize: 13,
+            minWidth: 200, flex: "1 1 200px", padding: `${SPACE.sm}px ${SPACE.md}px`, fontSize: TEXT.base,
             border: `1px solid ${COLOR.field}`, borderRadius: RADIUS.control,
             background: COLOR.surface, fontFamily: "inherit", outline: "none",
           }}
@@ -110,11 +110,11 @@ export function KbList({
       </div>
 
       {shown.length === 0 ? (
-        <Card style={{ padding: 44, textAlign: "center", color: COLOR.faint, fontSize: 13 }}>
+        <Card style={{ padding: SPACE.xxxl, textAlign: "center", color: COLOR.faint, fontSize: TEXT.base }}>
           조건에 맞는 문서가 없습니다.
         </Card>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: SPACE.sm }}>
           {shown.map((r) => {
             const tone = verdictTone(r.verdict);
             const expanded = open === r.article_id;
@@ -124,20 +124,20 @@ export function KbList({
               useKo ? kbShown(ko, r.article_id, scope, original) : original;
             return (
               <Card key={r.article_id} style={{
-                padding: "14px 18px",
+                padding: `${SPACE.md}px ${SPACE.lg}px`,
                 borderLeft: r.verdict === "match" ? `3px solid ${tone.fg}` : "3px solid transparent",
               }}>
                 <div style={{
-                  display: "flex", alignItems: "center", gap: 9, marginBottom: 6, flexWrap: "wrap",
+                  display: "flex", alignItems: "center", gap: SPACE.sm, marginBottom: SPACE.xs, flexWrap: "wrap",
                 }}>
                   <Badge fg={tone.fg} bg={tone.bg} strong={r.verdict === "match"}>
                     {tone.label}
                   </Badge>
-                  <span style={{ fontSize: 12, color: COLOR.muted }}>{r.matched}</span>
+                  <span style={{ fontSize: TEXT.small, color: COLOR.muted }}>{r.matched}</span>
                   <a
                     href={r.url} target="_blank" rel="noreferrer"
                     style={{
-                      fontFamily: MONO_STACK, fontSize: 11.5, color: COLOR.accent,
+                      fontFamily: MONO_STACK, fontSize: TEXT.micro, color: COLOR.accent,
                       textDecoration: "none",
                     }}
                   >
@@ -145,27 +145,27 @@ export function KbList({
                   </a>
                   <span style={{
                     marginLeft: "auto", fontFamily: MONO_STACK,
-                    fontSize: 11.5, color: COLOR.faint, whiteSpace: "nowrap",
+                    fontSize: TEXT.micro, color: COLOR.faint, whiteSpace: "nowrap",
                   }}>
                     {stamp(r.lastmod)}
                   </span>
                 </div>
 
                 <a href={r.url} target="_blank" rel="noreferrer" style={{
-                  display: "block", fontSize: 13.5, fontWeight: 600, lineHeight: 1.6,
-                  color: COLOR.ink, textDecoration: "none", marginBottom: 5,
+                  display: "block", fontSize: TEXT.base, fontWeight: WEIGHT.semibold, lineHeight: 1.6,
+                  color: COLOR.ink, textDecoration: "none", marginBottom: SPACE.xs,
                 }}>
                   {show("kb_title", r.title)}
                 </a>
 
                 {r.verdict_why !== "" && (
-                  <p style={{ margin: "0 0 6px", fontSize: 12.5, lineHeight: 1.7, color: tone.fg }}>
+                  <p style={{ margin: `0 0 ${SPACE.xs}px`, fontSize: TEXT.small, lineHeight: 1.7, color: tone.fg }}>
                     {r.verdict_why}
                   </p>
                 )}
 
                 <p style={{
-                  margin: 0, fontSize: 12.5, lineHeight: 1.7, color: COLOR.body,
+                  margin: 0, fontSize: TEXT.small, lineHeight: 1.7, color: COLOR.body,
                   display: expanded ? "block" : "-webkit-box",
                   WebkitLineClamp: expanded ? "none" : 2, WebkitBoxOrient: "vertical",
                   overflow: "hidden", whiteSpace: "pre-line",
@@ -174,11 +174,11 @@ export function KbList({
                 </p>
 
                 {expanded && (
-                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ marginTop: SPACE.sm, display: "flex", flexDirection: "column", gap: SPACE.sm }}>
                     <Section title="Environment" body={show("kb_environment", r.environment)} />
                     <Section title="Cause" body={show("kb_cause", r.cause)} />
                     <Section title="Resolution" body={show("kb_resolution", r.resolution)} />
-                    <div style={{ fontSize: 11, color: COLOR.faint, whiteSpace: "pre-line" }}>
+                    <div style={{ fontSize: TEXT.micro, color: COLOR.faint, whiteSpace: "pre-line" }}>
                       {`제품 태그: ${r.products.split("\n").join(", ")}`}
                     </div>
                   </div>
@@ -188,8 +188,8 @@ export function KbList({
                   type="button"
                   onClick={() => setOpen(expanded ? null : r.article_id)}
                   style={{
-                    marginTop: 8, padding: 0, border: "none", background: "none",
-                    fontSize: 11.5, color: COLOR.accent, cursor: "pointer", fontFamily: "inherit",
+                    marginTop: SPACE.sm, padding: 0, border: "none", background: "none",
+                    fontSize: TEXT.micro, color: COLOR.accent, cursor: "pointer", fontFamily: "inherit",
                   }}
                 >
                   {expanded ? "접기" : "원인·조치 보기"}
@@ -205,14 +205,14 @@ export function KbList({
                       return next;
                     })}
                     style={{
-                      marginLeft: 12, padding: 0, border: "none", background: "none",
-                      fontSize: 11.5, color: COLOR.muted, cursor: "pointer", fontFamily: "inherit",
+                      marginLeft: SPACE.md, padding: 0, border: "none", background: "none",
+                      fontSize: TEXT.micro, color: COLOR.muted, cursor: "pointer", fontFamily: "inherit",
                     }}
                   >
                     {useKo ? "원문 보기" : "번역 보기"}
                   </button>
                 ) : (
-                  <span style={{ marginLeft: 12 }}>
+                  <span style={{ marginLeft: SPACE.md }}>
                     <TranslateButton url={`/api/kb/${r.article_id}/translate`} compact />
                   </span>
                 )}
@@ -228,15 +228,15 @@ export function KbList({
 function Section({ title, body }: { title: string; body: string }) {
   if (body.trim() === "") return null;
   return (
-    <div style={{ background: COLOR.ground, borderRadius: RADIUS.control, padding: "10px 13px" }}>
+    <div style={{ background: COLOR.ground, borderRadius: RADIUS.control, padding: `${SPACE.sm}px ${SPACE.md}px` }}>
       <div style={{
-        fontSize: 10.5, fontWeight: 600, color: COLOR.faint,
-        letterSpacing: "0.04em", marginBottom: 5,
+        fontSize: TEXT.micro, fontWeight: WEIGHT.semibold, color: COLOR.faint,
+        letterSpacing: "0.04em", marginBottom: SPACE.xs,
       }}>
         {title}
       </div>
       <div style={{
-        fontSize: 12.5, lineHeight: 1.7, color: COLOR.body, whiteSpace: "pre-line",
+        fontSize: TEXT.small, lineHeight: 1.7, color: COLOR.body, whiteSpace: "pre-line",
       }}>
         {body}
       </div>
@@ -249,17 +249,17 @@ function Chip({
 }: { label: string; count: number; active: boolean; onClick: () => void }) {
   return (
     <button type="button" onClick={onClick} style={{
-      display: "inline-flex", alignItems: "center", gap: 7,
-      padding: "6px 11px 6px 13px", fontSize: 12.5,
+      display: "inline-flex", alignItems: "center", gap: SPACE.sm,
+      padding: `${SPACE.xs}px ${SPACE.md}px ${SPACE.xs}px ${SPACE.md}px`, fontSize: TEXT.small,
       fontWeight: active ? 600 : 400,
-      color: active ? "#ffffff" : COLOR.ink,
+      color: active ? COLOR.surface : COLOR.ink,
       background: active ? COLOR.accent : COLOR.surface,
       border: `1px solid ${active ? COLOR.accent : COLOR.field}`,
       borderRadius: RADIUS.pill, cursor: "pointer", fontFamily: "inherit",
     }}>
       {label}
       <span style={{
-        fontFamily: MONO_STACK, fontSize: 11,
+        fontFamily: MONO_STACK, fontSize: TEXT.micro,
         color: active ? "rgba(255,255,255,.75)" : COLOR.faint,
       }}>
         {count}

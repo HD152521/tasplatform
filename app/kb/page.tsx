@@ -4,7 +4,7 @@ import {
   countKbScanned, listKbArticles, loadCaseTranslations, type KbViewRow,
 } from "../../lib/queries.ts";
 import { CollectButton } from "../CollectButton.tsx";
-import { COLOR, Card, Notice } from "../ui.tsx";
+import { Card, COLOR, Notice, PageHeader, SPACE, TEXT, WEIGHT } from "../ui.tsx";
 import { KbList } from "./KbList.tsx";
 
 export const dynamic = "force-dynamic";
@@ -31,38 +31,26 @@ export default async function KbPage() {
 
   return (
     <>
-      <header style={{ marginBottom: 20 }}>
-        {/* 제목과 버튼을 한 줄에 둔다. 좁은 화면에서는 버튼이 아래로 내려간다. */}
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          gap: 12, flexWrap: "wrap",
+      <PageHeader title="기술 문서" actions={<CollectButton kind="kb" />}>
+        <span style={{
+          color: match > 0 ? COLOR.waitUs : COLOR.muted,
+          fontWeight: match > 0 ? 500 : 400,
         }}>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
-            기술 문서
-          </h1>
-          <CollectButton kind="kb" />
-        </div>
-        <p style={{ margin: "7px 0 0", fontSize: 13 }}>
-          <span style={{
-            color: match > 0 ? COLOR.waitUs : COLOR.muted,
-            fontWeight: match > 0 ? 500 : 400,
-          }}>
-            {match > 0
-              ? `우리 환경과 관련 있는 문서 ${match}건 · 확인 필요 ${maybe}건`
-              : `우리 제품 문서 ${rows.length}건${unjudged > 0 ? ` · 미판정 ${unjudged}건` : ""}`}
-          </span>
-          <span style={{ color: COLOR.faint }}>
-            {`  ·  훑어본 문서 ${scanned.toLocaleString("en-US")}건  ·  출처 Broadcom Knowledge Base`}
-          </span>
-        </p>
-      </header>
+          {match > 0
+            ? `우리 환경과 관련 있는 문서 ${match}건 · 확인 필요 ${maybe}건`
+            : `우리 제품 문서 ${rows.length}건${unjudged > 0 ? ` · 미판정 ${unjudged}건` : ""}`}
+        </span>
+        <span style={{ color: COLOR.faint }}>
+          {`  ·  훑어본 문서 ${scanned.toLocaleString("en-US")}건  ·  출처 Broadcom Knowledge Base`}
+        </span>
+      </PageHeader>
 
       {loadError !== null && <Notice tone="error">DB를 읽지 못했습니다: {loadError}</Notice>}
 
       {loadError === null && rows.length === 0 && (
-        <Card style={{ padding: "20px 22px", fontSize: 13.5, lineHeight: 1.8 }}>
+        <Card style={{ padding: `${SPACE.xl}px ${SPACE.xl}px`, fontSize: TEXT.base, lineHeight: 1.8 }}>
           <b>아직 수집된 문서가 없습니다.</b>
-          <div style={{ color: COLOR.muted, marginTop: 8 }}>
+          <div style={{ color: COLOR.muted, marginTop: SPACE.sm }}>
             <code>npm run collect:kb</code>
             {" 로 최신 문서를 받아 우리 제품인지 거르고, "}
             <code>npm run judge:kb</code>
@@ -74,10 +62,10 @@ export default async function KbPage() {
       {rows.length > 0 && <KbList rows={rows} translated={Object.fromEntries(translated)} />}
 
       {rows.length > 0 && (
-        <p style={{ margin: "16px 2px 0", fontSize: 12, color: COLOR.faint, lineHeight: 1.75 }}>
-          Broadcom 사이트맵에서 최신 문서를 받아 <b style={{ color: COLOR.muted, fontWeight: 600 }}>제품 태그</b>
+        <p style={{ margin: `${SPACE.lg}px ${SPACE.xxs}px 0`, fontSize: TEXT.small, color: COLOR.faint, lineHeight: 1.75 }}>
+          Broadcom 사이트맵에서 최신 문서를 받아 <b style={{ color: COLOR.muted, fontWeight: WEIGHT.semibold }}>제품 태그</b>
           {" 로 우리 제품만 남긴 목록입니다. 판정은 문서에 적힌 내용과 등록된 환경 설명을 대조한 "}
-          <b style={{ color: COLOR.muted, fontWeight: 600 }}>참고 의견</b>
+          <b style={{ color: COLOR.muted, fontWeight: WEIGHT.semibold }}>참고 의견</b>
           {" 이며, 버전이 걸리는 건은 '확인 필요' 로 둡니다. 실제 영향 여부는 원문과 SR 로 확인하세요."}
         </p>
       )}

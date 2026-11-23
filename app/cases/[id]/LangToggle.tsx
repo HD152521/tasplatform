@@ -14,7 +14,7 @@
  */
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { COLOR, RADIUS } from "../../ui.tsx";
+import { COLOR, RADIUS, SPACE, TEXT } from "../../ui.tsx";
 import { translateButtonStyle } from "../../TranslateButton.tsx";
 
 /**
@@ -76,9 +76,9 @@ export function LangToggle({
   };
 
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: SPACE.sm, flexWrap: "wrap" }}>
       <span style={{
-        display: "inline-flex", padding: 2, gap: 2,
+        display: "inline-flex", padding: SPACE.xxs, gap: SPACE.xxs,
         background: COLOR.ground, borderRadius: RADIUS.pill,
       }}>
         <Side label="원문" on={lang === "en"} onClick={() => go("en")} />
@@ -99,11 +99,11 @@ export function LangToggle({
       )}
 
       {!busy && error !== "" && (
-        <span style={{ fontSize: 11.5, color: COLOR.waitUs }}>{error}</span>
+        <span style={{ fontSize: TEXT.micro, color: COLOR.waitUs }}>{error}</span>
       )}
       {/* 남은 것이 있으면 왜 원문이 섞여 보이는지 알려 준다. */}
       {!busy && error === "" && lang === "ko" && pending > 0 && (
-        <span style={{ fontSize: 11.5, color: COLOR.faint }}>
+        <span style={{ fontSize: TEXT.micro, color: COLOR.faint }}>
           {`${pending}건은 원문 그대로입니다`}
         </span>
       )}
@@ -116,7 +116,7 @@ function Side({ label, on, onClick }: { label: string; on: boolean; onClick: () 
     <button
       type="button" onClick={onClick} aria-pressed={on}
       style={{
-        padding: "4px 12px", fontSize: 12, fontFamily: "inherit",
+        padding: `${SPACE.xs}px ${SPACE.md}px`, fontSize: TEXT.small, fontFamily: "inherit",
         fontWeight: on ? 600 : 400,
         color: on ? COLOR.ink : COLOR.muted,
         background: on ? COLOR.surface : "transparent",

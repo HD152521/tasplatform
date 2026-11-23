@@ -7,7 +7,7 @@
 import { requireUser } from "../../lib/appAuth.ts";
 import { getTeam, openDb } from "../../lib/db.ts";
 import { listTeamMembers } from "../../lib/users.ts";
-import { COLOR, Notice } from "../ui.tsx";
+import { COLOR, Notice, PageHeader, TEXT } from "../ui.tsx";
 import { TeamPanel, type TeamMemberView } from "./TeamPanel.tsx";
 
 export const dynamic = "force-dynamic";
@@ -57,16 +57,13 @@ export default async function TeamPage({
 
   return (
     <>
-      <header style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>팀</h1>
-        <p style={{ margin: "7px 0 0", fontSize: 13, color: COLOR.muted, lineHeight: 1.7 }}>
-          팀원과 초대 코드, 그리고 내 계정을 관리합니다. 브로드컴 공용 계정은{" "}
-          <a href="/settings/account" style={{ color: COLOR.accent }}>
-            브로드컴 계정
-          </a>{" "}
-          화면에서 바꿉니다.
-        </p>
-      </header>
+      <PageHeader title="팀">
+        팀원과 초대 코드, 그리고 내 계정을 관리합니다. 브로드컴 공용 계정은{" "}
+        <a href="/settings/account" style={{ color: COLOR.accent }}>
+          브로드컴 계정
+        </a>{" "}
+        화면에서 바꿉니다.
+      </PageHeader>
 
       {params.noteam !== undefined && (
         <Notice tone="warn">
@@ -78,7 +75,7 @@ export default async function TeamPage({
         <Notice tone="warn">그 화면은 팀 관리자(owner)만 열 수 있습니다.</Notice>
       )}
       {loadError !== null && (
-        <p style={{ color: COLOR.waitUs, fontSize: 13 }}>{`불러오지 못했습니다: ${loadError}`}</p>
+        <p style={{ color: COLOR.waitUs, fontSize: TEXT.base }}>{`불러오지 못했습니다: ${loadError}`}</p>
       )}
 
       <TeamPanel

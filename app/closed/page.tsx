@@ -1,7 +1,7 @@
 import { requireUser } from "../../lib/appAuth.ts";
 import { listCasesSplit, countSummaries, type CaseListRow } from "../../lib/queries.ts";
 import { CaseList } from "../CaseList.tsx";
-import { COLOR, Card, Notice } from "../ui.tsx";
+import { Card, COLOR, Notice, PageHeader, SPACE, TEXT } from "../ui.tsx";
 import { AutoPublishKick } from "./AutoPublishKick.tsx";
 
 export const dynamic = "force-dynamic";
@@ -29,22 +29,17 @@ export default async function ClosedCasesPage() {
 
   return (
     <>
-      <header style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
-          종료 케이스
-        </h1>
-        <p style={{ margin: "7px 0 0", fontSize: 13, color: COLOR.muted }}>
-          {`최근 3개월 · ${closed.length}건`}
-          {summaries > 0 && (
-            <>
-              {" · 정리본 "}
-              <b style={{ color: COLOR.ok }}>{summaries}</b>
-              {"건 작성됨"}
-            </>
-          )}
-          {"  ·  케이스를 열면 원문과 정리하기를 볼 수 있습니다"}
-        </p>
-      </header>
+      <PageHeader title="종료 케이스">
+        {`최근 3개월 · ${closed.length}건`}
+        {summaries > 0 && (
+          <>
+            {" · 정리본 "}
+            <b style={{ color: COLOR.ok }}>{summaries}</b>
+            {"건 작성됨"}
+          </>
+        )}
+        {"  ·  케이스를 열면 원문과 정리하기를 볼 수 있습니다"}
+      </PageHeader>
 
       {/*
         끝난 SR 의 정리 문서를 자동으로 올린다. 이 화면이 그 방아쇠다 — 웹은 스스로
@@ -56,9 +51,9 @@ export default async function ClosedCasesPage() {
       {loadError !== null && <Notice tone="error">DB를 읽지 못했습니다: {loadError}</Notice>}
 
       {loadError === null && closed.length === 0 && (
-        <Card style={{ padding: "20px 22px", fontSize: 13.5, lineHeight: 1.8 }}>
+        <Card style={{ padding: `${SPACE.xl}px ${SPACE.xl}px`, fontSize: TEXT.base, lineHeight: 1.8 }}>
           <b>아직 종료 케이스가 없습니다.</b>
-          <div style={{ color: COLOR.muted, marginTop: 8 }}>
+          <div style={{ color: COLOR.muted, marginTop: SPACE.sm }}>
             {"수집이 돌면 최근 3개월 내 종료된 케이스가 여기에 쌓입니다."}
           </div>
         </Card>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { COLOR, Card, MONO_STACK, Notice, RADIUS, controlStyle, formatStamp } from "../ui.tsx";
+import { Card, COLOR, controlStyle, formatStamp, MONO_STACK, Notice, RADIUS, SPACE, TEXT, WEIGHT } from "../ui.tsx";
 
 export interface TeamMemberView {
   readonly userId: number;
@@ -73,8 +73,8 @@ export function TeamPanel({ teamId, teamName, initialInviteCode, members, me }: 
 
   if (teamId === "") {
     return (
-      <Card style={{ padding: 20 }}>
-        <p style={{ margin: 0, fontSize: 13.5, color: COLOR.body, lineHeight: 1.75 }}>
+      <Card style={{ padding: SPACE.xl }}>
+        <p style={{ margin: 0, fontSize: TEXT.base, color: COLOR.body, lineHeight: 1.75 }}>
           속한 팀이 없어 팀 정보를 보여줄 수 없습니다. 내 이름·비밀번호는{" "}
           <a href="/me" style={{ color: COLOR.accent }}>내 설정</a> 에서 바꿀 수 있습니다.
         </p>
@@ -87,10 +87,10 @@ export function TeamPanel({ teamId, teamName, initialInviteCode, members, me }: 
       {msg !== null && <Notice tone={msg.tone}>{msg.text}</Notice>}
 
       {/* ── 팀 ───────────────────────────────────────────── */}
-      <Card style={{ padding: 20, marginBottom: 18 }}>
+      <Card style={{ padding: SPACE.xl, marginBottom: SPACE.lg }}>
         <h2 style={sectionTitle}>팀 정보</h2>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: SPACE.sm, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 240px", minWidth: 200 }}>
             <label style={labelStyle}>팀 이름</label>
             <input
@@ -110,24 +110,24 @@ export function TeamPanel({ teamId, teamName, initialInviteCode, members, me }: 
               이름 저장
             </button>
           )}
-          <div style={{ fontSize: 12, color: COLOR.faint, paddingBottom: 9 }}>
+          <div style={{ fontSize: TEXT.small, color: COLOR.faint, paddingBottom: SPACE.sm }}>
             팀 id <span style={{ fontFamily: MONO_STACK }}>{teamId}</span>
           </div>
         </div>
 
         {owner && (
-          <div style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${COLOR.divider}` }}>
+          <div style={{ marginTop: SPACE.xl, paddingTop: SPACE.lg, borderTop: `1px solid ${COLOR.divider}` }}>
             <label style={labelStyle}>초대 코드</label>
-            <p style={{ margin: "0 0 10px", fontSize: 12.5, color: COLOR.muted, lineHeight: 1.7 }}>
+            <p style={{ margin: `0 0 ${SPACE.sm}px`, fontSize: TEXT.small, color: COLOR.muted, lineHeight: 1.7 }}>
               이 코드로 가입하면 이 팀의 팀원이 됩니다. <strong>코드를 지우면 가입이 닫힙니다.</strong>{" "}
               새로 만들면 예전 코드는 즉시 쓸 수 없게 됩니다.
             </p>
-            <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: SPACE.sm, alignItems: "center", flexWrap: "wrap" }}>
               <code style={{
-                fontFamily: MONO_STACK, fontSize: 15, letterSpacing: "0.06em",
+                fontFamily: MONO_STACK, fontSize: TEXT.lead, letterSpacing: "0.06em",
                 background: inviteCode === "" ? COLOR.ground : COLOR.okBg,
                 color: inviteCode === "" ? COLOR.faint : COLOR.ok,
-                padding: "8px 14px", borderRadius: RADIUS.control, fontWeight: 600,
+                padding: `${SPACE.sm}px ${SPACE.md}px`, borderRadius: RADIUS.control, fontWeight: WEIGHT.semibold,
               }}>
                 {inviteCode === "" ? "가입 닫힘" : inviteCode}
               </code>
@@ -155,12 +155,12 @@ export function TeamPanel({ teamId, teamName, initialInviteCode, members, me }: 
       </Card>
 
       {/* ── 팀원 ─────────────────────────────────────────── */}
-      <Card style={{ padding: 20, marginBottom: 18 }}>
+      <Card style={{ padding: SPACE.xl, marginBottom: SPACE.lg }}>
         <h2 style={sectionTitle}>팀원 {members.length}명</h2>
 
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: TEXT.base }}>
           <thead>
-            <tr style={{ textAlign: "left", color: COLOR.muted, fontSize: 12 }}>
+            <tr style={{ textAlign: "left", color: COLOR.muted, fontSize: TEXT.small }}>
               <th style={th}>이름</th>
               <th style={th}>아이디</th>
               <th style={th}>역할</th>
@@ -175,7 +175,7 @@ export function TeamPanel({ teamId, teamName, initialInviteCode, members, me }: 
                 <td style={td}>
                   {m.displayName}
                   {m.userId === me.userId && (
-                    <span style={{ color: COLOR.faint, fontSize: 11, marginLeft: 6 }}>(나)</span>
+                    <span style={{ color: COLOR.faint, fontSize: TEXT.micro, marginLeft: SPACE.xs }}>(나)</span>
                   )}
                 </td>
                 <td style={{ ...td, fontFamily: MONO_STACK, color: COLOR.muted }}>{m.loginId}</td>
@@ -187,7 +187,7 @@ export function TeamPanel({ teamId, teamName, initialInviteCode, members, me }: 
                     <span style={{ color: COLOR.warn }}>연결 안 됨</span>
                   )}
                 </td>
-                <td style={{ ...td, color: COLOR.faint, fontSize: 12 }}>
+                <td style={{ ...td, color: COLOR.faint, fontSize: TEXT.small }}>
                   {m.lastLoginAt === "" ? "-" : formatStamp(Date.parse(m.lastLoginAt))}
                 </td>
                 {owner && (
@@ -201,7 +201,7 @@ export function TeamPanel({ teamId, teamName, initialInviteCode, members, me }: 
                           "역할을 바꿨습니다.",
                         )
                       }
-                      style={{ ...controlStyle, padding: "5px 9px", fontSize: 12 }}
+                      style={{ ...controlStyle, padding: `${SPACE.xs}px ${SPACE.sm}px`, fontSize: TEXT.small }}
                     >
                       {m.role === "owner" ? "팀원으로" : "관리자로"}
                     </button>
@@ -213,7 +213,7 @@ export function TeamPanel({ teamId, teamName, initialInviteCode, members, me }: 
                           if (!window.confirm(`${m.displayName} 님을 이 팀에서 뺄까요? 계정은 남습니다.`)) return;
                           void teamAction({ action: "remove_member", userId: m.userId }, "팀에서 뺐습니다.");
                         }}
-                        style={{ ...controlStyle, padding: "5px 9px", fontSize: 12, marginLeft: 6, color: COLOR.waitUs }}
+                        style={{ ...controlStyle, padding: `${SPACE.xs}px ${SPACE.sm}px`, fontSize: TEXT.small, marginLeft: SPACE.xs, color: COLOR.waitUs }}
                       >
                         내보내기
                       </button>
@@ -225,21 +225,21 @@ export function TeamPanel({ teamId, teamName, initialInviteCode, members, me }: 
           </tbody>
         </table>
 
-        <p style={{ margin: "14px 0 0", fontSize: 12, color: COLOR.faint, lineHeight: 1.7 }}>
+        <p style={{ margin: `${SPACE.md}px 0 0`, fontSize: TEXT.small, color: COLOR.faint, lineHeight: 1.7 }}>
           "Jira 연결 안 됨" 인 사람이 담당자인 일정은 Jira 에 <strong>담당자 없이</strong> 올라갑니다
           (본문에 이름은 적힙니다). 각자 아래에서 자기 Jira 계정 id 를 넣으면 됩니다.
         </p>
       </Card>
 
       {/* ── 내 계정 ──────────────────────────────────────── */}
-      <Card style={{ padding: 20 }}>
+      <Card style={{ padding: SPACE.xl }}>
         <h2 style={sectionTitle}>이 팀의 브로드컴 계정</h2>
-        <p style={{ margin: 0, fontSize: 12.5, color: COLOR.muted, lineHeight: 1.8 }}>
+        <p style={{ margin: 0, fontSize: TEXT.small, color: COLOR.muted, lineHeight: 1.8 }}>
           수집·SR 쓰기가 쓰는 <strong>포털 공용 계정은 팀에 귀속</strong>됩니다. 팀마다 다른
           계정을 쓰고, 세션·기기신뢰·잠금 방지 상태도 팀별로 따로 갑니다 — 다른 팀의 계정이
           이 팀에 영향을 주지 않습니다.
         </p>
-        <div style={{ marginTop: 12, display: "flex", gap: 9, flexWrap: "wrap" }}>
+        <div style={{ marginTop: SPACE.md, display: "flex", gap: SPACE.sm, flexWrap: "wrap" }}>
           <a href="/settings/account" style={{ ...controlStyle, textDecoration: "none" }}>
             브로드컴 계정 설정 →
           </a>
@@ -253,19 +253,19 @@ export function TeamPanel({ teamId, teamName, initialInviteCode, members, me }: 
 }
 
 const sectionTitle: React.CSSProperties = {
-  fontSize: 15,
-  fontWeight: 700,
-  margin: "0 0 16px",
+  fontSize: TEXT.lead,
+  fontWeight: WEIGHT.bold,
+  margin: `0 0 ${SPACE.lg}px`,
   letterSpacing: "-0.01em",
 };
 
 const labelStyle: React.CSSProperties = {
   display: "block",
-  fontSize: 12,
-  fontWeight: 600,
+  fontSize: TEXT.small,
+  fontWeight: WEIGHT.semibold,
   color: COLOR.body,
-  marginBottom: 6,
+  marginBottom: SPACE.xs,
 };
 
-const th: React.CSSProperties = { padding: "0 8px 8px 0", fontWeight: 600 };
-const td: React.CSSProperties = { padding: "10px 8px 10px 0", verticalAlign: "middle" };
+const th: React.CSSProperties = { padding: `0 ${SPACE.sm}px ${SPACE.sm}px 0`, fontWeight: WEIGHT.semibold };
+const td: React.CSSProperties = { padding: `${SPACE.sm}px ${SPACE.sm}px ${SPACE.sm}px 0`, verticalAlign: "middle" };

@@ -1,9 +1,38 @@
 "use client";
 
+/**
+ * SR 목록 — 이 도구에서 제일 많이 보는 화면.
+ *
+ * ## 한 가지만 묻는 화면이다
+ *
+ * "무엇이 **내 차례**인가." 그래서 새 답변이 온 줄에만 색을 쓴다. 상태 배지는 모든
+ * 줄에 있으니 색으로 경쟁하면 안 되고, 눈이 먼저 잡아야 하는 것은 왼쪽 빨간 선이다.
+ *
+ * ## 줄은 격자다
+ *
+ * 줄마다 그림자·라운드를 주면 목록이 울퉁불퉁해져 눈이 줄을 못 따라간다. 헤어라인
+ * 하나로 나누고 각을 세운다(RADIUS.cell = 0). 날짜·건수는 전부 tabular 숫자다 —
+ * 세로로 흔들리면 비교가 안 된다.
+ */
+
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { CaseListRow } from "../lib/queries.ts";
-import { Badge, COLOR, Card, MONO_STACK, RADIUS, formatStamp, statusColors } from "./ui.tsx";
+import {
+  Badge,
+  COLOR,
+  Card,
+  Chip,
+  Empty,
+  MONO_STACK,
+  SPACE,
+  TEXT,
+  Tab,
+  WEIGHT,
+  formatStamp,
+  inputStyle,
+  statusColors,
+} from "./ui.tsx";
 
 const UNREAD = "__unread__";
 
@@ -31,7 +60,8 @@ export function CaseList({
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
-    // 답변이 온 건은 순서를 바꾸지 않고 붉은 표시로만 구분한다.
+    // 답변이 온 건은 순서를 바꾸지 않고 붉은 표시로만 구분한다 — 순서가 흔들리면
+    // "어제 보던 그 자리" 를 잃는다.
     const matched = cases.filter((row) => {
       if (filter === UNREAD && row.unread_replies === 0) return false;
       if (filter !== "all" && filter !== UNREAD && row.status !== filter) return false;
@@ -50,12 +80,18 @@ export function CaseList({
 
   return (
     <>
-      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
+      {/* ── 도구줄 ─────────────────────────────────────── */}
+      <div style={{
+        display: "flex", gap: SPACE.sm, flexWrap: "wrap", alignItems: "center",
+        marginBottom: SPACE.lg,
+      }}>
         <Chip label="전체" count={cases.length} active={filter === "all"} onClick={() => setFilter("all")} />
         {showUnread && unreadCount > 0 && (
           <Chip
-            label="새 답변 있는 케이스" count={unreadCount}
-            active={filter === UNREAD} tone={COLOR.waitUs}
+            label="새 답변"
+            count={unreadCount}
+            active={filter === UNREAD}
+            tone="danger"
             onClick={() => setFilter(UNREAD)}
           />
         )}
@@ -63,113 +99,129 @@ export function CaseList({
           <Chip key={name} label={name} count={count} active={filter === name} onClick={() => setFilter(name)} />
         ))}
 
-        <div style={{
-          marginLeft: "auto", display: "flex", border: `1px solid ${COLOR.field}`,
-          borderRadius: RADIUS.control, overflow: "hidden", background: COLOR.surface,
-        }}>
+        <span style={{ flex: 1 }} />
+
+        <div style={{ display: "flex", gap: SPACE.xxs }}>
           {SORTS.map(({ key, label }) => (
-            <button
-              key={key} type="button" onClick={() => setSort(key)}
-              style={{
-                padding: "7px 12px", fontSize: 12.5, border: "none", cursor: "pointer",
-                fontFamily: "inherit",
-                fontWeight: sort === key ? 600 : 400,
-                color: sort === key ? COLOR.ink : COLOR.muted,
-                background: sort === key ? "#eef1f6" : "transparent",
-              }}
-            >
-              {label}
-            </button>
+            <Tab key={key} active={sort === key} onClick={() => setSort(key)}>{label}</Tab>
           ))}
         </div>
 
         <input
-          value={query} onChange={(e) => setQuery(e.target.value)}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
           placeholder="번호 · 제목 · 고객사 · 본문"
-          style={{
-            minWidth: 230, padding: "8px 12px", fontSize: 13,
-            border: `1px solid ${COLOR.field}`, borderRadius: RADIUS.control,
-            background: COLOR.surface, fontFamily: "inherit", outline: "none",
-          }}
+          aria-label="케이스 검색"
+          style={{ ...inputStyle, width: 244 }}
         />
       </div>
 
       {shown.length === 0 ? (
-        <Card style={{ padding: 44, textAlign: "center", color: COLOR.faint, fontSize: 13 }}>
-          조건에 맞는 케이스가 없습니다.
-        </Card>
+        <Empty>
+          {cases.length === 0
+            ? "아직 수집된 케이스가 없습니다."
+            : "조건에 맞는 케이스가 없습니다. 필터나 검색어를 지워 보세요."}
+        </Empty>
       ) : (
-        <Card style={{ overflow: "hidden" }}>
-          {shown.map((row, i) => {
-            const tone = statusColors(row.status);
-            const unread = row.unread_replies > 0;
-            return (
-              <Link key={row.request_id} href={`/cases/${row.request_id}`}
-                    style={{ textDecoration: "none", color: "inherit", display: "block" }}>
-                <div style={{
-                  display: "flex", alignItems: "flex-start", gap: 14, padding: "15px 18px",
-                  borderBottom: i === shown.length - 1 ? "none" : `1px solid ${COLOR.divider}`,
-                  background: unread ? "#fffdfd" : COLOR.surface,
-                }}>
-                  <div style={{
-                    width: 3, alignSelf: "stretch", borderRadius: 2, flexShrink: 0,
-                    background: unread ? COLOR.waitUs : "transparent",
-                  }} />
-
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 4 }}>
-                      <span style={{ fontFamily: MONO_STACK, fontSize: 11, color: COLOR.faint }}>
-                        {row.request_id_formatted}
-                      </span>
-                      <Badge fg={tone.fg} bg={tone.bg}>{row.status}</Badge>
-                      {row.confluence_url !== null && row.confluence_url !== "" && (
-                        <Badge fg={COLOR.ok} bg="#e9f7ee">SR 올림</Badge>
-                      )}
-                      {unread && (
-                        <Badge fg={COLOR.waitUs} bg={COLOR.waitUsBg} strong>
-                          새 답변 {row.unread_replies}
-                        </Badge>
-                      )}
-                    </div>
-
-                    <div style={{
-                      fontSize: 14, lineHeight: 1.45, letterSpacing: "-0.005em",
-                      fontWeight: unread ? 600 : 500,
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    }}>
-                      {row.subject}
-                    </div>
-
-                    <div style={{
-                      display: "flex", alignItems: "center", gap: 12, marginTop: 5,
-                      fontSize: 12, color: COLOR.muted,
-                    }}>
-                      <span style={{ fontWeight: 500, color: "#4b5563" }}>{row.party_name}</span>
-                      <span style={{ color: "#d6dae0" }}>·</span>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {row.category}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div style={{ textAlign: "right", flexShrink: 0, paddingLeft: 18, minWidth: 158 }}>
-                    <DateLine label="등록" value={formatStamp(row.created_on_ms)} />
-                    <DateLine
-                      label={closed ? "종료" : "갱신"}
-                      value={formatStamp(row.last_updated_ms)}
-                      highlight={unread}
-                    />
-                    <div style={{ fontSize: 11, color: COLOR.faint, marginTop: 5 }}>
-                      대화 {row.thread_count} · 답변 {row.reply_count}
-                    </div>
-                  </div>
-                </div>
-              </Link>
-            );
-          })}
+        <Card flush>
+          {shown.map((row, i) => (
+            <CaseRow
+              key={row.request_id}
+              row={row}
+              closed={closed}
+              last={i === shown.length - 1}
+            />
+          ))}
         </Card>
       )}
     </>
+  );
+}
+
+function CaseRow({ row, closed, last }: { row: CaseListRow; closed: boolean; last: boolean }) {
+  const tone = statusColors(row.status);
+  const unread = row.unread_replies > 0;
+
+  return (
+    <Link
+      href={`/cases/${row.request_id}`}
+      style={{ textDecoration: "none", color: "inherit", display: "block" }}
+    >
+      <div style={{
+        display: "flex", alignItems: "flex-start", gap: SPACE.md,
+        padding: `${SPACE.md}px ${SPACE.lg}px ${SPACE.md}px 0`,
+        borderBottom: last ? "none" : `1px solid ${COLOR.divider}`,
+        // 내 차례인 줄만 바탕을 들어 준다. 아주 옅게 — 색이 세지면 줄이 카드처럼 떠서
+        // 목록으로 안 읽힌다.
+        background: unread ? COLOR.waitUsBg : COLOR.surface,
+      }}>
+        {/*
+          왼쪽 선. 이 화면에서 가장 먼저 눈에 걸려야 하는 신호다.
+          자리는 항상 차지하고(색만 바뀐다) 줄의 시작선이 흔들리지 않게 한다.
+        */}
+        <div style={{
+          width: 3, alignSelf: "stretch", flexShrink: 0,
+          background: unread ? COLOR.waitUs : "transparent",
+        }} />
+
+        <div style={{ flex: 1, minWidth: 0, paddingLeft: SPACE.md }}>
+          <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm, marginBottom: SPACE.xxs }}>
+            <span style={{
+              fontFamily: MONO_STACK, fontSize: TEXT.micro, color: COLOR.faint,
+              fontVariantNumeric: "tabular-nums",
+            }}>
+              {row.request_id_formatted}
+            </span>
+            <Badge fg={tone.fg} bg={tone.bg}>{row.status}</Badge>
+            {row.confluence_url !== null && row.confluence_url !== "" && (
+              <Badge fg={COLOR.ok} bg={COLOR.okBg}>SR 올림</Badge>
+            )}
+            {unread && (
+              <Badge fg={COLOR.waitUs} bg={COLOR.waitUsBg} strong>
+                새 답변 {row.unread_replies}
+              </Badge>
+            )}
+          </div>
+
+          <div style={{
+            fontSize: TEXT.lead, lineHeight: 1.45, letterSpacing: "-0.005em",
+            fontWeight: unread ? WEIGHT.semibold : WEIGHT.medium,
+            color: COLOR.ink,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {row.subject}
+          </div>
+
+          <div style={{
+            display: "flex", alignItems: "center", gap: SPACE.sm, marginTop: SPACE.xs,
+            fontSize: TEXT.small, color: COLOR.muted, minWidth: 0,
+          }}>
+            <span style={{ fontWeight: WEIGHT.medium, color: COLOR.body, flexShrink: 0 }}>
+              {row.party_name}
+            </span>
+            <span style={{ color: COLOR.line, flexShrink: 0 }}>·</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {row.category}
+            </span>
+          </div>
+        </div>
+
+        <div style={{ textAlign: "right", flexShrink: 0, paddingLeft: SPACE.lg, minWidth: 158 }}>
+          <DateLine label="등록" value={formatStamp(row.created_on_ms)} />
+          <DateLine
+            label={closed ? "종료" : "갱신"}
+            value={formatStamp(row.last_updated_ms)}
+            highlight={unread}
+          />
+          <div style={{
+            fontSize: TEXT.micro, color: COLOR.faint, marginTop: SPACE.xs,
+            fontVariantNumeric: "tabular-nums",
+          }}>
+            대화 {row.thread_count} · 답변 {row.reply_count}
+          </div>
+        </div>
+      </div>
+    </Link>
   );
 }
 
@@ -178,45 +230,17 @@ function DateLine({
 }: { label: string; value: string; highlight?: boolean }) {
   return (
     <div style={{
-      display: "flex", alignItems: "baseline", justifyContent: "flex-end", gap: 6,
-      fontSize: 12, whiteSpace: "nowrap", marginBottom: 2,
+      display: "flex", alignItems: "baseline", justifyContent: "flex-end", gap: SPACE.xs,
+      fontSize: TEXT.small, whiteSpace: "nowrap", marginBottom: 2,
     }}>
-      <span style={{ fontSize: 11, color: COLOR.faint }}>{label}</span>
+      <span style={{ fontSize: TEXT.micro, color: COLOR.faint }}>{label}</span>
       <span style={{
         fontFamily: MONO_STACK, fontVariantNumeric: "tabular-nums",
         color: highlight ? COLOR.waitUs : COLOR.muted,
-        fontWeight: highlight ? 600 : 400,
+        fontWeight: highlight ? WEIGHT.semibold : WEIGHT.normal,
       }}>
         {value}
       </span>
     </div>
-  );
-}
-
-function Chip({
-  label, count, active, onClick, tone,
-}: { label: string; count: number; active: boolean; onClick: () => void; tone?: string }) {
-  const color = tone ?? COLOR.accent;
-  return (
-    <button
-      type="button" onClick={onClick}
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 7,
-        padding: "6px 11px 6px 13px", fontSize: 13,
-        fontWeight: active ? 600 : 400,
-        color: active ? "#ffffff" : COLOR.ink,
-        background: active ? color : COLOR.surface,
-        border: `1px solid ${active ? color : COLOR.field}`,
-        borderRadius: RADIUS.pill, cursor: "pointer", fontFamily: "inherit",
-      }}
-    >
-      {label}
-      <span style={{
-        fontFamily: MONO_STACK, fontSize: 11,
-        color: active ? "rgba(255,255,255,.75)" : COLOR.faint,
-      }}>
-        {count}
-      </span>
-    </button>
   );
 }

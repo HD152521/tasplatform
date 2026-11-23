@@ -8,7 +8,7 @@
  */
 import Link from "next/link";
 import { requireUser } from "../../lib/appAuth.ts";
-import { COLOR, Notice } from "../ui.tsx";
+import { COLOR, Notice, PageHeader } from "../ui.tsx";
 import { MyAccountPanel } from "./MyAccountPanel.tsx";
 
 export const dynamic = "force-dynamic";
@@ -18,18 +18,13 @@ export default async function MyPage() {
 
   return (
     <>
-      <header style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
-          내 설정
-        </h1>
-        <p style={{ margin: "7px 0 0", fontSize: 13, color: COLOR.muted, lineHeight: 1.7 }}>
-          나에게만 해당되는 것입니다. 팀 이름·초대 코드·팀원은{" "}
-          <Link href="/team" style={{ color: COLOR.accent }}>팀 설정</Link>, 팀이 공유하는
-          브로드컴 계정은{" "}
-          <Link href="/settings/account" style={{ color: COLOR.accent }}>브로드컴 계정</Link>{" "}
-          화면입니다.
-        </p>
-      </header>
+      <PageHeader title="내 설정">
+        나에게만 해당되는 것입니다. 팀 이름·초대 코드·팀원은{" "}
+        <Link href="/team" style={{ color: COLOR.accent }}>팀 설정</Link>, 팀이 공유하는
+        브로드컴 계정은{" "}
+        <Link href="/settings/account" style={{ color: COLOR.accent }}>브로드컴 계정</Link>{" "}
+        화면입니다.
+      </PageHeader>
 
       {me.teamId === "" && (
         <Notice tone="warn">

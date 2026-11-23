@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { COLOR, RADIUS } from "../../ui.tsx";
+import { COLOR, RADIUS, SPACE, TEXT } from "../../ui.tsx";
 
 /**
  * 답변 본문에 박혀 온 화면 캡처.
@@ -26,7 +26,7 @@ import { COLOR, RADIUS } from "../../ui.tsx";
 export function InlineImages({ ids }: { ids: readonly string[] }) {
   if (ids.length === 0) return null;
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: SPACE.sm, marginTop: SPACE.md }}>
       {ids.map((id) => <One key={id} id={id} />)}
     </div>
   );
@@ -39,9 +39,9 @@ function One({ id }: { id: string }) {
   if (failed) {
     return (
       <div style={{
-        fontSize: 11.5, color: COLOR.muted, lineHeight: 1.5,
+        fontSize: TEXT.micro, color: COLOR.muted, lineHeight: 1.5,
         border: `1px dashed ${COLOR.field}`, borderRadius: RADIUS.control,
-        padding: "8px 11px",
+        padding: `${SPACE.sm}px ${SPACE.md}px`,
       }}>
         본문에 있던 이미지를 불러오지 못했습니다. 세션이 끊겼다면 다시 로그인해 주세요.
       </div>

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { clearDraft, draftKey, loadDraft, saveDraft } from "../../../lib/draftStore.ts";
 import { writeFailureText } from "../../../lib/writeFailure.ts";
 import { useEffect, useState } from "react";
-import { COLOR, Card, RADIUS, controlStyle } from "../../ui.tsx";
+import { Card, COLOR, controlStyle, RADIUS, SPACE, TEXT, WEIGHT } from "../../ui.tsx";
 import { AttachButton } from "./AttachButton.tsx";
 
 /**
@@ -131,17 +131,17 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
   if (done !== "") {
     return (
       <Card style={{
-        padding: "16px 18px", background: COLOR.okBg, borderColor: "#b9e6cd",
-        color: COLOR.ok, fontSize: 13.5, lineHeight: 1.7,
+        padding: `${SPACE.lg}px ${SPACE.lg}px`, background: COLOR.okBg, borderColor: "#b9e6cd",
+        color: COLOR.ok, fontSize: TEXT.base, lineHeight: 1.7,
       }}>
         <b>{done}</b>
-        <div style={{ marginTop: 4, opacity: 0.9 }}>
+        <div style={{ marginTop: SPACE.xs, opacity: 0.9 }}>
           {reflected
             ? "위 대화에 바로 올라왔습니다."
             : "포털 조회에 아직 안 잡힙니다. 잠시 뒤 새로 고치거나, 다음 수집 때 반영됩니다."}
         </div>
         <button type="button" onClick={() => setDone("")} style={{
-          ...controlStyle, marginTop: 12, padding: "6px 12px", fontSize: 12,
+          ...controlStyle, marginTop: SPACE.md, padding: `${SPACE.xs}px ${SPACE.md}px`, fontSize: TEXT.small,
         }}>
           답변 더 쓰기
         </button>
@@ -150,24 +150,24 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
   }
 
   return (
-    <Card style={{ padding: "16px 18px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 11 }}>
+    <Card style={{ padding: `${SPACE.lg}px ${SPACE.lg}px` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm, marginBottom: SPACE.md }}>
         <span style={{
-          width: 26, height: 26, borderRadius: 7, fontSize: 10, fontWeight: 600,
+          width: 26, height: 26, borderRadius: 7, fontSize: TEXT.micro, fontWeight: WEIGHT.semibold,
           display: "flex", alignItems: "center", justifyContent: "center",
-          color: "#4b5563", background: "#eef1f6",
+          color: COLOR.body, background: COLOR.accentWash,
         }}>
           우리
         </span>
-        <b style={{ fontSize: 13 }}>답변 쓰기</b>
-        <span style={{ fontSize: 11, color: COLOR.faint }}>{caseLabel}</span>
+        <b style={{ fontSize: TEXT.base }}>답변 쓰기</b>
+        <span style={{ fontSize: TEXT.micro, color: COLOR.faint }}>{caseLabel}</span>
       </div>
 
       {error !== "" && (
         <div style={{
           background: COLOR.waitUsBg, color: COLOR.waitUs, border: `1px solid #f3c7c2`,
-          borderRadius: RADIUS.control, padding: "10px 13px", marginBottom: 11,
-          fontSize: 12.5, lineHeight: 1.6,
+          borderRadius: RADIUS.control, padding: `${SPACE.sm}px ${SPACE.md}px`, marginBottom: SPACE.md,
+          fontSize: TEXT.small, lineHeight: 1.6,
         }}>
           {error}
         </div>
@@ -180,14 +180,14 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
             disabled={busy || composing !== null}
             placeholder="한국어로 적어도 됩니다. 아래 번역 버튼이 영문으로 바꿔 줍니다."
             style={{
-              width: "100%", boxSizing: "border-box", padding: "11px 13px",
-              fontSize: 13.5, lineHeight: 1.7, color: COLOR.ink,
+              width: "100%", boxSizing: "border-box", padding: `${SPACE.md}px ${SPACE.md}px`,
+              fontSize: TEXT.base, lineHeight: 1.7, color: COLOR.ink,
               border: `1px solid ${COLOR.field}`, borderRadius: RADIUS.control,
               fontFamily: "inherit", outline: "none", resize: "vertical",
             }}
           />
           <div style={{
-            display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap",
+            display: "flex", alignItems: "center", gap: SPACE.sm, marginTop: SPACE.sm, flexWrap: "wrap",
           }}>
             {/*
               파일 붙이기는 답변 전송과 **별개로** 바로 올라간다(첨부는 포털이 아니라
@@ -213,22 +213,22 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
                 type="button" onClick={() => { setText(prev); setPrev(null); }}
                 style={{
                   padding: 0, border: "none", background: "none", fontFamily: "inherit",
-                  fontSize: 11.5, color: COLOR.muted, cursor: "pointer", textDecoration: "underline",
+                  fontSize: TEXT.micro, color: COLOR.muted, cursor: "pointer", textDecoration: "underline",
                 }}
               >
                 되돌리기
               </button>
             )}
             <span style={{
-              marginLeft: "auto", fontSize: 11.5, color: COLOR.faint, lineHeight: 1.5,
+              marginLeft: "auto", fontSize: TEXT.micro, color: COLOR.faint, lineHeight: 1.5,
             }}>
               전송하면 바로 올라가고 되돌릴 수 없습니다.
             </span>
             <button
               type="button" onClick={() => setStage("confirm")} disabled={!ready || composing !== null}
               style={{
-                ...controlStyle, padding: "8px 16px", fontWeight: 600,
-                color: ready ? "#ffffff" : COLOR.faint,
+                ...controlStyle, padding: `${SPACE.sm}px ${SPACE.lg}px`, fontWeight: WEIGHT.semibold,
+                color: ready ? COLOR.surface : COLOR.faint,
                 background: ready ? COLOR.accent : COLOR.ground,
                 borderColor: ready ? COLOR.accent : COLOR.field,
                 cursor: ready ? "pointer" : "default",
@@ -241,15 +241,15 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
       ) : (
         <>
           <div style={{
-            fontSize: 12, color: COLOR.warn, background: COLOR.warnBg,
+            fontSize: TEXT.small, color: COLOR.warn, background: COLOR.warnBg,
             border: "1px solid #f0d69a", borderRadius: RADIUS.control,
-            padding: "10px 13px", marginBottom: 11, lineHeight: 1.6,
+            padding: `${SPACE.sm}px ${SPACE.md}px`, marginBottom: SPACE.md, lineHeight: 1.6,
           }}>
             아래 내용이 <b>{caseLabel}</b> 케이스에 등록됩니다. 담당 엔지니어가 바로 읽습니다.
           </div>
 
           <pre style={{
-            margin: 0, padding: "12px 14px", fontSize: 13, lineHeight: 1.75,
+            margin: 0, padding: `${SPACE.md}px ${SPACE.md}px`, fontSize: TEXT.base, lineHeight: 1.75,
             color: COLOR.body, background: COLOR.ground, borderRadius: RADIUS.control,
             whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit",
             maxHeight: 260, overflow: "auto",
@@ -257,18 +257,18 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
             {text}
           </pre>
 
-          <div style={{ display: "flex", gap: 8, marginTop: 11 }}>
+          <div style={{ display: "flex", gap: SPACE.sm, marginTop: SPACE.md }}>
             <button
               type="button" onClick={() => setStage("write")} disabled={busy}
-              style={{ ...controlStyle, padding: "8px 14px" }}
+              style={{ ...controlStyle, padding: `${SPACE.sm}px ${SPACE.md}px` }}
             >
               고치기
             </button>
             <button
               type="button" onClick={send} disabled={busy}
               style={{
-                ...controlStyle, marginLeft: "auto", padding: "8px 18px", fontWeight: 600,
-                color: "#ffffff",
+                ...controlStyle, marginLeft: "auto", padding: `${SPACE.sm}px ${SPACE.lg}px`, fontWeight: WEIGHT.semibold,
+                color: COLOR.surface,
                 background: busy ? COLOR.muted : COLOR.waitUs,
                 borderColor: busy ? COLOR.muted : COLOR.waitUs,
                 cursor: busy ? "default" : "pointer",
@@ -291,8 +291,8 @@ function Convert({
     <button
       type="button" onClick={onClick} disabled={disabled} title={hint}
       style={{
-        display: "inline-flex", alignItems: "baseline", gap: 6,
-        padding: "7px 12px", fontSize: 12.5, fontWeight: 600, fontFamily: "inherit",
+        display: "inline-flex", alignItems: "baseline", gap: SPACE.xs,
+        padding: `${SPACE.sm}px ${SPACE.md}px`, fontSize: TEXT.small, fontWeight: WEIGHT.semibold, fontFamily: "inherit",
         color: disabled ? COLOR.faint : COLOR.ink,
         background: disabled ? COLOR.ground : COLOR.surface,
         border: `1px solid ${COLOR.field}`, borderRadius: RADIUS.control,
@@ -300,7 +300,7 @@ function Convert({
       }}
     >
       {label}
-      <span style={{ fontSize: 10.5, fontWeight: 400, color: COLOR.faint }}>{hint}</span>
+      <span style={{ fontSize: TEXT.micro, fontWeight: WEIGHT.normal, color: COLOR.faint }}>{hint}</span>
     </button>
   );
 }

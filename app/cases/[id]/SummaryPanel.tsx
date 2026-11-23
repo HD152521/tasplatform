@@ -8,7 +8,7 @@ import {
   TARGET_PLACEHOLDER,
   buildTargetLabel,
 } from "../../../lib/summaryTarget.ts";
-import { COLOR, Card, MONO_STACK } from "../../ui.tsx";
+import { Card, COLOR, MONO_STACK, SPACE, TEXT } from "../../ui.tsx";
 
 type Kind = "confluence";
 
@@ -28,10 +28,10 @@ const KINDS: ReadonlyArray<{ id: Kind; label: string; note: string }> = [
 function TagGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
     <span style={{
-      display: "inline-flex", alignItems: "center", gap: 6,
-      padding: "4px 5px 4px 10px", borderRadius: 999, background: COLOR.ground,
+      display: "inline-flex", alignItems: "center", gap: SPACE.xs,
+      padding: `${SPACE.xs}px ${SPACE.xs}px ${SPACE.xs}px ${SPACE.sm}px`, borderRadius: 999, background: COLOR.ground,
     }}>
-      <span style={{ fontSize: 11, color: COLOR.faint, whiteSpace: "nowrap" }}>{label}</span>
+      <span style={{ fontSize: TEXT.micro, color: COLOR.faint, whiteSpace: "nowrap" }}>{label}</span>
       {children}
     </span>
   );
@@ -45,9 +45,9 @@ function Tag({
     <button
       type="button" onClick={onClick} disabled={disabled} aria-pressed={on}
       style={{
-        padding: "4px 11px", fontSize: 12.5, fontFamily: "inherit",
+        padding: `${SPACE.xs}px ${SPACE.md}px`, fontSize: TEXT.small, fontFamily: "inherit",
         fontWeight: on ? 600 : 400,
-        color: on ? "#ffffff" : COLOR.body,
+        color: on ? COLOR.surface : COLOR.body,
         background: on ? COLOR.accent : COLOR.surface,
         border: `1px solid ${on ? COLOR.accent : COLOR.field}`,
         borderRadius: 999, cursor: disabled ? "default" : "pointer",
@@ -145,18 +145,18 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
   }
 
   return (
-    <Card style={{ padding: "16px 18px", marginBottom: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <b style={{ fontSize: 14 }}>정리하기</b>
-        <span style={{ fontSize: 12, color: COLOR.muted }}>용도를 고르면 문서를 만들어 둡니다</span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+    <Card style={{ padding: `${SPACE.lg}px ${SPACE.lg}px`, marginBottom: SPACE.xl }}>
+      <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm, flexWrap: "wrap" }}>
+        <b style={{ fontSize: TEXT.base }}>정리하기</b>
+        <span style={{ fontSize: TEXT.small, color: COLOR.muted }}>용도를 고르면 문서를 만들어 둡니다</span>
+        <div style={{ marginLeft: "auto", display: "flex", gap: SPACE.sm }}>
           {KINDS.map((k) => (
             <button
               key={k.id} type="button" title={k.note}
               onClick={() => void load(k.id)} disabled={busy}
               style={{
-                padding: "7px 13px", fontSize: 13, fontWeight: kind === k.id ? 600 : 400,
-                color: kind === k.id ? "#fff" : COLOR.ink,
+                padding: `${SPACE.sm}px ${SPACE.md}px`, fontSize: TEXT.base, fontWeight: kind === k.id ? 600 : 400,
+                color: kind === k.id ? COLOR.surface : COLOR.ink,
                 background: kind === k.id ? COLOR.accent : COLOR.surface,
                 border: `1px solid ${kind === k.id ? COLOR.accent : COLOR.line}`,
                 borderRadius: 8, cursor: busy ? "default" : "pointer", fontFamily: "inherit",
@@ -173,14 +173,14 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
         예전엔 미리 조합해 둔 선택지 일곱 개짜리 select 였는데, 조합이 늘면 감당이 안 되고
         DR·AWS 는 아예 고를 수가 없었다.
       */}
-      <div style={{ marginTop: 14 }}>
+      <div style={{ marginTop: SPACE.md }}>
         <div style={{
-          display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap",
-          fontSize: 12.5, color: COLOR.muted, marginBottom: 8,
+          display: "flex", alignItems: "baseline", gap: SPACE.sm, flexWrap: "wrap",
+          fontSize: TEXT.small, color: COLOR.muted, marginBottom: SPACE.sm,
         }}>
           <span>대상 환경 <span style={{ color: COLOR.faint }}>(선택)</span></span>
           <span style={{
-            fontFamily: MONO_STACK, fontSize: 12,
+            fontFamily: MONO_STACK, fontSize: TEXT.small,
             color: target === "" ? COLOR.faint : COLOR.ink,
             fontWeight: target === "" ? 400 : 600,
           }}>
@@ -188,7 +188,7 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
           </span>
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: SPACE.sm, flexWrap: "wrap", alignItems: "center" }}>
           <TagGroup label="법인">
             {TARGET_CORPS.map((c) => (
               <Tag
@@ -211,7 +211,7 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
               onClick={() => { setCorps([]); setEnvs([]); }}
               style={{
                 padding: 0, border: "none", background: "none", fontFamily: "inherit",
-                fontSize: 11.5, color: COLOR.faint, cursor: busy ? "default" : "pointer",
+                fontSize: TEXT.micro, color: COLOR.faint, cursor: busy ? "default" : "pointer",
               }}
             >
               지우기
@@ -219,7 +219,7 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
           )}
         </div>
 
-        <p style={{ margin: "9px 0 0", fontSize: 11.5, color: COLOR.faint }}>
+        <p style={{ margin: `${SPACE.sm}px 0 0`, fontSize: TEXT.micro, color: COLOR.faint }}>
           고른 뒤 <b>다시 만들기</b>를 눌러야 표에 반영됩니다. 안 고르면 {TARGET_PLACEHOLDER} 로 남습니다.
         </p>
       </div>
@@ -227,7 +227,7 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
       {error !== "" && (
         <div style={{
           background: COLOR.waitUsBg, color: COLOR.waitUs, borderRadius: 8,
-          padding: "10px 14px", marginTop: 14, fontSize: 13,
+          padding: `${SPACE.sm}px ${SPACE.md}px`, marginTop: SPACE.md, fontSize: TEXT.base,
         }}>
           {error}
         </div>
@@ -236,8 +236,8 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
       {kind !== null && error === "" && (
         <>
           <div style={{
-            display: "flex", alignItems: "center", gap: 10,
-            margin: "14px 0 8px", fontSize: 12, color: COLOR.muted,
+            display: "flex", alignItems: "center", gap: SPACE.sm,
+            margin: `${SPACE.md}px 0 ${SPACE.sm}px`, fontSize: TEXT.small, color: COLOR.muted,
           }}>
             <span>{KINDS.find((k) => k.id === kind)?.note}</span>
             {meta !== null && (
@@ -245,7 +245,7 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
                 {meta.at !== "" && ` · ${new Date(meta.at).toLocaleString("ko-KR")}`}
               </span>
             )}
-            <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <span style={{ marginLeft: "auto", display: "flex", gap: SPACE.sm }}>
               <button
                 type="button" onClick={() => void load(kind, true)} disabled={busy}
                 style={chipStyle}
@@ -267,7 +267,7 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
           {published !== null && (
             <div style={{
               background: COLOR.ground, border: `1px solid ${COLOR.line}`, borderRadius: 8,
-              padding: "9px 13px", marginTop: 10, fontSize: 12.5,
+              padding: `${SPACE.sm}px ${SPACE.md}px`, marginTop: SPACE.sm, fontSize: TEXT.small,
             }}>
               {published.created ? "새 문서로 올렸습니다" : "기존 문서를 갱신했습니다"} ·{" "}
               <a href={published.url} target="_blank" rel="noreferrer" style={{ color: COLOR.accent }}>
@@ -279,14 +279,14 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
           <textarea
             readOnly value={busy ? "만드는 중…" : text} rows={16}
             style={{
-              width: "100%", boxSizing: "border-box", padding: "12px 14px",
-              fontSize: 13, lineHeight: 1.7, fontFamily: "ui-monospace, Consolas, monospace",
+              width: "100%", boxSizing: "border-box", padding: `${SPACE.md}px ${SPACE.md}px`,
+              fontSize: TEXT.base, lineHeight: 1.7, fontFamily: "ui-monospace, Consolas, monospace",
               border: `1px solid ${COLOR.line}`, borderRadius: 8, background: COLOR.ground,
               resize: "vertical",
             }}
           />
 
-          <p style={{ fontSize: 12, color: COLOR.muted, margin: "10px 0 0", lineHeight: 1.6 }}>
+          <p style={{ fontSize: TEXT.small, color: COLOR.muted, margin: `${SPACE.sm}px 0 0`, lineHeight: 1.6 }}>
             한 번 만든 문서는 저장해 두고 다음부터는 그대로 불러옵니다.
             지금은 수집 내용을 형식에 맞춰 엮은 초안이고, 문장 다듬기는 AI 연동을 붙이면
             <b> 다시 만들기</b> 로 갱신됩니다.
@@ -298,7 +298,7 @@ export function SummaryPanel({ requestId }: { requestId: number }) {
 }
 
 const chipStyle = {
-  padding: "5px 11px", fontSize: 12, border: `1px solid ${COLOR.line}`,
+  padding: `${SPACE.xs}px ${SPACE.md}px`, fontSize: TEXT.small, border: `1px solid ${COLOR.line}`,
   borderRadius: 6, background: COLOR.surface, cursor: "pointer",
   fontFamily: "inherit" as const,
 };

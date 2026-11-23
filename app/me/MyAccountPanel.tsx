@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { COLOR, Card, MONO_STACK, Notice, controlStyle } from "../ui.tsx";
+import { Card, COLOR, controlStyle, MONO_STACK, Notice, SPACE, TEXT, WEIGHT } from "../ui.tsx";
 
 interface Props {
   readonly loginId: string;
@@ -59,16 +59,16 @@ export function MyAccountPanel({ loginId, displayName, jiraAccountId, teamName, 
       {msg !== null && <Notice tone={msg.tone}>{msg.text}</Notice>}
 
       {/* ── 누구인가 ──────────────────────────────────── */}
-      <Card style={{ padding: 20, marginBottom: 16 }}>
+      <Card style={{ padding: SPACE.xl, marginBottom: SPACE.lg }}>
         <h2 style={sectionTitle}>내 정보</h2>
 
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 18 }}>
+        <div style={{ display: "flex", gap: SPACE.lg, flexWrap: "wrap", marginBottom: SPACE.lg }}>
           <Readonly label="아이디" value={loginId} mono />
           <Readonly label="소속 팀" value={teamName === "" ? "없음" : teamName} />
           <Readonly label="역할" value={role === "owner" ? "팀 관리자" : "팀원"} />
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: SPACE.sm, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 240px", minWidth: 200 }}>
             <label style={labelStyle}>표시 이름</label>
             <p style={hintStyle}>
@@ -92,21 +92,21 @@ export function MyAccountPanel({ loginId, displayName, jiraAccountId, teamName, 
       </Card>
 
       {/* ── Jira 연결 ─────────────────────────────────── */}
-      <Card style={{ padding: 20, marginBottom: 16 }}>
+      <Card style={{ padding: SPACE.xl, marginBottom: SPACE.lg }}>
         <h2 style={sectionTitle}>Jira 계정 연결</h2>
         <p style={hintStyle}>
           이 값이 있어야 일정이 Jira 에 올라갈 때 <strong>담당자로 지정</strong>되고,
           본문의 <code>@내이름</code> 이 <strong>실제 멘션</strong>이 되어 알림이 옵니다.
           비워 두면 담당자 없이 올라가고 이름은 글자로만 들어갑니다.
         </p>
-        <p style={{ ...hintStyle, marginTop: 8 }}>
+        <p style={{ ...hintStyle, marginTop: SPACE.sm }}>
           찾는 곳: Jira 우상단 아바타 → 프로필 → 주소창 끝{" "}
           <span style={{ fontFamily: MONO_STACK }}>…/jira/people/<b>이 부분</b></span>. 또는 Jira 에
           로그인한 브라우저에서 <span style={{ fontFamily: MONO_STACK }}>/rest/api/3/myself</span> 를
           열면 <span style={{ fontFamily: MONO_STACK }}>accountId</span> 로 보입니다. 비밀값이
           아니라 공개 식별자입니다.
         </p>
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginTop: 12 }}>
+        <div style={{ display: "flex", gap: SPACE.sm, alignItems: "flex-end", flexWrap: "wrap", marginTop: SPACE.md }}>
           <input
             value={jira}
             onChange={(e) => setJira(e.target.value)}
@@ -122,19 +122,19 @@ export function MyAccountPanel({ loginId, displayName, jiraAccountId, teamName, 
             저장
           </button>
           {jiraAccountId !== "" && (
-            <span style={{ fontSize: 12, color: COLOR.ok, paddingBottom: 9 }}>연결됨</span>
+            <span style={{ fontSize: TEXT.small, color: COLOR.ok, paddingBottom: SPACE.sm }}>연결됨</span>
           )}
         </div>
       </Card>
 
       {/* ── 비밀번호 ──────────────────────────────────── */}
-      <Card style={{ padding: 20 }}>
+      <Card style={{ padding: SPACE.xl }}>
         <h2 style={sectionTitle}>비밀번호 변경</h2>
         <p style={hintStyle}>
           이 도구의 로그인 비밀번호입니다 — 브로드컴 포털 계정과 다릅니다. 바꾸면{" "}
           <strong>모든 기기에서 로그아웃</strong>됩니다(이 브라우저까지).
         </p>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+        <div style={{ display: "flex", gap: SPACE.sm, flexWrap: "wrap", marginTop: SPACE.md }}>
           <input
             type="password"
             value={current}
@@ -180,9 +180,9 @@ export function MyAccountPanel({ loginId, displayName, jiraAccountId, teamName, 
 function Readonly({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <div style={{ fontSize: 11.5, color: COLOR.faint, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: TEXT.micro, color: COLOR.faint, fontWeight: WEIGHT.semibold }}>{label}</div>
       <div style={{
-        fontSize: 13.5, marginTop: 3, fontWeight: 500,
+        fontSize: TEXT.base, marginTop: SPACE.xxs, fontWeight: WEIGHT.medium,
         fontFamily: mono === true ? MONO_STACK : "inherit",
       }}>
         {value}
@@ -192,23 +192,23 @@ function Readonly({ label, value, mono }: { label: string; value: string; mono?:
 }
 
 const sectionTitle: React.CSSProperties = {
-  fontSize: 15,
-  fontWeight: 700,
-  margin: "0 0 14px",
+  fontSize: TEXT.lead,
+  fontWeight: WEIGHT.bold,
+  margin: `0 0 ${SPACE.md}px`,
   letterSpacing: "-0.01em",
 };
 
 const labelStyle: React.CSSProperties = {
   display: "block",
-  fontSize: 12,
-  fontWeight: 600,
+  fontSize: TEXT.small,
+  fontWeight: WEIGHT.semibold,
   color: COLOR.body,
-  marginBottom: 4,
+  marginBottom: SPACE.xs,
 };
 
 const hintStyle: React.CSSProperties = {
   margin: 0,
-  fontSize: 12.5,
+  fontSize: TEXT.small,
   color: COLOR.muted,
   lineHeight: 1.75,
 };

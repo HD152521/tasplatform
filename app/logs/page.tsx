@@ -2,7 +2,7 @@ import { requireUser } from "../../lib/appAuth.ts";
 import { listRuns, openDb } from "../../lib/db.ts";
 import { getSessionStatus } from "../../lib/sessionFile.ts";
 import type { RunRow, RunStatus } from "../../lib/types.ts";
-import { Badge, COLOR, Card, MONO_STACK, Notice, RADIUS, formatStamp } from "../ui.tsx";
+import { Badge, Card, COLOR, formatStamp, MONO_STACK, Notice, RADIUS, SPACE, TEXT, WEIGHT } from "../ui.tsx";
 
 // SQLite 를 매 요청 읽어야 하므로 캐싱하지 않는다.
 export const dynamic = "force-dynamic";
@@ -50,9 +50,9 @@ export default async function LogsPage() {
 
   return (
     <>
-      <header style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>수집 상태</h1>
-        <p style={{ margin: "7px 0 0", fontSize: 13, color: COLOR.muted }}>
+      <header style={{ marginBottom: SPACE.xl }}>
+        <h1 style={{ fontSize: TEXT.page, fontWeight: WEIGHT.bold, margin: 0, letterSpacing: "-0.02em" }}>수집 상태</h1>
+        <p style={{ margin: `${SPACE.sm}px 0 0`, fontSize: TEXT.base, color: COLOR.muted }}>
           예약 실행으로 케이스를 주기적으로 가져옵니다.
         </p>
       </header>
@@ -70,24 +70,24 @@ export default async function LogsPage() {
       {/* 지금 이 데이터를 믿어도 되는지를 한 줄로 먼저 말한다. */}
       {latest !== undefined && (
         <Notice tone={healthy ? "ok" : latest.status === "session_expired" ? "warn" : "error"}>
-          <b style={{ fontSize: 14 }}>
+          <b style={{ fontSize: TEXT.base }}>
             {healthy
               ? "정상 수집 중"
               : latest.status === "session_expired"
                 ? "세션이 만료되어 마지막 수집이 실패했습니다"
                 : "마지막 수집이 실패했습니다"}
           </b>
-          <div style={{ marginTop: 4 }}>
+          <div style={{ marginTop: SPACE.xs }}>
             {healthy
               ? `마지막 실행 ${formatTime(latest.started_at)}` +
                 (session.expiresAt !== null ? ` · 세션은 ${formatTime(new Date(session.expiresAt).toISOString())}까지 유효합니다` : "")
               : "아래 건수는 최신이 아닙니다. 새 답변이 없다는 뜻이 아닙니다."}
           </div>
           {!healthy && (
-            <div style={{ marginTop: 10 }}>
+            <div style={{ marginTop: SPACE.sm }}>
               <a href="/login" style={{
-                display: "inline-block", padding: "8px 14px", fontSize: 13, fontWeight: 600,
-                color: "#ffffff", background: COLOR.waitUs, borderRadius: RADIUS.control,
+                display: "inline-block", padding: `${SPACE.sm}px ${SPACE.md}px`, fontSize: TEXT.base, fontWeight: WEIGHT.semibold,
+                color: COLOR.surface, background: COLOR.waitUs, borderRadius: RADIUS.control,
                 textDecoration: "none",
               }}>
                 다시 로그인
@@ -100,7 +100,7 @@ export default async function LogsPage() {
       {runs.length > 0 && (
         <div style={{
           display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          gap: 12, margin: "0 0 24px",
+          gap: SPACE.md, margin: `0 0 ${SPACE.xxl}px`,
         }}>
           <Stat label="최근 수집 성공률" value={rate === null ? "-" : `${rate}%`} note={`최근 ${runs.length}회 기준`} />
           <Stat label="누적 새 답변" value={String(replies)} note="이 이력 범위 안에서" tone={replies > 0 ? COLOR.waitUs : undefined} />
@@ -114,9 +114,9 @@ export default async function LogsPage() {
 
       {runs.length > 0 && (
         <>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 11 }}>
-            <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>실행 이력</h2>
-            <span style={{ fontSize: 12, color: COLOR.faint }}>{`최근 ${runs.length}회`}</span>
+          <div style={{ display: "flex", alignItems: "baseline", gap: SPACE.sm, marginBottom: SPACE.md }}>
+            <h2 style={{ fontSize: TEXT.base, fontWeight: WEIGHT.semibold, margin: 0 }}>실행 이력</h2>
+            <span style={{ fontSize: TEXT.small, color: COLOR.faint }}>{`최근 ${runs.length}회`}</span>
           </div>
 
           <Card style={{ overflow: "hidden" }}>
@@ -130,12 +130,12 @@ export default async function LogsPage() {
                   last={i === runs.length - 1}
                   dim={!usable}
                   cells={[
-                    <span key="t" style={{ fontFamily: MONO_STACK, fontSize: 12, color: "#4b5563" }}>
+                    <span key="t" style={{ fontFamily: MONO_STACK, fontSize: TEXT.small, color: COLOR.body }}>
                       {formatTime(run.started_at)}
                     </span>,
                     <Badge key="s" fg={tone.fg} bg={tone.bg}>{tone.label}</Badge>,
                     <span key="e" style={{
-                      fontSize: 12, color: COLOR.faint,
+                      fontSize: TEXT.small, color: COLOR.faint,
                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                     }}>
                       {run.error ?? ""}
@@ -154,11 +154,11 @@ export default async function LogsPage() {
             })}
           </Card>
 
-          <p style={{ margin: "14px 2px 0", fontSize: 12, color: COLOR.faint, lineHeight: 1.75 }}>
+          <p style={{ margin: `${SPACE.md}px ${SPACE.xxs}px 0`, fontSize: TEXT.small, color: COLOR.faint, lineHeight: 1.75 }}>
             {"조회하지 못한 회차는 건수를 "}
             <span style={{ fontFamily: MONO_STACK, color: COLOR.muted }}>—</span>
             {" 로 표시합니다. "}
-            <b style={{ color: COLOR.muted, fontWeight: 600 }}>0</b>
+            <b style={{ color: COLOR.muted, fontWeight: WEIGHT.semibold }}>0</b>
             {"으로 적으면 “새 답변이 없다”는 뜻으로 읽히기 때문입니다."}
           </p>
         </>
@@ -175,9 +175,9 @@ function Row({
   if (header) {
     return (
       <div style={{
-        display: "grid", gridTemplateColumns: GRID, gap: 12, padding: "10px 18px",
-        borderBottom: `1px solid ${COLOR.divider}`, background: "#fafbfc",
-        fontSize: 11, color: COLOR.faint, letterSpacing: "0.02em",
+        display: "grid", gridTemplateColumns: GRID, gap: SPACE.md, padding: `${SPACE.sm}px ${SPACE.lg}px`,
+        borderBottom: `1px solid ${COLOR.divider}`, background: COLOR.ground,
+        fontSize: TEXT.micro, color: COLOR.faint, letterSpacing: "0.02em",
       }}>
         <span>시각</span><span>결과</span><span>비고</span>
         <span style={{ textAlign: "right" }}>케이스</span>
@@ -188,8 +188,8 @@ function Row({
   }
   return (
     <div style={{
-      display: "grid", gridTemplateColumns: GRID, gap: 12, alignItems: "center",
-      padding: "12px 18px",
+      display: "grid", gridTemplateColumns: GRID, gap: SPACE.md, alignItems: "center",
+      padding: `${SPACE.md}px ${SPACE.lg}px`,
       borderBottom: last ? "none" : `1px solid ${COLOR.divider}`,
       background: dim ? "#fffdfb" : COLOR.surface,
     }}>
@@ -201,8 +201,8 @@ function Row({
 function Num({ value, dim, strong }: { value: string; dim: boolean; strong?: boolean }) {
   return (
     <span style={{
-      fontFamily: MONO_STACK, fontSize: 13, textAlign: "right",
-      color: dim ? "#c7ccd4" : strong === true ? COLOR.waitUs : "#4b5563",
+      fontFamily: MONO_STACK, fontSize: TEXT.base, textAlign: "right",
+      color: dim ? COLOR.line : strong === true ? COLOR.waitUs : COLOR.body,
       fontWeight: strong === true ? 700 : 400,
     }}>
       {value}
@@ -212,15 +212,15 @@ function Num({ value, dim, strong }: { value: string; dim: boolean; strong?: boo
 
 function Stat({ label, value, note, tone }: { label: string; value: string; note: string; tone?: string }) {
   return (
-    <Card style={{ padding: "15px 17px" }}>
-      <div style={{ fontSize: 11, color: COLOR.faint, letterSpacing: "0.02em" }}>{label}</div>
+    <Card style={{ padding: `${SPACE.lg}px ${SPACE.lg}px` }}>
+      <div style={{ fontSize: TEXT.micro, color: COLOR.faint, letterSpacing: "0.02em" }}>{label}</div>
       <div style={{
-        fontFamily: MONO_STACK, fontSize: 22, fontWeight: 600, marginTop: 5,
+        fontFamily: MONO_STACK, fontSize: TEXT.page, fontWeight: WEIGHT.semibold, marginTop: SPACE.xs,
         letterSpacing: "-0.02em", color: tone ?? COLOR.ink,
       }}>
         {value}
       </div>
-      <div style={{ fontSize: 11, color: COLOR.faint, marginTop: 3 }}>{note}</div>
+      <div style={{ fontSize: TEXT.micro, color: COLOR.faint, marginTop: SPACE.xxs }}>{note}</div>
     </Card>
   );
 }

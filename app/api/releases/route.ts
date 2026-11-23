@@ -4,6 +4,7 @@ import { sessionFileForTeam } from "../../../lib/config.ts";
 import { categoryIdOf } from "../../../lib/productCategory.ts";
 import { ReleaseLookupError, findReleases } from "../../../lib/releaseList.ts";
 import { ensureTeamSession, resolveActorTeam } from "../../../lib/requestAudit.ts";
+import { persistTeamSessionToDb, refreshTeamSessionFromDb } from "../../../lib/sessionStore.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,7 +55,35 @@ export async function GET(request: Request): Promise<Response> {
   if (noSession !== null) return noSession;
 
   try {
-    const releases = await findReleases(fetchClient(sessionFileForTeam(teamId)), categoryId, q);
+    let releases;
+    try {
+      releases = await findReleases(fetchClient(sessionFileForTeam(teamId)), categoryId, q);
+    } catch (first) {
+      /*
+        ## 세션이 죽었을 때 한 번은 스스로 되살린다
+
+        이 화면이 유난히 자주 "세션이 만료되었습니다" 를 띄웠다. 답변·등록 경로는
+        401 을 받으면 DB 최신본을 끌어와 한 번 다시 보내는데(app/api/reply/route.ts),
+        **릴리스 조회에는 그 재시도가 없었다.** 그래서 똑같이 살릴 수 있는 상황에서도
+        여기서만 사람에게 넘어갔다.
+
+        왜 ensureTeamSession 으로는 모자라나: 공용 계정 하나를 웹과 수집기가 같이
+        쓰므로 수집기가 다시 로그인하면 앞선 쿠키가 **만료 시각 전에도** 무효가 된다.
+        쿠키의 만료 시각은 여전히 미래라 hydrate 는 "살아 있다" 고 보고 DB 를 쳐다보지
+        않는다. 포털이 401 을 주는 이 순간이 진실이다.
+
+        컨테이너가 새로 뜬 직후에도 같은 일이 생긴다 — 배포로 교체되면 그 안에 있던
+        살아 있는 쿠키가 사라지고 DB 사본만 남는다.
+
+        사람이 앞에서 기다리는 구간이라 **한 번만** 다시 보낸다.
+      */
+      if (!(first instanceof ReleaseLookupError) || !(await refreshTeamSessionFromDb(teamId))) {
+        throw first;
+      }
+      releases = await findReleases(fetchClient(sessionFileForTeam(teamId)), categoryId, q);
+    }
+    // 쓸 수 있는 쿠키였다면 그 상태를 DB 에 남긴다 — 다음 컨테이너가 이것을 받는다.
+    await persistTeamSessionToDb(teamId).catch(() => undefined);
     return NextResponse.json({ ok: true, categoryId, releases });
   } catch (error) {
     // 세션 만료도 여기로 온다(ReleaseLookupError). 문구를 그대로 보여 준다 —

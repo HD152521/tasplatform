@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties, type ReactNode } from "react";
-import { COLOR } from "../../ui.tsx";
+import { COLOR, SPACE, TEXT } from "../../ui.tsx";
 
 /**
  * 첨부 한 줄. 눌러서 받는다.
@@ -93,19 +93,19 @@ export function AttachmentLink({
         {children}
       </button>
       {busy && (
-        <div style={{ fontSize: 11.5, color: COLOR.muted, padding: "2px 0 0 2px" }}>
+        <div style={{ fontSize: TEXT.micro, color: COLOR.muted, padding: `${SPACE.xxs}px 0 0 ${SPACE.xxs}px` }}>
           {/* 수집기가 브라우저로 받아 온다. 처음 한 번은 수십 초가 걸린다. */}
           받아오는 중… 처음 한 번은 수십 초 걸립니다
         </div>
       )}
       {fromOurs && !busy && (
-        <div style={{ fontSize: 11.5, color: COLOR.muted, padding: "2px 0 0 2px" }}>
+        <div style={{ fontSize: TEXT.micro, color: COLOR.muted, padding: `${SPACE.xxs}px 0 0 ${SPACE.xxs}px` }}>
           {/* 이 파일은 supportftp 에 없다. 우리가 올릴 때 남겨 둔 사본으로 받은 것이다. */}
           우리가 보관한 사본에서 받았습니다
         </div>
       )}
       {error !== "" && (
-        <div role="status" style={{ fontSize: 11.5, color: COLOR.waitUs, padding: "2px 0 0 2px", lineHeight: 1.5 }}>
+        <div role="status" style={{ fontSize: TEXT.micro, color: COLOR.waitUs, padding: `${SPACE.xxs}px 0 0 ${SPACE.xxs}px`, lineHeight: 1.5 }}>
           {error}
         </div>
       )}

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { CveViewRow } from "../../lib/queries.ts";
 import { TranslateButton } from "../TranslateButton.tsx";
-import { Badge, COLOR, Card, MONO_STACK, RADIUS, formatStamp } from "../ui.tsx";
+import { Badge, Card, COLOR, formatStamp, MONO_STACK, RADIUS, SPACE, TEXT, WEIGHT } from "../ui.tsx";
 
 /** CVSS 심각도별 색. 사용하는 색의 의미를 앱 전체와 맞춘다. */
 function severityTone(s: string): { fg: string; bg: string } {
@@ -53,7 +53,7 @@ export function CveList({ cves }: { cves: CveViewRow[] }) {
 
   return (
     <>
-      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: SPACE.sm, flexWrap: "wrap", alignItems: "center", marginBottom: SPACE.lg }}>
         <Chip label="전체" count={cves.length} active={product === "all"} onClick={() => setProduct("all")} />
         {products.map(([name, count]) => (
           <Chip key={name} label={name} count={count}
@@ -63,7 +63,7 @@ export function CveList({ cves }: { cves: CveViewRow[] }) {
         <select
           value={minSeverity} onChange={(e) => setMinSeverity(e.target.value)}
           style={{
-            marginLeft: "auto", padding: "7px 11px", fontSize: 12.5,
+            marginLeft: "auto", padding: `${SPACE.sm}px ${SPACE.md}px`, fontSize: TEXT.small,
             border: `1px solid ${COLOR.field}`, borderRadius: RADIUS.control,
             background: COLOR.surface, fontFamily: "inherit",
           }}
@@ -78,7 +78,7 @@ export function CveList({ cves }: { cves: CveViewRow[] }) {
           value={query} onChange={(e) => setQuery(e.target.value)}
           placeholder="CVE 번호 · 내용 검색"
           style={{
-            minWidth: 220, padding: "8px 12px", fontSize: 13,
+            minWidth: 220, padding: `${SPACE.sm}px ${SPACE.md}px`, fontSize: TEXT.base,
             border: `1px solid ${COLOR.field}`, borderRadius: RADIUS.control,
             background: COLOR.surface, fontFamily: "inherit", outline: "none",
           }}
@@ -86,22 +86,22 @@ export function CveList({ cves }: { cves: CveViewRow[] }) {
       </div>
 
       {shown.length === 0 ? (
-        <Card style={{ padding: 44, textAlign: "center", color: COLOR.faint, fontSize: 13 }}>
+        <Card style={{ padding: SPACE.xxxl, textAlign: "center", color: COLOR.faint, fontSize: TEXT.base }}>
           조건에 맞는 취약점이 없습니다.
         </Card>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: SPACE.sm }}>
           {shown.map((c) => {
             const tone = severityTone(c.severity);
             const critical = c.severity === "CRITICAL";
             return (
               <Card key={`${c.cve_id}-${c.product}`} style={{
-                padding: "14px 18px",
+                padding: `${SPACE.md}px ${SPACE.lg}px`,
                 borderLeft: critical ? `3px solid ${tone.fg}` : "3px solid transparent",
               }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: SPACE.sm, marginBottom: SPACE.xs, flexWrap: "wrap" }}>
                   <Link href={`/cves/${c.cve_id}`} style={{
-                    fontFamily: MONO_STACK, fontSize: 13, fontWeight: 600,
+                    fontFamily: MONO_STACK, fontSize: TEXT.base, fontWeight: WEIGHT.semibold,
                     color: COLOR.accent, textDecoration: "none",
                   }}>
                     {c.cve_id}
@@ -110,17 +110,17 @@ export function CveList({ cves }: { cves: CveViewRow[] }) {
                     {c.severity}
                     {c.score !== null ? ` ${c.score}` : ""}
                   </Badge>
-                  <span style={{ fontSize: 12, color: COLOR.muted }}>{c.product}</span>
+                  <span style={{ fontSize: TEXT.small, color: COLOR.muted }}>{c.product}</span>
                   <span style={{
                     marginLeft: "auto", fontFamily: MONO_STACK,
-                    fontSize: 11.5, color: COLOR.faint, whiteSpace: "nowrap",
+                    fontSize: TEXT.micro, color: COLOR.faint, whiteSpace: "nowrap",
                   }}>
                     {formatStamp(Date.parse(c.published))}
                   </span>
                 </div>
 
                 <p style={{
-                  margin: 0, fontSize: 13, lineHeight: 1.7, color: COLOR.body,
+                  margin: 0, fontSize: TEXT.base, lineHeight: 1.7, color: COLOR.body,
                   display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical",
                   overflow: "hidden",
                 }}>
@@ -129,7 +129,7 @@ export function CveList({ cves }: { cves: CveViewRow[] }) {
 
                 {/* NVD 설명은 전부 영문이다. 볼 것만 눌러 번역한다. */}
                 {c.summary_ko === "" && c.summary !== "" && (
-                  <div style={{ marginTop: 8 }}>
+                  <div style={{ marginTop: SPACE.sm }}>
                     <TranslateButton url={`/api/cves/${encodeURIComponent(c.cve_id)}/translate`} compact />
                   </div>
                 )}
@@ -147,17 +147,17 @@ function Chip({
 }: { label: string; count: number; active: boolean; onClick: () => void }) {
   return (
     <button type="button" onClick={onClick} style={{
-      display: "inline-flex", alignItems: "center", gap: 7,
-      padding: "6px 11px 6px 13px", fontSize: 12.5,
+      display: "inline-flex", alignItems: "center", gap: SPACE.sm,
+      padding: `${SPACE.xs}px ${SPACE.md}px ${SPACE.xs}px ${SPACE.md}px`, fontSize: TEXT.small,
       fontWeight: active ? 600 : 400,
-      color: active ? "#ffffff" : COLOR.ink,
+      color: active ? COLOR.surface : COLOR.ink,
       background: active ? COLOR.accent : COLOR.surface,
       border: `1px solid ${active ? COLOR.accent : COLOR.field}`,
       borderRadius: RADIUS.pill, cursor: "pointer", fontFamily: "inherit",
     }}>
       {label}
       <span style={{
-        fontFamily: MONO_STACK, fontSize: 11,
+        fontFamily: MONO_STACK, fontSize: TEXT.micro,
         color: active ? "rgba(255,255,255,.75)" : COLOR.faint,
       }}>
         {count}
