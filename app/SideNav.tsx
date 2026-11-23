@@ -166,6 +166,7 @@ export function SideNav({
           const hasActive = group.items.some((i) => i.href === activeHref);
           // 보고 있는 화면이 든 카테고리는 접지 않는다 — 접힌 채 활성이면 길을 잃는다.
           const open = group.title === "" || hasActive || !collapsed.includes(group.title);
+          const hidden = open ? 0 : groupBadge(group);
           return (
             <div key={group.title === "" ? `g${gi}` : group.title} style={{ marginBottom: SPACE.xs }}>
               {group.title !== "" && (
@@ -182,17 +183,36 @@ export function SideNav({
                 >
                   <span style={{
                     fontSize: TEXT.micro, fontWeight: WEIGHT.bold, color: COLOR.faint,
-                    letterSpacing: "0.04em",
+                    letterSpacing: "0.04em", whiteSpace: "nowrap",
+                    overflow: "hidden", textOverflow: "ellipsis",
                   }}>
                     {group.title}
                   </span>
-                  <span style={{
-                    fontSize: TEXT.micro, color: COLOR.faint,
-                    // 접힘은 눌러서 바뀌는 것이니 화살표가 그 상태를 말한다.
-                    transform: open ? "rotate(90deg)" : "none",
-                    transition: "transform 120ms ease",
-                  }}>
-                    ▶
+                  {/*
+                    접었을 때 합쳐지는 숫자는 **카테고리 줄 안**, 화살표 왼쪽에 둔다.
+                    전에는 버튼 아래 별도 줄에 그렸다 — 숫자 하나가 한 줄을 차지해
+                    접어서 줄인 높이를 거의 그대로 돌려받았고, 무엇의 숫자인지도
+                    멀어 보였다. 제목과 같은 줄에 있으면 "이 묶음에 N건" 이 한눈에 붙는다.
+                  */}
+                  <span style={{ display: "flex", alignItems: "center", gap: SPACE.xs, flexShrink: 0 }}>
+                    {hidden > 0 && (
+                      <span style={{
+                        fontFamily: MONO_STACK, fontVariantNumeric: "tabular-nums",
+                        fontSize: TEXT.micro, fontWeight: WEIGHT.semibold, color: COLOR.surface,
+                        background: COLOR.waitUs, padding: `${SPACE.xxs}px ${SPACE.xs}px`,
+                        borderRadius: RADIUS.badge, lineHeight: 1.2,
+                      }}>
+                        {hidden}
+                      </span>
+                    )}
+                    <span style={{
+                      fontSize: TEXT.micro, color: COLOR.faint,
+                      // 접힘은 눌러서 바뀌는 것이니 화살표가 그 상태를 말한다.
+                      transform: open ? "rotate(90deg)" : "none",
+                      transition: "transform 120ms ease",
+                    }}>
+                      ▶
+                    </span>
                   </span>
                 </button>
               )}
@@ -202,18 +222,6 @@ export function SideNav({
                   {group.items.map((item) => (
                     <NavLink key={item.href} item={item} active={item.href === activeHref} />
                   ))}
-                </div>
-              )}
-
-              {/* 접혀 있어도 그 안에 기다리는 일이 있으면 숫자로 알린다. */}
-              {!open && groupBadge(group) > 0 && (
-                <div style={{ padding: `0 ${SPACE.md}px ${SPACE.xs}px` }}>
-                  <span style={{
-                    fontFamily: MONO_STACK, fontSize: TEXT.micro, fontWeight: WEIGHT.semibold, color: COLOR.surface,
-                    background: COLOR.waitUs, padding: `${SPACE.xxs}px ${SPACE.xs}px`, borderRadius: RADIUS.badge,
-                  }}>
-                    {groupBadge(group)}
-                  </span>
                 </div>
               )}
             </div>

@@ -14,14 +14,22 @@
  */
 
 import { useEffect, useState } from "react";
+import type { WeeklyDigest } from "../../lib/weeklyDigest.ts";
 import { COLOR, Card, Empty, LinkButton, MONO_STACK, SPACE, SectionHead, TEXT, WEIGHT } from "../ui.tsx";
 
-interface Digest {
-  readonly week: string;
-  readonly content: string;
-  readonly source: "llm" | "rule";
-  readonly builtAt: string;
-}
+/**
+ * 서버가 돌려주는 그 모양을 **그대로** 쓴다.
+ *
+ * 전에는 여기서 `{ week, content, source, builtAt }` 를 손으로 다시 적었는데, 서버는
+ * `{ week, body, source, createdAt }` 를 보낸다. 이름이 어긋나 `digest.content` 가
+ * undefined 였고, 정리가 **생긴 순간** `undefined.split()` 이 터져 대시보드가 통째로
+ * "Application error" 로 바뀌었다. 정리가 없는 동안은 멀쩡했으니 더 찾기 어려웠다.
+ *
+ * 타입만 가져온다(`import type`) — 컴파일에서 사라지므로 서버 코드가 브라우저로
+ * 따라오지 않고, 서버가 모양을 바꾸면 **빌드가 먼저 깨진다.** 손으로 베낀 모양은
+ * 그 경고를 주지 못한다.
+ */
+type Digest = WeeklyDigest;
 
 /** 길면 접는다. 대시보드는 훑는 화면이고, 전문은 펼쳐서 읽는다. */
 const FOLD_LINES = 6;
@@ -84,7 +92,7 @@ export function DigestCard({ week, today, label }: { week: string; today: string
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [week, today]);
 
-  const lines = digest === null ? [] : digest.content.split("\n");
+  const lines = digest === null ? [] : digest.body.split("\n");
   const folded = !open && lines.length > FOLD_LINES;
   const shown = folded ? lines.slice(0, FOLD_LINES) : lines;
 
@@ -148,7 +156,7 @@ export function DigestCard({ week, today, label }: { week: string; today: string
               <LinkButton onClick={() => setOpen(!open)}>{open ? "접기" : `전문 보기 (${lines.length}줄)`}</LinkButton>
             )}
             <span style={{ fontFamily: MONO_STACK, fontSize: TEXT.micro, color: COLOR.faint }}>
-              {digest.builtAt.slice(0, 16).replace("T", " ")}
+              {digest.createdAt.slice(0, 16).replace("T", " ")}
             </span>
           </div>
           {message !== "" && (

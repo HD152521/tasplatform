@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EventState, TeamEventView } from "../../lib/calendar.ts";
+import { hiddenPerDay, layoutWeek, type WeekSegment } from "../../lib/calendarLanes.ts";
 import {
   classifyTags,
   describeClassification,
@@ -66,6 +67,15 @@ function selectedDateInit(month: string, today: string): string {
 }
 
 const WEEK_LABELS = ["일", "월", "화", "수", "목", "금", "토"] as const;
+
+/**
+ * 달력 칸에 보여 줄 띠 줄 수의 상한.
+ *
+ * Jira 를 불러오면 한 날에 열 건이 넘는다. 전부 눕히면 한 주가 화면을 다 먹어
+ * 달을 훑을 수 없다 — 달력은 "언제 무엇이 몰려 있나" 를 보는 곳이고, 그 날 전부는
+ * 아래 목록에서 읽는다. 넘친 것은 `+N` 으로만 알린다.
+ */
+const LANE_LIMIT = 3;
 
 /**
  * 저장된 일정을 **한 줄 태그**로 되살린다.
@@ -162,6 +172,41 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
     }
     return map;
   }, [events]);
+
+  /**
+   * 주별 띠 배치. 이어지는 일정을 한 덩어리로 그리기 위한 계산은
+   * lib/calendarLanes.ts 에 있다(머리말에 왜 점이 아니라 띠인지 적어 뒀다).
+   */
+  const weeks = useMemo(
+    () =>
+      Array.from({ length: dates.length / 7 }, (_, w) => {
+        const span = dates.slice(w * 7, w * 7 + 7);
+        return { dates: span, segments: layoutWeek(events, span) };
+      }),
+    [dates, events],
+  );
+
+  /**
+   * 띠 줄을 몇 개까지 보여 줄지.
+   *
+   * **달 전체에서 같은 수**를 쓴다 — 주마다 높이가 달라지면 칸 크기가 들쭉날쭉해
+   * 달을 훑는 눈이 걸린다. 가장 많이 겹친 주를 따르되 LANE_LIMIT 에서 끊고,
+   * 넘친 것은 그 날 칸에 `+N` 으로 알린다.
+   */
+  const deepest = Math.max(
+    0,
+    ...weeks.map((w) => w.segments.reduce((m, s) => Math.max(m, s.lane + 1), 0)),
+  );
+  const laneRows = Math.max(1, Math.min(LANE_LIMIT, deepest));
+  const anyOverflow = deepest > laneRows;
+
+  /** 칸을 고른다. 폼으로 적고 있을 때도 그 날짜가 따라와야 한다 — 칸을 눌렀는데
+   *  폼의 날짜가 그대로면 "눌러도 아무 일이 없는" 화면이 된다. */
+  function pickDate(date: string): void {
+    setSelectedDate(date);
+    if (formEditId === null) setForm((prev) => ({ ...prev, startDate: date, endDate: date }));
+    if (mode === "line") inputRef.current?.focus();
+  }
 
   /**
    * 미리보기. 파서가 어떻게 읽었는지와 **Jira 에 어떤 제목으로 올라갈지**를 함께 보여
@@ -505,45 +550,98 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
               {label}
             </div>
           ))}
-
-          {dates.map((date, i) => {
-            const inMonth = date.startsWith(month);
-            const dayEvents = byDate.get(date) ?? [];
-            const isToday = date === today;
-            const isSelected = date === selectedDate;
-            return (
-              <div
-                key={date}
-                onClick={() => {
-                  setSelectedDate(date);
-                  // 폼으로 적고 있을 때도 그 날짜가 따라와야 한다 — 칸을 눌렀는데
-                  // 폼의 날짜가 그대로면 "눌러도 아무 일이 없는" 화면이 된다.
-                  if (formEditId === null) setForm((prev) => ({ ...prev, startDate: date, endDate: date }));
-                  if (mode === "line") inputRef.current?.focus();
-                }}
-                style={{
-                  minHeight: 68, padding: `${SPACE.xs + 1}px ${SPACE.sm - 2}px ${SPACE.sm - 2}px`,
-                  cursor: "pointer",
-                  borderBottom: i < 35 ? `1px solid ${COLOR.divider}` : "none",
-                  borderRight: (i + 1) % 7 === 0 ? "none" : `1px solid ${COLOR.divider}`,
-                  background: isSelected ? COLOR.accentWash : inMonth ? COLOR.surface : COLOR.ground,
-                  outline: isToday ? `2px solid ${COLOR.accent}` : "none",
-                  outlineOffset: -2,
-                }}
-              >
-                <div style={{
-                  fontSize: 11.5, fontFamily: MONO_STACK, marginBottom: 4,
-                  color: inMonth ? (isToday ? COLOR.accent : COLOR.body) : COLOR.faint,
-                  fontWeight: isToday ? 700 : 500,
-                }}>
-                  {Number(date.slice(8, 10))}
-                </div>
-
-                <DayCellSummary events={dayEvents} meId={me.userId} />
-              </div>
-            );
-          })}
         </div>
+
+        {/*
+          **한 주가 한 격자다.**
+
+          42칸을 한 격자에 넣으면 띠가 칸 경계를 넘을 수 없어, 이어지는 일정을
+          날마다 끊어 그리게 된다. 주별로 쪼개면 띠 하나가
+          `grid-column: 시작 / span 며칠` 한 줄로 끝난다.
+
+          칸 배경은 `grid-row: 1 / -1` 로 주 전체 높이를 덮고, 띠는 그 위 줄에
+          얹는다 — 겹치는 격자 항목은 **뒤에 온 것이 위에** 그려지므로 순서가 맞다.
+        */}
+        {weeks.map((wk, wi) => {
+          const hidden = hiddenPerDay(wk.segments, laneRows, wk.dates.length);
+          return (
+            <div
+              key={wk.dates[0]}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(7, 1fr)",
+                gridTemplateRows: `20px repeat(${laneRows}, 18px)${anyOverflow ? " 14px" : ""} 1fr`,
+                minHeight: 74,
+                borderBottom: wi < weeks.length - 1 ? `1px solid ${COLOR.divider}` : "none",
+              }}
+            >
+              {wk.dates.map((date, c) => {
+                const inMonth = date.startsWith(month);
+                const isToday = date === today;
+                const isSelected = date === selectedDate;
+                return (
+                  <div
+                    key={date}
+                    onClick={() => pickDate(date)}
+                    style={{
+                      gridColumn: c + 1,
+                      gridRow: "1 / -1",
+                      cursor: "pointer",
+                      padding: "3px 6px 0",
+                      borderRight: c === 6 ? "none" : `1px solid ${COLOR.divider}`,
+                      background: isSelected ? COLOR.accentWash : inMonth ? COLOR.surface : COLOR.ground,
+                      outline: isToday ? `2px solid ${COLOR.accent}` : "none",
+                      outlineOffset: -2,
+                    }}
+                  >
+                    <div style={{
+                      fontSize: 11.5, fontFamily: MONO_STACK,
+                      color: inMonth ? (isToday ? COLOR.accent : COLOR.body) : COLOR.faint,
+                      fontWeight: isToday ? 700 : 500,
+                    }}>
+                      {Number(date.slice(8, 10))}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {wk.segments
+                .filter((seg) => seg.lane < laneRows)
+                .map((seg) => (
+                  <EventBar
+                    key={`${seg.item.eventId}-${seg.col}`}
+                    seg={seg}
+                    mine={seg.item.assigneeUserId === me.userId}
+                    onPick={() => {
+                      pickDate(wk.dates[seg.col] as string);
+                      setOpenId(seg.item.eventId);
+                    }}
+                  />
+                ))}
+
+              {/* 가려진 것은 그 날 칸에 숫자로만 알린다 — 전부는 아래 목록에서 읽는다. */}
+              {anyOverflow &&
+                hidden.map((n, c) =>
+                  n === 0 ? null : (
+                    <button
+                      key={`more-${wk.dates[c]}`}
+                      type="button"
+                      onClick={() => pickDate(wk.dates[c] as string)}
+                      title="이 날 전부를 아래 목록에서 봅니다"
+                      style={{
+                        gridColumn: c + 1, gridRow: laneRows + 2,
+                        background: "transparent", border: "none", cursor: "pointer",
+                        fontFamily: MONO_STACK, fontSize: 10, color: COLOR.faint,
+                        textAlign: "left", padding: "0 6px",
+                      }}
+                    >
+                      +{n}
+                    </button>
+                  ),
+                )}
+            </div>
+          );
+        })}
       </Card>
 
       {/*
@@ -753,48 +851,78 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
 
 
 /**
- * 달력 한 칸의 요약.
+ * 달력 칸 위에 눕는 일정 띠.
  *
- * 제목을 늘어놓지 않는다 — Jira 를 불러오면 한 날에 열 건이 넘고, 좁은 칸에서는
- * 전부 잘려 **아무것도 읽을 수 없다.** 대신 "몇 건이 어떤 상태로 있는가" 만 색점으로
- * 보여 주고, 내용은 아래 목록에서 읽는다.
+ * **색은 상태, 길이는 기간이다.** 전에는 칸마다 색점을 찍었는데, 12~13일처럼
+ * 이어지는 일정이 "하루짜리 둘" 과 구별되지 않았다. 기간은 길이로 보여야 기간으로
+ * 읽힌다.
  *
- * 내 담당이 있으면 테두리 있는 점으로 표시한다 — 달을 훑을 때 제일 먼저 찾는 것이다.
+ * 주 경계를 넘는 조각은 그 쪽 모서리를 깎지 않고 테두리도 넣지 않는다 — 다음 주
+ * 줄의 조각과 **한 줄로 이어 보이게** 하려는 것이다(lib/calendarLanes.ts 가 어느
+ * 쪽으로 더 가는지 알려 준다).
+ *
+ * 내 담당은 안쪽 테두리로 한 번 더 구분한다. 색만으로는 못 가른다.
  */
-function DayCellSummary({ events, meId }: { events: readonly TeamEventView[]; meId: number }) {
-  if (events.length === 0) return null;
-
-  const shown = events.slice(0, 8);
-  const mine = events.filter((e) => e.assigneeUserId === meId).length;
+function EventBar({ seg, mine, onPick }: {
+  seg: WeekSegment<TeamEventView>;
+  mine: boolean;
+  onPick: () => void;
+}) {
+  const event = seg.item;
+  const style = STATE_STYLE[event.state];
+  const period =
+    event.endDate === event.startDate ? event.startDate : `${event.startDate} ~ ${event.endDate}`;
 
   return (
-    <div
-      title={events.map((e) => `${e.title}${e.assigneeName === "" ? "" : ` · ${e.assigneeName}`}`).join("\n")}
-      style={{ display: "flex", flexDirection: "column", gap: SPACE.xs }}
+    <button
+      type="button"
+      onClick={onPick}
+      title={[
+        event.title,
+        `${period} · ${style.label}`,
+        event.assigneeName === "" ? "담당 미지정" : event.assigneeName,
+        event.jiraKey,
+      ]
+        .filter((part) => part !== "")
+        .join("\n")}
+      style={{
+        gridColumn: `${seg.col + 1} / span ${seg.span}`,
+        gridRow: seg.lane + 2,
+        alignSelf: "center",
+        minWidth: 0,
+        height: 16,
+        lineHeight: "16px",
+        // 이어지는 쪽은 여백을 두지 않는다 — 1px 만 벌어져도 끊겨 보인다.
+        marginLeft: seg.continuesLeft ? 0 : 3,
+        marginRight: seg.continuesRight ? 0 : 3,
+        padding: `0 5px 0 ${seg.continuesLeft ? 5 : 4}px`,
+        border: "none",
+        borderLeft: seg.continuesLeft ? "none" : `3px solid ${style.fg}`,
+        // 왼쪽은 **각지게** 둔다. 3px 색 띠에 둥근 모서리를 주면 괄호 "(" 처럼 보여
+        // 제목 앞에 이상한 글자가 붙은 것으로 읽힌다(실제로 그렇게 보였다).
+        borderTopLeftRadius: 0,
+        borderBottomLeftRadius: 0,
+        borderTopRightRadius: seg.continuesRight ? 0 : 3,
+        borderBottomRightRadius: seg.continuesRight ? 0 : 3,
+        background: style.bg,
+        boxShadow: mine ? `inset 0 0 0 1px ${COLOR.accent}` : undefined,
+        color: COLOR.ink,
+        fontFamily: "inherit",
+        fontSize: 11,
+        fontWeight: mine ? WEIGHT.semibold : 400,
+        textAlign: "left",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        textDecoration: event.state === "canceled" ? "line-through" : "none",
+        cursor: "pointer",
+      }}
     >
-      <div style={{ display: "flex", gap: 3, flexWrap: "wrap", alignItems: "center" }}>
-        {shown.map((event, i) => (
-          <span
-            key={`${event.eventId}-${i}`}
-            style={{
-              width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
-              background: STATE_STYLE[event.state].fg,
-              // 내 담당은 테두리로 한 번 더 구분한다(색만으로는 못 가른다).
-              boxShadow: event.assigneeUserId === meId ? `0 0 0 2px ${COLOR.accentWash}` : undefined,
-            }}
-          />
-        ))}
-        {events.length > shown.length && (
-          <span style={{ fontSize: 9, color: COLOR.faint, fontFamily: MONO_STACK }}>
-            +{events.length - shown.length}
-          </span>
-        )}
-      </div>
-      <div style={{ fontSize: TEXT.micro, color: COLOR.muted, lineHeight: 1.4 }}>
-        {events.length}건
-        {mine > 0 && <span style={{ color: COLOR.accent, fontWeight: WEIGHT.semibold }}> · 내 {mine}</span>}
-      </div>
-    </div>
+      {seg.continuesLeft && "‹ "}
+      {event.scopes === "" ? "" : `[${event.scopes}] `}
+      {event.title}
+      {seg.continuesRight && " ›"}
+    </button>
   );
 }
 
