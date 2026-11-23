@@ -13,13 +13,20 @@ function formatRunTime(iso: string): string {
 
 export default async function CaseListPage() {
   // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
-  await requireUser("/");
+  const me = await requireUser("/");
   let open: CaseListRow[] = [];
   let lastRun = null;
   let loadError: string | null = null;
 
   try {
-    open = (await listCasesSplit()).open;
+  // **그 사람과 그 팀 것만.** 전에는 팀을 안 걸러 다른 팀 케이스가 섞였고, 미읽음은
+  // 팀이 공유해 한 사람이 열면 모두의 배지가 사라졌다(lib/schema.ts case_reads_user).
+    open = (
+      await listCasesSplit({
+        teamId: me.teamId === "" ? undefined : me.teamId,
+        userId: me.userId,
+      })
+    ).open;
     lastRun = await getLastRun();
   } catch (error) {
     loadError = error instanceof Error ? error.message : String(error);

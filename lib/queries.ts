@@ -49,6 +49,26 @@ export interface ThreadViewRow {
  * teamId 로 좁힐 때 쓸 WHERE 절. 기존 뷰어(팀 무관 전체 조회)가 안 깨지도록
  * teamId 를 안 주면 빈 문자열이라 전체를 그대로 조회한다.
  */
+/**
+ * "이 사람이 어디까지 읽었나" 를 돌려주는 스칼라 식.
+ *
+ * 내 기록과 **옛 팀 공유 기록** 중 큰 쪽을 쓴다(lib/schema.ts case_reads_user 머리말).
+ * 그래서 사용자별로 바꾸는 날 미읽음 숫자가 치솟지 않는다.
+ *
+ * 방언을 가리지 않으려고 GREATEST/MAX(a,b) 대신 **UNION ALL 위의 집계 MAX** 를 쓴다 —
+ * SQLite 에는 스칼라 MAX 가 있고 Postgres 에는 없다(GREATEST 다). 이 모양은 둘 다 받는다.
+ *
+ * `?` 하나를 쓴다(user_id). 파라미터 순서가 SQL 글자 순서와 같아야 하므로, 이 식을
+ * 쓰는 쿼리는 **userId 를 맨 앞에** 넘긴다.
+ */
+const READ_FLOOR_SQL = `(SELECT COALESCE(MAX(ms), 0) FROM (
+        SELECT u.last_read_thread_ms AS ms FROM case_reads_user u
+          WHERE u.request_id = c.request_id AND u.user_id = ?
+        UNION ALL
+        SELECT r.last_read_thread_ms AS ms FROM case_reads r
+          WHERE r.request_id = c.request_id
+      ) AS reads)`;
+
 function caseListSql(whereClause: string): string {
   return `
 SELECT
@@ -62,8 +82,7 @@ SELECT
   (SELECT t.res_date_val FROM threads t WHERE t.request_id = c.request_id ORDER BY t.res_date_ms DESC LIMIT 1) AS latest_at,
   (SELECT COUNT(*) FROM threads t
     WHERE t.request_id = c.request_id AND t.is_ours = 0
-      AND COALESCE(t.res_date_ms, 0) >
-          COALESCE((SELECT r.last_read_thread_ms FROM case_reads r WHERE r.request_id = c.request_id), 0)
+      AND COALESCE(t.res_date_ms, 0) > ${READ_FLOOR_SQL}
   ) AS unread_replies,
   (SELECT s.content FROM case_summaries s
      WHERE s.request_id = c.request_id AND s.kind = 'confluence_published' LIMIT 1) AS confluence_url
@@ -93,6 +112,14 @@ async function withDb<T>(run: (db: Db) => Promise<T>, dbFile?: string): Promise<
 /** MCP 등 팀 단위 조회가 공통으로 쓰는 옵션. teamId 를 생략하면 기존처럼 전체를 본다. */
 export interface TeamScopedQueryOptions {
   teamId?: string;
+  /**
+   * 누가 보는가. 미읽음 수를 **이 사람 기준**으로 센다.
+   *
+   * 생략하면 0 으로 넘어가 사용자 기록이 없는 것처럼 보고 **옛 팀 공유 기록만**
+   * 바닥값으로 쓴다 — 로그인 없이 부르는 경로(MCP·스크립트)가 그대로 돌게 하기
+   * 위해서다. 그쪽에서 미읽음 수는 어차피 쓰이지 않는다.
+   */
+  userId?: number;
   /** 테스트에서 임시 DB 를 가리키기 위한 것. 실제 호출부는 생략한다. */
   dbFile?: string;
 }
@@ -108,10 +135,14 @@ export function isClosedStatus(status: string): boolean {
  * MCP 읽기 도구처럼 teamId 를 주면 그 팀 소유 케이스로만 좁혀진다.
  */
 export function listCases(options: TeamScopedQueryOptions = {}): Promise<CaseListRow[]> {
-  const { teamId, dbFile } = options;
+  const { teamId, userId = 0, dbFile } = options;
   return withDb(async (db) => {
     const sql = teamId ? caseListSql("WHERE c.team_id = ?") : CASE_LIST_SQL;
-    const rows = teamId ? await db.all(sql, [teamId]) : await db.all(sql);
+    // 파라미터 순서는 **SQL 글자 순서**와 같아야 한다. 미읽음 식(READ_FLOOR_SQL)의
+    // user_id 가 SELECT 안에 있어 WHERE 의 team_id 보다 앞선다.
+    const rows = teamId
+      ? await db.all(sql, [userId, teamId])
+      : await db.all(sql, [userId]);
     return toPlain<CaseListRow>(rows);
   }, dbFile);
 }
@@ -132,15 +163,17 @@ export async function listCasesSplit(
  * MCP 도구가 다른 팀 케이스를 들여다보지 못하게 막는 경계다.
  */
 export function getCase(requestId: number, options: TeamScopedQueryOptions = {}): Promise<CaseListRow | null> {
-  const { teamId, dbFile } = options;
+  const { teamId, userId = 0, dbFile } = options;
   return withDb(async (db) => {
     // 서브쿼리를 FROM 에 둘 때 Postgres 는 별칭(AS q)을 요구한다.
     const sql = teamId
       ? `SELECT * FROM (${caseListSql("WHERE c.team_id = ?")}) AS q WHERE request_id = ?`
       : `SELECT * FROM (${CASE_LIST_SQL}) AS q WHERE request_id = ?`;
+    // 미읽음 식의 user_id 가 SELECT 안(= 글자 순서로 맨 앞)에 있다. 이 순서를 틀리면
+    // 조용히 어긋난다 — 팀 id 가 user_id 자리로 들어가 조회가 통째로 빈다.
     const rows = teamId
-      ? await db.all(sql, [teamId, requestId])
-      : await db.all(sql, [requestId]);
+      ? await db.all(sql, [userId, teamId, requestId])
+      : await db.all(sql, [userId, requestId]);
     return toPlain<CaseListRow>(rows)[0] ?? null;
   }, dbFile);
 }
@@ -204,8 +237,14 @@ export function getLastRun(): Promise<LastRunSummary | null> {
   });
 }
 
-/** 케이스를 열었을 때 해당 시점까지 확인한 것으로 표시한다. */
-export function markCaseRead(requestId: number): Promise<void> {
+/**
+ * 케이스를 열었을 때 해당 시점까지 **그 사람이** 확인한 것으로 표시한다.
+ *
+ * `userId` 가 없으면(로그인 없이 부르는 경로) 아무것도 적지 않는다. 옛 팀 공유
+ * 표(case_reads)에 적으면 **모두의 배지가 사라져** 사용자별로 바꾼 뜻이 무너진다.
+ */
+export function markCaseRead(requestId: number, userId: number): Promise<void> {
+  if (!Number.isInteger(userId) || userId <= 0) return Promise.resolve();
   return withDb(async (db) => {
     const rows = (await db.all(
       "SELECT COALESCE(MAX(res_date_ms), 0) AS m FROM threads WHERE request_id = ?",
@@ -215,11 +254,12 @@ export function markCaseRead(requestId: number): Promise<void> {
     // 두 값 중 큰 쪽 유지: SQLite 는 스칼라 MAX(a,b), Postgres 는 GREATEST(a,b).
     const greater = db.dialect === "postgres" ? "GREATEST" : "MAX";
     await db.run(
-      `INSERT INTO case_reads (request_id, last_read_thread_ms, read_at) VALUES (?, ?, ?)
-       ON CONFLICT(request_id) DO UPDATE SET
-         last_read_thread_ms = ${greater}(case_reads.last_read_thread_ms, excluded.last_read_thread_ms),
+      `INSERT INTO case_reads_user (request_id, user_id, last_read_thread_ms, read_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(request_id, user_id) DO UPDATE SET
+         last_read_thread_ms = ${greater}(case_reads_user.last_read_thread_ms, excluded.last_read_thread_ms),
          read_at = excluded.read_at`,
-      [requestId, latest, new Date().toISOString()],
+      [requestId, userId, latest, new Date().toISOString()],
     );
   });
 }
@@ -279,19 +319,29 @@ export function listAttachments(requestId: number, dbFile?: string): Promise<Att
 }
 
 /** 사이드바에 쓰는 건수. 매 페이지 렌더마다 호출되므로 가볍게 센다. */
-export function countsForNav(): Promise<{
+/**
+ * 사이드바 건수.
+ *
+ * **보는 사람과 그 팀 기준**이다. 미읽음은 그 사람이 안 읽은 것만 세고, 케이스는
+ * 그 팀 것만 센다 — 배지 숫자와 목록에 보이는 건수가 어긋나면 둘 중 하나를 믿을
+ * 수 없게 된다.
+ */
+export function countsForNav(options: TeamScopedQueryOptions = {}): Promise<{
   open: number; closed: number; unread: number; cves: number; criticalCves: number;
   kb: number; kbMatch: number;
 }> {
+  const { teamId, userId = 0 } = options;
   return withDb(async (db) => {
+    const where = teamId === undefined ? "" : "WHERE c.team_id = ?";
+    const params = teamId === undefined ? [userId] : [userId, teamId];
     const rows = (await db.all(
       `SELECT c.status AS status,
               (SELECT COUNT(*) FROM threads t
                 WHERE t.request_id = c.request_id AND t.is_ours = 0
-                  AND COALESCE(t.res_date_ms, 0) >
-                      COALESCE((SELECT r.last_read_thread_ms FROM case_reads r
-                                 WHERE r.request_id = c.request_id), 0)) AS unread
-       FROM cases c`,
+                  AND COALESCE(t.res_date_ms, 0) > ${READ_FLOOR_SQL}) AS unread
+       FROM cases c
+       ${where}`,
+      params,
     )) as Array<{ status: string; unread: number }>;
 
     let open = 0;

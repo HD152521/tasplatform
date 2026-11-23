@@ -552,6 +552,31 @@ CREATE TABLE IF NOT EXISTS team_members (
 
 CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id);
 
+-- 케이스를 **사람마다** 어디까지 읽었나.
+--
+-- 전에는 case_reads 가 팀 공유였다(request_id 하나가 기본키). 한 사람이 열면 모두의
+-- '새 답변' 배지가 사라져서, 다른 사람은 그 답변을 못 보고 지나갔다. 사람이 생긴 뒤에는
+-- 그 칸이 사람마다 있어야 한다.
+--
+-- ## 옛 표를 지우지 않는다
+--
+-- 기본키를 바꾸는 마이그레이션은 SQLite 에서 표를 다시 만들어야 하고, 그 사이에 운영
+-- 데이터를 들고 옮겨야 한다. 대신 **새 표를 두고 옛 표를 바닥값으로 읽는다**:
+-- 읽은 시점 = MAX(내 기록, 팀 공유 기록). 그래서
+--   - 이미 팀이 읽어 둔 케이스는 **모두에게 그대로 읽은 상태**로 남는다(바꾸는 날
+--     미읽음 숫자가 치솟지 않는다),
+--   - 그 뒤에 온 답변은 **사람마다** 따로 센다.
+-- 옛 표에는 더 이상 쓰지 않는다. 그래서 바닥값은 고정이고 시간이 지나면 의미가 옅어진다.
+CREATE TABLE IF NOT EXISTS case_reads_user (
+  request_id          INTEGER NOT NULL,
+  user_id             INTEGER NOT NULL,
+  last_read_thread_ms INTEGER NOT NULL DEFAULT 0,
+  read_at             TEXT    NOT NULL,
+  PRIMARY KEY (request_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_case_reads_user ON case_reads_user(user_id, request_id);
+
 -- ── 팀 캘린더 ────────────────────────────────────────────────────────
 --
 -- "누가 언제 무엇을 하는가" 를 팀이 한 화면에서 본다. 일정은 **팀 전체 공개**다

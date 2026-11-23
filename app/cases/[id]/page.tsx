@@ -28,7 +28,7 @@ export default async function CaseDetailPage({
   searchParams: Promise<{ lang?: string }>;
 }) {
   // 로그인한 사람만. 문을 페이지마다 두는 이유는 lib/appAuth.ts 머리말에 있다.
-  await requireUser();
+  const me = await requireUser();
   const { id } = await params;
   // 기본은 원문이다. 원문이 정본이고 번역은 읽기를 돕는 보조다.
   const lang = (await searchParams).lang === "ko" ? "ko" : "en";
@@ -37,11 +37,18 @@ export default async function CaseDetailPage({
 
   const detail = await getCase(requestId);
   if (detail === null) notFound();
+  // **다른 팀 케이스는 없는 것으로 본다.** 목록을 걸러도 URL 로 번호만 바꾸면
+  // 열렸다 — 고객사 내용이 들어 있는 화면이라 목록 필터만으로는 모자라다.
+  // 팀이 적히지 않은 옛 데이터(team_id 빈 값)는 막지 않는다. 그 시절에는 팀이
+  // 하나였고, 막으면 그 케이스들이 아무에게도 안 보인다.
+  if (detail.team_id !== "" && me.teamId !== "" && detail.team_id !== me.teamId) {
+    notFound();
+  }
 
   const inlineImages = await listThreadInlineImages(requestId);
   const threads = await listThreads(requestId);
   const attachments = await listAttachments(requestId);
-  await markCaseRead(requestId);
+  await markCaseRead(requestId, me.userId);
 
   const closed = isClosedStatus(detail.status);
   const tone = statusColors(detail.status);

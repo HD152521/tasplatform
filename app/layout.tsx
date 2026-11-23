@@ -53,7 +53,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
 
     // DB가 아직 없어도 화면은 떠야 하므로 실패하면 0으로 둔다.
     try {
-      counts = await countsForNav();
+      counts = await countsForNav({ teamId, userId: appUser.userId });
     } catch {
       counts = EMPTY_COUNTS;
     }
