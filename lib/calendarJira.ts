@@ -27,6 +27,7 @@
  */
 import "server-only";
 import { adfDoc, adfLines, type AdfDoc } from "./adf.ts";
+import { appUrl } from "./appUrl.ts";
 import { adfLinesWithMentions, type MentionablePerson } from "./adfMention.ts";
 import {
   classifyTags,
@@ -183,9 +184,6 @@ async function peopleOf(
   };
 }
 
-function appUrl(): string {
-  return (process.env.SR_APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
-}
 
 /** 이슈 본문. 앱으로 돌아오는 링크를 반드시 넣는다 — Jira 에서 본 사람이 원본을 찾게. */
 /**

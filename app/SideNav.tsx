@@ -89,6 +89,7 @@ export function SideNav({
       title: "일정 · 작업",
       items: [
         { href: "/calendar", label: "팀 캘린더", count: null, badge: 0 },
+        { href: "/notes", label: "메모장", count: null, badge: 0 },
         { href: "/report", label: "정기점검", count: null, badge: 0 },
       ],
     },
@@ -176,6 +177,11 @@ export function SideNav({
                   aria-expanded={open}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "space-between",
+                    // 줄바꿈을 **막는다.** 제목·숫자·화살표가 한 줄에 있어야 "이 묶음에 N건" 이
+                    // 한눈에 붙는다. flex 는 기본이 nowrap 이지만, 전역 스타일 하나로 뒤집히면
+                    // 숫자가 아래 줄로 떨어진다 — 여기서 못 박는다.
+                    flexWrap: "nowrap",
+                    gap: SPACE.sm,
                     width: "100%", background: "transparent", border: "none",
                     padding: `${SPACE.sm}px ${SPACE.md}px ${SPACE.xs}px`, cursor: hasActive ? "default" : "pointer",
                     fontFamily: "inherit", textAlign: "left",
@@ -184,6 +190,9 @@ export function SideNav({
                   <span style={{
                     fontSize: TEXT.micro, fontWeight: WEIGHT.bold, color: COLOR.faint,
                     letterSpacing: "0.04em", whiteSpace: "nowrap",
+                    // minWidth:0 이 없으면 flex 항목은 글 길이만큼 버틴다 — 긴 제목이
+                    // 숫자를 밀어내고, 그때 줄이 깨진다. 줄이는 것은 제목 쪽이 맞다.
+                    minWidth: 0, flex: "1 1 auto",
                     overflow: "hidden", textOverflow: "ellipsis",
                   }}>
                     {group.title}
@@ -264,19 +273,27 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   return (
     <Link href={item.href} style={{
       display: "flex", alignItems: "center", justifyContent: "space-between",
+      // 묶음 제목과 같은 이유로 줄바꿈을 막는다(위 주석). 이름이 길면 이름을 줄인다.
+      flexWrap: "nowrap", gap: SPACE.sm,
       padding: `${SPACE.sm}px ${SPACE.md}px`, borderRadius: 8, fontSize: TEXT.base, textDecoration: "none",
       fontWeight: active ? 600 : 400,
       color: active ? COLOR.ink : COLOR.body,
       background: active ? COLOR.accentWash : "transparent",
     }}>
-      <span style={{ display: "flex", alignItems: "center", gap: SPACE.sm }}>
+      <span style={{
+        display: "flex", alignItems: "center", gap: SPACE.sm,
+        minWidth: 0, flex: "1 1 auto", overflow: "hidden",
+      }}>
         <span style={{
           width: 5, height: 5, borderRadius: "50%", flexShrink: 0,
           background: active ? COLOR.accent : COLOR.line,
         }} />
-        {item.label}
+        {/* 이름은 한 줄로 두고 넘치면 … 로 줄인다. 두 줄이 되면 숫자가 따라 내려간다. */}
+        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {item.label}
+        </span>
       </span>
-      <span style={{ display: "flex", alignItems: "center", gap: SPACE.xs }}>
+      <span style={{ display: "flex", alignItems: "center", gap: SPACE.xs, flexShrink: 0 }}>
         {item.badge > 0 && (
           <span style={{
             fontFamily: MONO_STACK, fontSize: TEXT.micro, fontWeight: WEIGHT.semibold, color: COLOR.surface,

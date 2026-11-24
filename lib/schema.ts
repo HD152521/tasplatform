@@ -689,4 +689,38 @@ CREATE TABLE IF NOT EXISTS weekly_digests (
   created_by TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (team_id, week)
 );
+-- 메모장. **일정에 붙지 않는 메모**다.
+--
+-- event_notes 와 다르다 — 그쪽은 일정 하나에 달려 "그 일을 하며 무엇을 했는지" 를
+-- 적고 주간 정리의 재료가 된다. 여기는 날짜에 걸지 않고 그냥 적어 두는 자리다
+-- (회의 내용·조사 결과·인수인계·설정 값). 캘린더에 억지로 날짜를 붙여 적던 것을
+-- 가를 자리가 없어서 만들었다.
+--
+-- notion_*: 이 메모를 노션 페이지로 올린 결과. team_events 의 jira_* 와 같은 모양이다.
+--   none    아직 올리지 않았다
+--   ok      올라갔고 notion_page_id 가 유효하다
+--   failed  거절당했다(사유는 notion_error)
+--
+-- "만들어졌는지 모름"(unknown) 을 두지 않는다. 노션 페이지 생성은 응답으로 **id 를
+-- 돌려주고**, 멱등 라벨로 찾아올 길이 없다. 타임아웃이면 실패로 적고 사람이 노션을
+-- 보게 한다 — 추측해서 두 번 만드는 것보다 낫다.
+CREATE TABLE IF NOT EXISTS team_notes (
+  note_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id          TEXT    NOT NULL,
+  title            TEXT    NOT NULL DEFAULT '',
+  body             TEXT    NOT NULL DEFAULT '',
+  -- 쉼표로 이은 글자. 목록에서 거르는 데만 쓴다 — 표를 하나 더 두기에는 이르다.
+  tags             TEXT    NOT NULL DEFAULT '',
+  created_by       INTEGER,
+  created_at       TEXT    NOT NULL,
+  updated_at       TEXT    NOT NULL,
+  notion_page_id   TEXT    NOT NULL DEFAULT '',
+  notion_url       TEXT    NOT NULL DEFAULT '',
+  notion_state     TEXT    NOT NULL DEFAULT 'none',
+  notion_error     TEXT    NOT NULL DEFAULT '',
+  notion_tries     INTEGER NOT NULL DEFAULT 0,
+  notion_synced_at TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_notes_team ON team_notes(team_id, updated_at);
 `;

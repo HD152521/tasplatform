@@ -8,6 +8,8 @@
  * server-only 를 붙이지 않는다. 수집기(Node)에서도 부르기 때문이다.
  */
 
+import { appUrl } from "./appUrl.ts";
+
 export type WebhookKind = "slack" | "teams" | "discord" | "json";
 
 /** 주소를 보고 형식을 고른다. SR_WEBHOOK_KIND 로 직접 지정할 수도 있다. */
@@ -58,9 +60,6 @@ export interface ReplyLine {
  */
 export const REPLY_LIMIT = 10;
 
-function appUrl(): string {
-  return (process.env.SR_APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
-}
 
 /**
  * 새 답변 알림 본문.
