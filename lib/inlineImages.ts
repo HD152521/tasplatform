@@ -73,3 +73,20 @@ function decodeHtml(value: string): string {
     .replace(/&#38;/g, "&")
     .replace(/&quot;/gi, '"');
 }
+
+/**
+ * 이 응답이 "세션이 죽어서" 온 것인가.
+ *
+ * 401 만 보면 놓친다. 세션이 없으면 포털은 **200 으로 로그인 화면이나 JSON 오류**를
+ * 준다(실측 — 그래서 라우트에 content-type 검사가 따로 있었다). 그 200 을 이미지라고
+ * 내려보내면 화면에는 깨진 그림만 남고 이유를 알 수 없다.
+ *
+ * 둘은 사람이 할 일이 같다 — 최신 세션으로 다시 받아 보는 것. 그래서 한 판정으로 묶는다
+ * (lib/sessionRetry.ts 가 이 값을 보고 재시도한다).
+ */
+export function isDeadSessionResponse(status: number, contentType: string | null): boolean {
+  if (status === 401) return true;
+  // 성공이 아닌 다른 실패(404·500·502…)는 세션과 무관하다. 재시도해도 같은 답이 온다.
+  if (status < 200 || status > 299) return false;
+  return !(contentType ?? "").trim().toLowerCase().startsWith("image/");
+}

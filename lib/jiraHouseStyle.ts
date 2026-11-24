@@ -206,3 +206,66 @@ export function describeClassification(c: ClassifiedTags): string {
   parts.push(label.replace(/^TAS_/, ""));
   return parts.join(" · ");
 }
+
+/* ------------------------------------------------------------------ *
+ * 본문 양식
+ * ------------------------------------------------------------------ */
+
+/**
+ * 본문도 추측이 아니다 — NHTAS 최근 80건을 조회해 모양을 셌다(2026-11-24).
+ *
+ *   본문이 있는 건 **80 / 80.** 빈칸은 우리가 올린 것뿐이었다.
+ *   모양: 짧은 줄의 나열 75 · `라벨: 값` 3 · 번호 절 2
+ *
+ * 첫 줄은 "무엇을" 이고 **법인·망을 글로 앞세우는** 관행이 뚜렷하다 —
+ *   `은행 운영 GSLB전환 모니터링` · `중앙회 bbr 백업 테스트 지원` · `검증 opsmanager 업그레이드 작업`
+ * 제목 대괄호와 겹치지만 팀도 그렇게 쓴다(제목과 본문 첫 줄이 거의 같은 건도 있다).
+ * 시각은 짧은 줄로 따로 적고(`08:00~`, `09:00~04:00`), 회의는 `일시:` 라벨을 쓴다.
+ * 결과는 화살표로 잇는다(`원인 불명 → 추가 지연 없어 모니터링 해제`).
+ *
+ * 반대로 **메타데이터를 라벨로 줄줄이 나열하는 건은 80건 중 하나도 없다.** 망은 제목
+ * 대괄호, 법인은 상위 에픽, 성격은 라벨이 이미 말한다. 같은 것을 네 번 적으면 사람이
+ * 읽어야 할 줄이 그만큼 뒤로 밀린다. 그래서 본문에서 뺀다.
+ */
+export function houseHeadLine(input: {
+  readonly scopes: readonly Scope[];
+  readonly corp?: Corp | null;
+  readonly title: string;
+}): string {
+  const scopes = sortScopes(input.scopes);
+  // 본사는 망이면서 법인이다. 둘 다 적으면 "본사 본사" 가 된다.
+  const corp = input.corp !== null && input.corp !== undefined && !scopes.includes(input.corp as Scope)
+    ? input.corp
+    : "";
+  return [corp, scopes.join("/"), input.title.trim()].filter((part) => part !== "").join(" ");
+}
+
+/**
+ * 일시 한 줄. 날짜 칸이 떨어져도 본문에는 남아야 한다.
+ *
+ * 시작일·duedate 는 곁가지 칸(extras)이라 400 한 번에 떨어질 수 있다. 그러면 언제 하는
+ * 일인지가 **아무 데도** 남지 않는다. 그래서 본문에 한 줄 적는다 — 팀의 회의 이슈가
+ * 쓰는 `일시:` 라벨을 그대로 쓴다.
+ *
+ * 종일이면 시각을 적지 않는다(팀도 종일 건에는 시각 줄이 없다).
+ */
+export function houseWhenLine(input: {
+  readonly startDate: string;
+  readonly endDate: string;
+  readonly startTime: string;
+  readonly endTime: string;
+}): string {
+  const days =
+    input.endDate === "" || input.endDate === input.startDate
+      ? input.startDate
+      : `${input.startDate} ~ ${input.endDate}`;
+  if (days === "") return "";
+
+  const time =
+    input.startTime === ""
+      ? ""
+      : input.endTime === ""
+        ? `${input.startTime}~`
+        : `${input.startTime}~${input.endTime}`;
+  return time === "" ? `일시: ${days} (종일)` : `일시: ${days} ${time}`;
+}

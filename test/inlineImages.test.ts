@@ -9,7 +9,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { inlineImageIds, isFileId } from "../lib/inlineImages.ts";
+import { inlineImageIds, isDeadSessionResponse, isFileId } from "../lib/inlineImages.ts";
 
 const PORTAL = "https://api-broadcomcms-software.wolkenservicedesk.com/attachment/get_attachment_content";
 
@@ -101,4 +101,39 @@ test("이상한 값은 거부한다", () => {
   for (const bad of ["", " ", "../etc/passwd", "a b", "a?b=1", "<script>", "가나다", "x".repeat(129)]) {
     assert.equal(isFileId(bad), false, JSON.stringify(bad));
   }
+});
+
+// ── 세션이 죽은 응답 가려내기 ──────────────────────────────────────
+//
+// 포털은 세션이 없을 때 401 만 주지 않는다. **200 으로 로그인 화면**을 주는 순간이
+// 있어(실측), 그걸 이미지라고 내려보내면 화면에 깨진 그림만 남는다.
+
+test("401 은 세션이 죽은 것", () => {
+  assert.equal(isDeadSessionResponse(401, "application/json"), true);
+});
+
+test("이미지가 왔으면 정상", () => {
+  assert.equal(isDeadSessionResponse(200, "image/png"), false);
+  assert.equal(isDeadSessionResponse(200, "image/jpeg; charset=binary"), false);
+});
+
+test("200 인데 이미지가 아니면 세션이 죽은 것 — 로그인 화면이 온 경우다", () => {
+  assert.equal(isDeadSessionResponse(200, "text/html; charset=utf-8"), true);
+  assert.equal(isDeadSessionResponse(200, "application/json"), true);
+});
+
+test("content-type 이 없으면 믿지 않는다", () => {
+  assert.equal(isDeadSessionResponse(200, null), true);
+  assert.equal(isDeadSessionResponse(200, ""), true);
+});
+
+test("대소문자·앞뒤 공백에 흔들리지 않는다", () => {
+  assert.equal(isDeadSessionResponse(200, "  IMAGE/PNG  "), false);
+});
+
+test("세션과 무관한 실패는 재시도 대상이 아니다", () => {
+  // 404·500 을 세션 실패로 보면 최신본을 끌어와 같은 답을 두 번 받는다.
+  assert.equal(isDeadSessionResponse(404, "application/json"), false);
+  assert.equal(isDeadSessionResponse(500, "text/html"), false);
+  assert.equal(isDeadSessionResponse(502, null), false);
 });

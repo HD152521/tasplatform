@@ -31,7 +31,9 @@ import { adfLinesWithMentions, type MentionablePerson } from "./adfMention.ts";
 import {
   classifyTags,
   corpEpicKey,
+  houseHeadLine,
   houseSummary,
+  houseWhenLine,
   readWorkLabel,
   type Corp,
   type Scope,
@@ -201,34 +203,45 @@ function describeEvent(
   createdByName: string,
   people: readonly MentionablePerson[] = [],
 ): { doc: AdfDoc; unlinked: readonly string[] } {
-  const period =
-    event.endDate === event.startDate
-      ? event.startDate
-      : `${event.startDate} ~ ${event.endDate}`;
-  const time =
-    event.startTime === ""
-      ? "종일"
-      : event.endTime === ""
-        ? event.startTime
-        : `${event.startTime} ~ ${event.endTime}`;
-
+  const memo = event.body.trim();
   const scopes = scopesOf(event);
   const corp = corpOf(event);
+
+  /*
+   * 메모를 안 적은 일정은 **본문에 할 말이 없었다.** 전에는 정보 줄만 늘어놓아서,
+   * Jira 에서 보면 제목 한 줄이 전부였다(실제로 그렇게 올라갔다). 팀의 이슈 80건은
+   * 전부 첫 줄에 "무엇을" 이 적혀 있다 — 메모가 없으면 그 줄을 우리가 만든다.
+   */
+  const head = memo === "" ? houseHeadLine({ scopes, corp, title: event.title }) : "";
+
+  /*
+   * 정보 줄을 줄인다.
+   *
+   * 전산망·법인·업무를 라벨로 적던 세 줄을 뺐다. 그 셋은 제목 대괄호·상위 에픽·라벨이
+   * 이미 말하고, 팀의 80건 중 그렇게 나열한 건은 하나도 없었다. 같은 것을 네 번 적으면
+   * 사람이 읽을 줄이 그만큼 뒤로 밀린다. 망·법인은 첫 줄에 글로 남는다.
+   *
+   * 남긴 셋에는 각자 이유가 있다 —
+   *   일시: 날짜 칸(시작일·duedate)은 곁가지라 400 한 번에 떨어질 수 있다.
+   *   담당: 담당자 칸을 못 채우는 경우가 있다(Jira 계정이 없는 팀원).
+   *   등록: 토큰이 하나라 reporter 는 전원 같은 계정이다 — 이 줄이 유일한 기록이다.
+   */
   const lines = [
-    `기간: ${period} (${time})`,
-    `담당: ${assigneeName === "" ? "미지정" : assigneeName}`,
-    scopes.length === 0 ? "" : `전산망: ${scopes.join(" / ")}`,
-    corp === null ? "" : `법인: ${corp}`,
-    event.kind === "" ? "" : `업무: ${event.kind}`,
-    // reporter 가 공용 계정이라 이 줄이 "누가 올렸나" 의 유일한 기록이다.
+    head,
+    houseWhenLine({
+      startDate: event.startDate,
+      endDate: event.endDate,
+      startTime: event.startTime,
+      endTime: event.endTime,
+    }),
+    assigneeName === "" ? "" : `담당: ${assigneeName}`,
     createdByName === "" ? "" : `등록: ${createdByName} (앱 사용자)`,
     `팀 캘린더: ${appUrl()}/calendar?event=${event.eventId}`,
-    "",
-    "이 이슈는 팀 캘린더의 일정에서 자동으로 만들어졌습니다. 일정을 고치면 여기도 따라 바뀝니다.",
+    "팀 캘린더의 일정에서 만들어졌습니다. 일정을 고치면 이 본문도 따라 바뀝니다.",
   ];
 
-  // 사람이 적은 본문이 맨 위에 온다. 멘션은 여기서만 만든다.
-  const written = adfLinesWithMentions(event.body.trim(), people);
+  // 사람이 적은 메모가 맨 위에 온다. 멘션은 여기서만 만든다.
+  const written = adfLinesWithMentions(memo, people);
   const info = textDoc(lines.filter((line) => line !== "").join("\n"));
 
   return {
@@ -393,10 +406,22 @@ async function createForEvent(
     project: { key: config.projectKey },
     issuetype: { name: config.issueTypeName },
     summary: summaryOf(event),
+    /*
+     * 본문은 **반드시 들어가야 하는 칸**이다.
+     *
+     * 전에는 extras 에 있었다. extras 는 400 한 번에 **전부** 떨어지므로(createIssue),
+     * 커스텀필드 하나가 거부되면 본문까지 같이 사라져 **제목만 있는 이슈**가 남았다.
+     * 실제로 올라간 이슈들의 본문이 빈칸이었다. 이 팀 Jira 를 80건 조회해 보면
+     * **80건 전부 본문이 있다** — 빈칸은 우리가 올린 것뿐이었다.
+     *
+     * SR 경로(lib/jiraWrite.ts 의 createSrIssue)는 처음부터 본문을 required 에 두고
+     * 있었다. 같은 자리로 맞춘다. 본문 때문에 400 이 날 일은 없다 — 표준 ADF 이고
+     * SR 경로가 그것으로 계속 만들고 있다.
+     */
+    description: body.doc,
   };
   // 없어도 이슈가 성립하는 칸. 400 이면 **전부** 떨어진다(생성은 반드시 성공해야 한다).
   const extras: Record<string, unknown> = {
-    description: body.doc,
     // 업무 성격은 **사내 라벨**로 간다(TAS_작업지원 248건 등). 앞의 둘은 우리 것이다 —
     // CALENDAR_LABEL 은 캘린더에서 만든 것 전체를 찾는 용도, EVT 라벨은 멱등 키다.
     labels: [CALENDAR_LABEL, eventLabel(event.eventId), readWorkLabel([event.kind])],
@@ -455,8 +480,19 @@ async function updateForEvent(
   flags: { adopted: boolean; stateChanged: boolean },
 ): Promise<JiraSyncResult> {
   const assignee = await assigneeAccountId(db, event);
+  const { assigneeName, createdByName } = await peopleOf(db, event);
+  const people = await mentionable(db, teamId);
+  const body = describeEvent(event, assigneeName, createdByName, people);
 
-  const required = { summary: summaryOf(event) };
+  /*
+   * 제목과 **본문**을 함께 보낸다.
+   *
+   * 전에는 제목만 보냈다. 그래서 일정의 내용을 고쳐도 Jira 본문은 그대로였고,
+   * 생성 때 본문이 떨어진 이슈는 **영영 빈칸**이었다 — 되돌릴 길이 아예 없었다.
+   * 본문은 우리가 만든 것이라 덮어써도 사람이 적은 것을 잃지 않는다(일정의 메모가
+   * 본문 머리에 그대로 실린다).
+   */
+  const required = { summary: summaryOf(event), description: body.doc };
   const extras: Record<string, unknown> = {
     [START_DATE_FIELD]: event.startDate,
     duedate: event.endDate,

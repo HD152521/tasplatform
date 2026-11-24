@@ -228,6 +228,17 @@ test("400 이면 곁가지 칸을 떼고 이슈는 반드시 만든다", async (
 
   // 라벨이 떨어졌으면 멱등 장치가 없는 이슈다 — 그 사실을 분명히 말해야 한다.
   assert.match(result.message, /멱등 라벨이 들어가지 않았습니다/);
+
+  /*
+   * 그래도 **본문은 남아야 한다.**
+   *
+   * 본문이 extras 에 있던 동안은 커스텀필드 하나가 거부되면 본문까지 함께 떨어져
+   * 제목만 있는 이슈가 남았다. 실제로 그렇게 올라갔고, 수정 경로도 본문을 안 보내서
+   * 되돌릴 길이 없었다. 팀 Jira 80건은 전부 본문이 있다 — 빈칸은 우리 것뿐이었다.
+   */
+  const fields = createdFields();
+  assert.ok(fields.description !== undefined, "본문이 떨어지면 제목만 있는 이슈가 된다");
+  assert.equal(fields.duedate, undefined, "곁가지 칸은 떨어진 것이 맞다");
 });
 
 /* ------------------------------------------------------------------ *
@@ -322,15 +333,34 @@ test("업무 성격이 사내 라벨이 된다", async () => {
   assert.ok(!labels.includes("TAS_작업지원"), "둘이 함께 붙으면 집계가 겹친다");
 });
 
-test("본문에 전산망·법인이 적힌다", async () => {
+test("본문 첫 줄이 법인·망·무엇 순으로 적힌다 — 팀이 쓰는 모양이다", async () => {
+  /*
+   * 전에는 `전산망: 개발 / 운영` · `법인: 은행` · `업무: 점검` 을 라벨로 나열했다.
+   * NHTAS 80건을 조회해 보면 그렇게 나열한 건이 **하나도 없다.** 전부 첫 줄에
+   * "무엇을" 이 적혀 있고 법인·망을 글로 앞세운다 —
+   *   `은행 운영 GSLB전환 모니터링` · `중앙회 bbr 백업 테스트 지원`
+   * 그 셋은 제목 대괄호·상위 에픽·라벨이 이미 말하므로 본문에서 또 적지 않는다.
+   */
   const id = await eventWith({ scopes: "개발/운영", corp: "은행", kind: "점검" });
   install(() => ({ status: 201, body: { key: "ABC-38" } }));
   await syncEventToJira(db, "default", id);
 
   const description = JSON.stringify(createdFields().description);
-  assert.ok(description.includes("전산망: 개발 / 운영"), description);
-  assert.ok(description.includes("법인: 은행"), description);
-  assert.ok(description.includes("업무: 점검"), description);
+  assert.ok(description.includes("은행 개발/운영 10월 정기 점검"), description);
+  // 같은 것을 네 번 적으면 사람이 읽을 줄이 그만큼 뒤로 밀린다.
+  assert.ok(!description.includes("전산망:"), "망은 제목 대괄호가 말한다");
+  assert.ok(!description.includes("법인:"), "법인은 상위 에픽이 말한다");
+  assert.ok(!description.includes("업무:"), "성격은 라벨이 말한다");
+});
+
+test("본문에 일시가 남는다 — 날짜 칸은 400 한 번에 떨어질 수 있다", async () => {
+  // 시작일·duedate 는 곁가지 칸이다. 그것만 믿으면 떨어진 이슈는 "언제 하는 일" 이
+  // 아무 데도 없는 이슈가 된다.
+  const id = await eventWith({ scopes: "운영", corp: "은행", kind: "점검" });
+  install(() => ({ status: 201, body: { key: "ABC-39" } }));
+  await syncEventToJira(db, "default", id);
+
+  assert.match(JSON.stringify(createdFields().description), /일시: 2126-12-10/);
 });
 
 /* ------------------------------------------------------------------ *
@@ -501,6 +531,25 @@ test("수정은 제목·기간·담당자를 갱신한다", async () => {
   assert.equal(fields.summary, "방화벽 룰 정리");
   assert.equal(fields.duedate, "2126-11-30");
   assert.ok(put?.url.includes("notifyUsers=false"), "같은 소식을 두 번 알리지 않는다");
+});
+
+test("수정이 본문도 갱신한다 — 안 보내면 빈 본문을 되돌릴 길이 없다", async () => {
+  /*
+   * 전에는 수정이 제목·기간·담당자만 보냈다. 그래서 일정의 내용을 고쳐도 Jira 본문은
+   * 그대로였고, 생성 때 본문이 떨어진 이슈는 **영영 빈칸**이었다.
+   */
+  install(() => ({ status: 201, body: { key: "ABC-10" } }));
+  await syncEventToJira(db, "default", eventId);
+  calls = [];
+
+  await updateEvent(db, "default", eventId, { title: "방화벽 룰 정리" });
+  install(() => ({ status: 204 }));
+  await syncEventToJira(db, "default", eventId);
+
+  const fields = (callsTo("/rest/api/3/issue/ABC-10", "PUT")[0]?.body?.fields ?? {}) as Record<string, unknown>;
+  const description = JSON.stringify(fields.description);
+  assert.ok(fields.description !== undefined, "본문을 안 보내면 고칠 방법이 없다");
+  assert.ok(description.includes("방화벽 룰 정리"), description);
 });
 
 test("담당자를 비우면 Jira 담당자도 비운다", async () => {

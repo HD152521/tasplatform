@@ -12,7 +12,9 @@ import {
   classifyTags,
   corpEpicKey,
   describeClassification,
+  houseHeadLine,
   houseSummary,
+  houseWhenLine,
   readCorpTag,
   readScope,
   readWorkLabel,
@@ -215,4 +217,68 @@ test("분류를 한 줄로 말한다", () => {
     "망 개발/운영 · 법인 은행 · 작업지원",
   );
   assert.equal(describeClassification(classifyTags(["장애"])), "장애대응");
+});
+
+/* ------------------------------------------------------------------ *
+ * 본문 양식 — 실측 80건(2026-11-24)
+ *
+ * 80건 전부 본문이 있고, 첫 줄은 법인·망을 글로 앞세운 "무엇을" 이다.
+ * 메타데이터를 라벨로 나열한 건은 하나도 없었다.
+ * ------------------------------------------------------------------ */
+
+test("본문 첫 줄은 법인 · 망 · 무엇 순이다", () => {
+  // 실측: `은행 운영 GSLB전환 모니터링`
+  assert.equal(
+    houseHeadLine({ scopes: ["운영"], corp: "은행", title: "GSLB전환 모니터링" }),
+    "은행 운영 GSLB전환 모니터링",
+  );
+});
+
+test("망이 여럿이면 제목과 같은 순서로 잇는다", () => {
+  assert.equal(
+    houseHeadLine({ scopes: ["운영", "개발"], corp: "중앙회", title: "bbr 백업 테스트" }),
+    "중앙회 개발/운영 bbr 백업 테스트",
+  );
+});
+
+test("본사는 두 번 적지 않는다 — 망이면서 법인이다", () => {
+  assert.equal(
+    houseHeadLine({ scopes: ["본사"], corp: "본사", title: "문서 작성" }),
+    "본사 문서 작성",
+  );
+});
+
+test("법인·망을 모르면 제목만 남는다", () => {
+  assert.equal(houseHeadLine({ scopes: [], corp: null, title: "ASG 테스트" }), "ASG 테스트");
+});
+
+test("종일이면 시각을 적지 않는다", () => {
+  assert.equal(
+    houseWhenLine({ startDate: "2026-12-10", endDate: "2026-12-10", startTime: "", endTime: "" }),
+    "일시: 2026-12-10 (종일)",
+  );
+});
+
+test("시각이 있으면 짧은 줄로 적는다", () => {
+  // 실측: `09:00~04:00`(철야) · `08:00~`(끝 시각 없음)
+  assert.equal(
+    houseWhenLine({ startDate: "2026-12-10", endDate: "", startTime: "09:00", endTime: "04:00" }),
+    "일시: 2026-12-10 09:00~04:00",
+  );
+  assert.equal(
+    houseWhenLine({ startDate: "2026-12-10", endDate: "2026-12-10", startTime: "08:00", endTime: "" }),
+    "일시: 2026-12-10 08:00~",
+  );
+});
+
+test("여러 날이면 기간으로 적는다", () => {
+  assert.equal(
+    houseWhenLine({ startDate: "2026-12-12", endDate: "2026-12-13", startTime: "", endTime: "" }),
+    "일시: 2026-12-12 ~ 2026-12-13 (종일)",
+  );
+});
+
+test("날짜가 없으면 줄을 만들지 않는다", () => {
+  // 빈 줄이 본문에 남으면 "일시: (종일)" 같은 말이 된다.
+  assert.equal(houseWhenLine({ startDate: "", endDate: "", startTime: "", endTime: "" }), "");
 });
