@@ -37,6 +37,13 @@ applications:
       SR_APP_URL: https://broadcom-sr-web.apps.nh.ds.lab   # 알림 링크·UI 절대주소
       SR_PYTHON: python3         # 보고서 PPTX 생성기가 쓸 파이썬(공급된 python_buildpack)
       SR_DISABLE_BROWSER_LOGIN: "1"   # 컨테이너는 브라우저 못 돌린다(ENOSPC·SPA Loading 멈춤). /login 은 즉시 안내
+      # 세션이 죽었을 때 화면이 "수집기에 재로그인 요청" 버튼을 보일지, 아니면 "수집기가
+      # 멈췄다" 고 말할지 판정하는 데 쓴다(lib/collectorHealth.ts). worker 쪽에 이 둘을
+      # 설정했다면 **여기에도 같은 값을 넣어야** 판정이 정확하다 — 없으면 15분 간격·
+      # 24시간 운영으로 보고, 운영 시간대 밖인 밤중에 "멈춤" 으로 읽을 수 있다
+      # (그 경우 문구에 "운영 시간대 밖이면 정상입니다" 가 함께 붙는다).
+      # SR_COLLECT_INTERVAL_MS: "900000"
+      # SR_COLLECT_HOURS: "8-20"
     services:
       - ((pg_instance))
 

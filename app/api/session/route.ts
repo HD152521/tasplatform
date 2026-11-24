@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetchClient } from "../../../collector/httpClient.ts";
+import { readCollectorHealth } from "../../../lib/collectorHealth.ts";
+import { openDb } from "../../../lib/db.ts";
 import { sessionFileForTeam } from "../../../lib/config.ts";
 import { hasTeamSession, resolveActorTeam } from "../../../lib/requestAudit.ts";
 import { probeSession } from "../../../lib/sessionProbe.ts";
@@ -20,6 +22,17 @@ export const dynamic = "force-dynamic";
  *
  * 쓰기가 아니므로 감사 로그를 남기지 않는다 — 조회를 남기면 로그가 조회로 덮인다
  * (lib/requestAudit.ts 의 ensureTeamSession 주석과 같은 이유).
+ *
+ * ## 수집기 상태를 함께 준다
+ *
+ * 세션이 죽었을 때 사람이 할 일은 **웹에서 로그인하는 것이 아니다** — 컨테이너에
+ * 브라우저가 없어 그게 안 된다. 세션을 다시 만드는 것은 수집기이고, 수집기는 회차를
+ * 시작할 때 죽은 세션을 스스로 되살린다. 그래서 할 일은 "한 회차를 지금 돌려 달라고
+ * 요청하는 것" 이다.
+ *
+ * 단 **수집기가 돌고 있어야** 뜻이 있다. 멈춰 있으면 요청은 줄에 남아 아무 일도
+ * 일어나지 않는데, 화면이 "요청했습니다" 만 보여 주면 사람은 영원히 기다린다. 그래서
+ * 한 번의 조회로 둘을 함께 답한다(lib/collectorHealth.ts).
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -31,10 +44,26 @@ export async function GET(request: Request) {
 
   // 재시작으로 로컬 파일이 없을 수 있다. DB 백업에서 먼저 복원한다.
   await hydrateTeamSessionFromDb(teamId);
-  if (!hasTeamSession(teamId)) {
-    return NextResponse.json({ ok: true, state: "dead" });
+
+  const state = hasTeamSession(teamId)
+    ? await probeSession(fetchClient(sessionFileForTeam(teamId)))
+    : "dead";
+
+  /*
+   * 수집기 상태는 **세션이 살아 있어도** 함께 준다. 쓰기 직전에 세션이 죽는 것이 이
+   * 자리의 문제라, 화면이 그때 다시 묻지 않고 바로 안내할 수 있어야 한다.
+   *
+   * 읽기 실패로 세션 답까지 버리지 않는다 — 수집기 상태는 곁다리다.
+   */
+  let collector = null;
+  const db = await openDb();
+  try {
+    collector = await readCollectorHealth(db);
+  } catch {
+    // DB 를 못 읽어도 세션 상태는 돌려준다.
+  } finally {
+    await db.close();
   }
 
-  const state = await probeSession(fetchClient(sessionFileForTeam(teamId)));
-  return NextResponse.json({ ok: true, state });
+  return NextResponse.json({ ok: true, state, collector });
 }

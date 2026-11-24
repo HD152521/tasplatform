@@ -14,6 +14,7 @@ import {
   MAX_UPLOAD_LABEL,
   checkUploadRequest,
   cleanFileName,
+  pastedImageName,
 } from "../lib/attachmentUpload.ts";
 import { UploadError, safeFileName } from "../lib/crushftp.ts";
 
@@ -117,4 +118,56 @@ test("웹의 이름 다듬기가 수집기의 규칙과 같다", () => {
 test("업로드 상한은 50MB 이고 표기도 그렇다", () => {
   assert.equal(MAX_UPLOAD_BYTES, 50 * 1024 * 1024);
   assert.equal(MAX_UPLOAD_LABEL, "50MB");
+});
+
+/* ------------------------------------------------------------------ *
+ * 붙여넣은 이미지의 이름
+ * ------------------------------------------------------------------ */
+
+test("붙여넣은 이미지에 시각과 사람 이름을 붙인다", () => {
+  // 클립보드에서 온 파일은 브라우저가 전부 image.png 로 준다. 그대로 올리면
+  // 케이스에 같은 이름이 쌓여 무엇이 무엇인지 알 수 없다.
+  assert.equal(
+    pastedImageName({ at: new Date(2026, 10, 24, 15, 30), who: "안용식", mime: "image/png" }),
+    "20261124-1530-안용식.png",
+  );
+});
+
+test("이름을 모르면 시각만으로 만든다", () => {
+  assert.equal(
+    pastedImageName({ at: new Date(2026, 0, 2, 9, 5), who: "", mime: "image/png" }),
+    "20260102-0905.png",
+  );
+});
+
+test("형식에 맞는 확장자를 쓴다 — 모르는 형식은 png 로 둔다", () => {
+  const at = new Date(2026, 10, 24, 15, 30);
+  assert.match(pastedImageName({ at, who: "", mime: "image/jpeg" }), /\.jpg$/);
+  assert.match(pastedImageName({ at, who: "", mime: "image/webp" }), /\.webp$/);
+  assert.match(pastedImageName({ at, who: "", mime: "image/gif" }), /\.gif$/);
+  assert.match(pastedImageName({ at, who: "", mime: "" }), /\.png$/);
+});
+
+test("경로로 쓰일 수 있는 글자는 이름에서 뺀다", () => {
+  // 이 이름이 결국 CrushFTP 의 올릴 경로에 들어간다(lib/crushftp.ts safeFileName).
+  const name = pastedImageName({
+    at: new Date(2026, 10, 24, 15, 30),
+    who: "../etc/pa:sswd",
+    mime: "image/png",
+  });
+  assert.ok(!name.includes("/"), name);
+  assert.ok(!name.includes(":"), name);
+  assert.equal(cleanFileName(name), name, "cleanFileName 이 더 깎을 것이 없어야 한다");
+});
+
+test("같은 분에 두 장을 붙여넣으면 같은 이름이 된다 — 우리가 다르게 만들지 않는다", () => {
+  /*
+   * 초를 붙여 유일하게 만들 수도 있지만, 그러면 목록에서 읽기만 나빠진다. 같은 이름을
+   * 포털이 어떻게 다루는지는 포털이 정할 일이다.
+   */
+  const at = new Date(2026, 10, 24, 15, 30);
+  assert.equal(
+    pastedImageName({ at, who: "안용식", mime: "image/png" }),
+    pastedImageName({ at: new Date(2026, 10, 24, 15, 30, 59), who: "안용식", mime: "image/png" }),
+  );
 });

@@ -196,13 +196,20 @@ export async function ensureTeamSession(
   );
 }
 
-/** 세션 문턱에서 막혔을 때 보여줄 말. 없음 / 만료를 가른다. */
+/**
+ * 세션 문턱에서 막혔을 때 보여줄 말. 없음 / 만료를 가른다.
+ *
+ * **"SR 페이지에서 로그인하세요" 라고 말하지 않는다.** 웹에서는 로그인할 수 없다 —
+ * 컨테이너에 브라우저가 없다(SR_DISABLE_BROWSER_LOGIN). 세션을 되살리는 것은 수집기이고,
+ * 그 요청은 왼쪽 아래 세션 표시가 내준다(app/SessionDot.tsx). 할 일을 그쪽으로 보낸다.
+ */
 function sessionFailureMessage(teamId: string): string {
   const { exists, expiresAt } = getSessionStatus(teamId);
+  const todo = "왼쪽 아래 세션 표시에서 「수집기에 재로그인 요청」을 눌러 주세요.";
   if (!exists || expiresAt === null) {
-    return "세션이 없습니다. SR 페이지에서 로그인하세요.";
+    return `세션이 없습니다. ${todo}`;
   }
   const hours = (Date.now() - expiresAt) / 3_600_000;
   const ago = hours < 48 ? `${Math.round(hours)}시간 전` : `${Math.round(hours / 24)}일 전`;
-  return `세션이 ${ago}에 만료되었습니다. SR 페이지에서 다시 로그인하세요.`;
+  return `세션이 ${ago}에 만료되었습니다. ${todo}`;
 }

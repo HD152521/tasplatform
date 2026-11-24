@@ -13,7 +13,14 @@ import { AttachButton } from "./AttachButton.tsx";
  * 이 버튼이 실제로 Broadcom 케이스에 글을 올린다. 되돌릴 수 없고 담당 엔지니어가
  * 바로 읽으므로, 보내기 전에 무엇이 올라가는지 한 번 더 보여주고 확인을 받는다.
  */
-export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabel: string }) {
+export function ReplyBox({
+  requestId, caseLabel, actorName = "",
+}: {
+  requestId: number;
+  caseLabel: string;
+  /** 붙여넣은 화면 캡처의 이름에 들어간다(lib/attachmentUpload.ts pastedImageName). */
+  actorName?: string;
+}) {
   const router = useRouter();
   /**
    * 쓰던 글은 브라우저에 붙잡아 둔다.
@@ -194,7 +201,7 @@ export function ReplyBox({ requestId, caseLabel }: { requestId: number; caseLabe
               supportftp 로 가고, 수집기가 따로 처리한다). 그래도 사람은 "답변 쓰는 자리"
               에서 파일을 찾으므로 같은 줄에 둔다 — 버튼 이름과 title 로 별개임을 말한다.
             */}
-            <AttachButton requestId={requestId} />
+            <AttachButton requestId={requestId} actorName={actorName} />
             {/* 한국어로 적고 보내기 전에 영문으로 바꾼다. 전송 바로 옆에 둔다. */}
             <Convert
               label={composing === "translate" ? "번역 중…" : "번역"}

@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { COLOR, Card, MONO_STACK, Notice, RADIUS } from "../ui.tsx";
+import { asJpegName, rotateImage90, shrinkImage } from "../../lib/imageShrink.ts";
 import {
   MAX_PHOTO_LABEL,
   PHOTO_ACCEPT,
-  PHOTO_JPEG_QUALITY,
   PHOTO_LONG_EDGE,
   PHOTO_SLOT_COUNT,
   PHOTO_TOO_LARGE_MESSAGE,
@@ -71,92 +71,6 @@ function kb(bytes: number): string {
 }
 
 /** 확장자를 .jpg 로 바꾼다. 줄이는 과정에서 JPEG 로 다시 그리기 때문이다. */
-function asJpegName(raw: string): string {
-  const base = raw.replace(/\.[^.]+$/, "");
-  return `${base === "" ? "photo" : base}.jpg`;
-}
-
-function loadImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    // 브라우저가 못 읽는 형식(HEIC 등)은 여기로 온다. 사람에게 이유를 말해 준다.
-    img.onerror = () => reject(new Error("사진을 읽을 수 없습니다. JPEG 또는 PNG 로 저장해 주세요."));
-    img.src = url;
-  });
-}
-
-/**
- * 긴 변을 PHOTO_LONG_EDGE 로 줄여 JPEG 로 다시 만든다.
- *
- * 원본이 이미 작으면 키우지 않는다(scale 상한 1) — 없는 화소를 만들어 봐야 용량만 는다.
- */
-async function shrink(file: File): Promise<File> {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await loadImage(url);
-    const longest = Math.max(img.naturalWidth, img.naturalHeight);
-    if (longest === 0) throw new Error("사진 크기를 알 수 없습니다.");
-    const scale = Math.min(1, PHOTO_LONG_EDGE / longest);
-    const width = Math.max(1, Math.round(img.naturalWidth * scale));
-    const height = Math.max(1, Math.round(img.naturalHeight * scale));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (ctx === null) throw new Error("이 브라우저에서는 사진을 줄일 수 없습니다.");
-    ctx.drawImage(img, 0, 0, width, height);
-
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob(resolve, "image/jpeg", PHOTO_JPEG_QUALITY);
-    });
-    if (blob === null) throw new Error("사진을 변환하지 못했습니다.");
-    return new File([blob], asJpegName(file.name), { type: "image/jpeg" });
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-/**
- * 사진을 시계방향 90도 돌린 새 파일을 만든다.
- *
- * 돌려서 **저장까지** 한다. 슬라이드에 넣을 때 각도만 주는 방법도 있지만, 그러면
- * 그림이 제 자리에서 회전할 뿐 차지하는 칸은 그대로라 가로로 긴 사진이 상자 밖으로
- * 삐져나간다. 파일 자체를 돌려 두면 그 뒤로는 평범한 세로 사진과 똑같이 다뤄진다.
- *
- * 줄이기(shrink)를 이미 거친 파일이라 다시 줄이지 않는다 — 긴 변은 그대로고
- * 가로세로만 바뀐다.
- */
-async function rotate90(file: File): Promise<File> {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await loadImage(url);
-    const width = img.naturalWidth;
-    const height = img.naturalHeight;
-    if (width === 0 || height === 0) throw new Error("사진 크기를 알 수 없습니다.");
-
-    // 돌리면 가로세로가 바뀐다.
-    const canvas = document.createElement("canvas");
-    canvas.width = height;
-    canvas.height = width;
-    const ctx = canvas.getContext("2d");
-    if (ctx === null) throw new Error("이 브라우저에서는 사진을 돌릴 수 없습니다.");
-    // 새 캔버스의 오른쪽 위를 원점으로 삼아 90도 돌린 뒤 그린다.
-    ctx.translate(height, 0);
-    ctx.rotate(Math.PI / 2);
-    ctx.drawImage(img, 0, 0);
-
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob(resolve, "image/jpeg", PHOTO_JPEG_QUALITY);
-    });
-    if (blob === null) throw new Error("사진을 돌리지 못했습니다.");
-    return new File([blob], file.name, { type: "image/jpeg" });
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
 /** 끌고 있는 것이 파일인가. 글자나 링크를 끌어와도 반응하지 않게 한다. */
 function draggingFiles(data: DataTransfer): boolean {
   return Array.from(data.types).includes("Files");
@@ -291,7 +205,7 @@ export function PhotoStep({
       const source = current ?? `/api/report/photos?month=${encodeURIComponent(month)}&slot=${slot}`;
       const blob = await (await fetch(source)).blob();
       const name = seat?.meta?.fileName ?? `photo-${slot}.jpg`;
-      const turned = await rotate90(new File([blob], name, { type: blob.type || "image/jpeg" }));
+      const turned = await rotateImage90(new File([blob], name, { type: blob.type || "image/jpeg" }));
       const failed = await save(slot, turned);
       if (failed !== null) setError(failed);
       else {
@@ -312,7 +226,7 @@ export function PhotoStep({
     // 저장 상한(4MB)으로 재면 휴대폰 사진은 줄여 보기도 전에 전부 거부당한다.
     if (file.size > MAX_ORIGINAL_BYTES) return ORIGINAL_TOO_LARGE_MESSAGE;
     try {
-      return await save(slot, await shrink(file));
+      return await save(slot, await shrinkImage(file));
     } catch (e) {
       return e instanceof Error ? e.message : "사진을 넣는 중 오류가 발생했습니다.";
     }

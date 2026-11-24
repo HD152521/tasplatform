@@ -3,7 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { COLOR, controlStyle, RADIUS, SPACE, TEXT, WEIGHT } from "../../ui.tsx";
-import { MAX_UPLOAD_LABEL, checkUploadRequest } from "../../../lib/attachmentUpload.ts";
+import {
+  MAX_UPLOAD_LABEL,
+  checkUploadRequest,
+  pastedImageName,
+} from "../../../lib/attachmentUpload.ts";
+import { isShrinkableImage, shrinkImage } from "../../../lib/imageShrink.ts";
 import { isSessionFailure } from "../../../lib/writeFailure.ts";
 
 /**
@@ -49,6 +54,22 @@ interface OneResult {
  * 그 사이에 화면이 조용하면 사람은 고장 난 줄 알고 다시 누른다 — 그러면 케이스에 같은
  * 파일이 두 번 붙는다. 그래서 버튼을 잠그고, 얼마나 지났는지 숫자로 보여준다.
  *
+ * ## 붙여넣기·끌어다 놓기는 **확인을 받고** 올린다
+ *
+ * 화면 캡처는 `Ctrl+V` 가 전부다. 파일로 저장한 뒤 고르게 하면 그 한 걸음에서 사람이
+ * 포털로 돌아간다. 그래서 창 전체에서 붙여넣기와 끌어다 놓기를 받는다.
+ *
+ * 다만 **고른 파일과 달리 즉시 올리지 않는다.** 클립보드에 뭐가 있었는지 사람은 모르고
+ * (이름도 없다 — 브라우저가 전부 `image.png` 로 준다), 잘못 올린 첨부는 고객 케이스에
+ * 남는다. 그래서 미리보기와 이름을 보여 주고 한 번 더 누르게 한다.
+ *
+ * ## 줄여서 올릴지도 사람이 고른다
+ *
+ * 4K 캡처 PNG 는 8~15MB 고, 줄이면 300KB 가 된다. 그래도 **조용히 줄이지 않는다** —
+ * 이 첨부는 고객 케이스의 증거이고, 오류 메시지가 적힌 캡처를 1600px JPEG 로 바꾸면
+ * 글자가 뭉개져 읽을 수 없게 되는 일이 실제로 있다. 두 크기를 함께 보여 주고 고르게
+ * 한다(lib/imageShrink.ts 머리말).
+ *
  * ## 실패하면 같은 파일을 다시 고를 수 있어야 한다
  *
  * `<input type="file">` 은 같은 파일을 다시 고르면 change 가 오지 않는다. 값이 그대로라
@@ -56,7 +77,25 @@ interface OneResult {
  * 같은 파일을 다시 고르는 것이 가장 흔한 흐름인데, 그때 아무 일도 일어나지 않으면
  * 고쳐지지 않는 고장으로 보인다. 그래서 끝날 때마다 value 를 비운다.
  */
-export function AttachButton({ requestId }: { requestId: number }) {
+/** 올리기 전에 확인을 기다리는 이미지 한 장. */
+interface Staged {
+  /** 붙여넣은 그대로. 이름은 우리가 만들어 붙였다. */
+  readonly original: File;
+  /** 줄인 것. 아직 만드는 중이면 null, 줄일 수 없는 형식이면 null 로 남는다. */
+  readonly shrunk: File | null;
+  /** 미리보기 주소. 반드시 revoke 해야 한다 — 안 하면 큰 이미지가 메모리에 남는다. */
+  readonly preview: string;
+  /** 줄이기가 실패한 사유. 비어 있으면 할 말 없음. */
+  readonly shrinkError: string;
+}
+
+export function AttachButton({
+  requestId, actorName = "",
+}: {
+  requestId: number;
+  /** 붙여넣은 화면 캡처의 이름에 들어간다. 클립보드 파일은 이름이 없다. */
+  actorName?: string;
+}) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -67,6 +106,10 @@ export function AttachButton({ requestId }: { requestId: number }) {
   /** 이번에 올리는 개수. 0 이면 놀고 있다. */
   const [total, setTotal] = useState(0);
   const [error, setError] = useState("");
+  /** 붙여넣거나 끌어다 놓은 이미지. 확인을 누를 때까지 올리지 않는다. */
+  const [staged, setStaged] = useState<Staged | null>(null);
+  /** 창 위로 파일을 끌고 있는가. 받을 수 있다는 것을 보여 준다. */
+  const [dragging, setDragging] = useState(false);
 
   // 올리는 동안만 초를 센다. busy 가 풀리면 정리된다(간격이 남아 돌지 않게).
   useEffect(() => {
@@ -158,8 +201,14 @@ export function AttachButton({ requestId }: { requestId: number }) {
       }
       if (Date.now() > deadline) {
         // 상한을 넘겨도 **실패가 아니다.** 일은 큐에 남아 있고 수집기가 결국 올린다.
+        //
+        // 다만 **수집기가 멈춰 있으면 영원히 안 올라간다.** 그 가능성을 여기서 말해 준다 —
+        // 왼쪽 아래 세션 표시가 수집기 상태를 보여 준다(app/SessionDot.tsx). 그 한 줄이
+        // 없으면 사람은 "조금 더 기다리면 되겠지" 로 하루를 보낸다.
         return {
-          error: "수집기가 아직 올리는 중입니다. 다시 올리지 말고 잠시 후 케이스를 새로고침해 확인하세요.",
+          error:
+            "수집기가 아직 올리는 중입니다. 다시 올리지 말고 잠시 후 케이스를 새로고침해 확인하세요."
+            + " 계속 그대로면 왼쪽 아래 세션 표시에서 수집기가 돌고 있는지 확인하세요.",
           note: "",
         };
       }
@@ -231,7 +280,147 @@ export function AttachButton({ requestId }: { requestId: number }) {
     }
   }
 
-  const title = `답변 전송과 별개로, 고르는 즉시 이 케이스에 파일이 올라갑니다. 여러 개를 한 번에 고를 수 있습니다 (파일당 ${MAX_UPLOAD_LABEL} 이하)`;
+  /**
+   * 붙여넣은 이미지를 올릴 후보로 세운다.
+   *
+   * 이름을 **우리가 만든다.** 클립보드 파일은 전부 `image.png` 라, 그대로 올리면
+   * 케이스에 같은 이름이 쌓여 무엇이 무엇인지 알 수 없다(pastedImageName).
+   *
+   * 줄인 것은 **여기서 미리 만들어 둔다.** 버튼에 실제 크기를 적어 주려면 만들어 봐야
+   * 알고, 누른 뒤에 만들면 그 몇 초 동안 화면이 조용하다.
+   */
+  function stage(file: File): void {
+    setError("");
+    setNote("");
+    setWarn("");
+
+    const named = new File(
+      [file],
+      pastedImageName({ at: new Date(), who: actorName, mime: file.type }),
+      { type: file.type },
+    );
+    const check = checkUploadRequest({ requestId, fileName: named.name, size: named.size });
+    if (!check.ok) {
+      setError(check.message);
+      return;
+    }
+
+    const preview = URL.createObjectURL(named);
+    setStaged((prev) => {
+      // 앞서 세워 둔 것이 있으면 그 미리보기를 놓아준다.
+      if (prev !== null) URL.revokeObjectURL(prev.preview);
+      return { original: named, shrunk: null, preview, shrinkError: "" };
+    });
+
+    if (!isShrinkableImage(named.type)) {
+      // HEIC·TIFF 등은 브라우저가 canvas 로 그리지 못한다. 원본으로만 올릴 수 있다.
+      setStaged((prev) =>
+        prev === null || prev.preview !== preview
+          ? prev
+          : { ...prev, shrinkError: "이 형식은 줄일 수 없습니다 — 원본으로만 올립니다." },
+      );
+      return;
+    }
+
+    void shrinkImage(named)
+      .then((small) => {
+        setStaged((prev) => {
+          // 그 사이 다른 것을 붙여넣었으면 버린다.
+          if (prev === null || prev.preview !== preview) return prev;
+          // 줄인 것이 더 크면 줄이는 뜻이 없다(이미 작은 캡처). 원본만 남긴다.
+          return small.size >= named.size ? prev : { ...prev, shrunk: small };
+        });
+      })
+      .catch((problem: unknown) => {
+        setStaged((prev) =>
+          prev === null || prev.preview !== preview
+            ? prev
+            : {
+                ...prev,
+                shrinkError: problem instanceof Error ? problem.message : String(problem),
+              },
+        );
+      });
+  }
+
+  /** 세워 둔 것을 치운다. 미리보기 주소를 반드시 놓아준다. */
+  function clearStaged(): void {
+    setStaged((prev) => {
+      if (prev !== null) URL.revokeObjectURL(prev.preview);
+      return null;
+    });
+  }
+
+  async function uploadStaged(file: File): Promise<void> {
+    clearStaged();
+    await upload([file]);
+  }
+
+  /*
+   * 창 전체에서 붙여넣기와 끌어다 놓기를 받는다.
+   *
+   * 입력칸에만 붙이면 답변칸에 포커스가 없을 때 아무 일도 일어나지 않는다 — 캡처를 찍고
+   * 바로 Ctrl+V 하는 흐름이 가장 흔하다. 글 붙여넣기와 충돌하지 않는다: 클립보드에
+   * 이미지 **파일**이 있을 때만 움직인다.
+   *
+   * dragover 를 막지 않으면 브라우저가 그 파일로 **페이지를 떠난다** — 쓰던 답변이
+   * 사라진다. 그래서 막는 것 자체가 고침이다.
+   */
+  useEffect(() => {
+    const imageFrom = (list: FileList | null | undefined): File | null => {
+      for (const file of Array.from(list ?? [])) {
+        if (file.type.startsWith("image/")) return file;
+      }
+      return null;
+    };
+
+    const onPaste = (event: ClipboardEvent): void => {
+      if (busy) return;
+      const image = imageFrom(event.clipboardData?.files);
+      if (image === null) return;
+      event.preventDefault();
+      stage(image);
+    };
+    const onDragOver = (event: DragEvent): void => {
+      if (Array.from(event.dataTransfer?.types ?? []).includes("Files")) {
+        event.preventDefault();
+        setDragging(true);
+      }
+    };
+    const onDragLeave = (): void => setDragging(false);
+    const onDrop = (event: DragEvent): void => {
+      const image = imageFrom(event.dataTransfer?.files);
+      if (Array.from(event.dataTransfer?.types ?? []).includes("Files")) event.preventDefault();
+      setDragging(false);
+      if (busy || image === null) return;
+      stage(image);
+    };
+
+    window.addEventListener("paste", onPaste);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("paste", onPaste);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, requestId, actorName]);
+
+  // 화면을 떠날 때 미리보기 주소를 놓아준다.
+  useEffect(() => () => {
+    setStaged((prev) => {
+      if (prev !== null) URL.revokeObjectURL(prev.preview);
+      return null;
+    });
+  }, []);
+
+  const title =
+    `답변 전송과 별개로, 고르는 즉시 이 케이스에 파일이 올라갑니다. 여러 개를 한 번에 고를 수 있습니다`
+    + ` (파일당 ${MAX_UPLOAD_LABEL} 이하). 화면 캡처는 Ctrl+V 로 붙여넣거나 창에 끌어다 놓으면`
+    + ` 미리보기를 보고 올릴 수 있습니다.`;
 
   return (
     <>
@@ -273,9 +462,91 @@ export function AttachButton({ requestId }: { requestId: number }) {
           ? `올리는 중… ${total > 1 ? `${total}개 ` : ""}${elapsed}초`
           : "파일 붙이기"}
         <span style={{ fontSize: TEXT.micro, fontWeight: WEIGHT.normal, color: COLOR.faint }}>
-          {busy ? "그대로 기다리세요" : "답변과 별개"}
+          {busy ? "그대로 기다리세요" : dragging ? "여기 놓으세요" : "붙여넣기 · 답변과 별개"}
         </span>
       </button>
+
+      {/*
+        붙여넣은 이미지. 버튼 줄의 다음 줄 전체를 쓴다(상태 문구와 같은 이유 — 아래 주석).
+        order:1 로 그리는 순서만 뒤로 밀어 전송 버튼을 밀어내지 않게 한다.
+      */}
+      {staged !== null && (
+        <div style={{
+          flexBasis: "100%", minWidth: 0, order: 1,
+          display: "flex", gap: SPACE.md, alignItems: "flex-start",
+          background: COLOR.ground, borderRadius: RADIUS.control,
+          padding: `${SPACE.md}px`, border: `1px solid ${COLOR.field}`,
+        }}>
+          {/* 무엇을 붙여넣었는지 보여 준다. 클립보드에 뭐가 있었는지 사람은 모른다. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={staged.preview}
+            alt="붙여넣은 이미지"
+            style={{
+              width: 92, height: 92, objectFit: "cover", flexShrink: 0,
+              borderRadius: RADIUS.control, border: `1px solid ${COLOR.line}`,
+              background: COLOR.surface,
+            }}
+          />
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: SPACE.sm }}>
+            <div style={{ fontSize: TEXT.small, color: COLOR.ink, wordBreak: "break-all" }}>
+              <strong>{staged.original.name}</strong>
+              <span style={{ color: COLOR.faint, marginLeft: SPACE.xs }}>
+                {sizeText(staged.original.size)}
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: SPACE.sm, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void uploadStaged(staged.original)}
+                style={{
+                  ...controlStyle, padding: `${SPACE.xs}px ${SPACE.md}px`, fontSize: TEXT.small,
+                  fontWeight: WEIGHT.semibold, cursor: busy ? "default" : "pointer",
+                }}
+              >
+                원본으로 올리기
+              </button>
+              {/*
+                줄인 것이 준비됐을 때만 내준다. 누른 뒤에 줄이면 그 몇 초 동안 화면이
+                조용하고, 크기도 적어 줄 수 없다 — 그러면 고를 근거가 없다.
+              */}
+              {staged.shrunk !== null && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void uploadStaged(staged.shrunk as File)}
+                  style={{
+                    ...controlStyle, padding: `${SPACE.xs}px ${SPACE.md}px`, fontSize: TEXT.small,
+                    cursor: busy ? "default" : "pointer",
+                  }}
+                >
+                  {`줄여서 올리기 (${sizeText(staged.shrunk.size)})`}
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={clearStaged}
+                style={{
+                  ...controlStyle, padding: `${SPACE.xs}px ${SPACE.md}px`, fontSize: TEXT.small,
+                  color: COLOR.muted, cursor: busy ? "default" : "pointer",
+                }}
+              >
+                취소
+              </button>
+            </div>
+            <div style={{ fontSize: TEXT.micro, color: COLOR.faint, lineHeight: 1.6 }}>
+              {staged.shrinkError !== ""
+                ? staged.shrinkError
+                : staged.shrunk === null
+                  // 줄이는 중이거나, 줄여도 더 크던 경우다. 둘 다 원본이 답이다.
+                  ? "크기를 줄여 보는 중입니다…"
+                  : "글자가 작은 캡처라면 원본으로 올리세요 — 줄이면 읽기 어려워질 수 있습니다."}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/*
         상태 문구는 버튼 줄의 **다음 줄 전체**를 쓴다(flexBasis 100%). 부모는 wrap 되는
@@ -313,4 +584,10 @@ export function AttachButton({ requestId }: { requestId: number }) {
       )}
     </>
   );
+}
+
+/** 사람이 읽을 크기. KB 아래는 적을 이유가 없다. */
+function sizeText(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))}KB`;
 }

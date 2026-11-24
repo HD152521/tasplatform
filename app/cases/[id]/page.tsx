@@ -188,7 +188,12 @@ export default async function CaseDetailPage({
 
           {/* 진행중 케이스에만. 종료된 건에는 답변할 수 없다. */}
           {!closed && (
-            <ReplyBox requestId={detail.request_id} caseLabel={detail.request_id_formatted} />
+            <ReplyBox
+              requestId={detail.request_id}
+              caseLabel={detail.request_id_formatted}
+              /* 붙여넣은 화면 캡처의 이름에 들어간다 — 클립보드 파일은 이름이 없다. */
+              actorName={me.displayName === "" ? me.loginId : me.displayName}
+            />
           )}
         </section>
 

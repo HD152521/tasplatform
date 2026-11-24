@@ -98,3 +98,48 @@ export function checkUploadRequest(input: {
 
   return { ok: true, requestId, fileName };
 }
+
+/**
+ * 붙여넣은 이미지에 붙일 이름.
+ *
+ * 클립보드에서 온 파일은 이름이 없다 — 브라우저가 전부 `image.png` 로 준다. 그대로
+ * 올리면 케이스에 `image.png` 가 여러 개 쌓여 **무엇이 무엇인지 알 수 없다.** 담당
+ * 엔지니어가 받는 쪽에서도 같다.
+ *
+ * 그래서 시각과 올린 사람으로 이름을 만든다.
+ *
+ *     20261124-1530-안용식.png
+ *
+ * 시각은 분까지다. 같은 분에 두 장을 붙여넣는 일은 실제로 있으니(한 화면을 두 번 캡처)
+ * 같은 이름이 생길 수 있는데, **그 이름을 우리가 다르게 만들지 않는다** — 올리는 쪽은
+ * 그대로 올리고, 포털이 같은 이름을 어떻게 다루는지는 포털이 정한다. 초를 붙여 유일하게
+ * 만들면 목록에서 읽기만 나빠진다.
+ *
+ * 이름에 쓸 수 없는 글자는 걷어낸다(cleanFileName 과 같은 이유 — 이 이름이 결국
+ * CrushFTP 의 경로에 들어간다).
+ */
+export function pastedImageName(input: {
+  readonly at: Date;
+  readonly who: string;
+  readonly mime: string;
+}): string {
+  const p2 = (n: number): string => String(n).padStart(2, "0");
+  const at = input.at;
+  const stamp =
+    `${at.getFullYear()}${p2(at.getMonth() + 1)}${p2(at.getDate())}`
+    + `-${p2(at.getHours())}${p2(at.getMinutes())}`;
+
+  // 경로 구분자·따옴표처럼 이름에 들어가면 곤란한 글자만 뺀다. 한글은 그대로 둔다.
+  const who = input.who.replace(/[\/:*?"<>|\u0000-\u001f]/g, "").trim();
+  const ext = extensionOf(input.mime);
+  return who === "" ? `${stamp}${ext}` : `${stamp}-${who}${ext}`;
+}
+
+/** 우리가 다루는 이미지 형식의 확장자. 모르는 형식은 .png 로 둔다(클립보드 기본값). */
+function extensionOf(mime: string): string {
+  const value = mime.trim().toLowerCase();
+  if (value === "image/jpeg" || value === "image/jpg") return ".jpg";
+  if (value === "image/webp") return ".webp";
+  if (value === "image/gif") return ".gif";
+  return ".png";
+}
