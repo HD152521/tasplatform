@@ -5,19 +5,16 @@
  *
  * 사내망 도구에서 공개 SaaS(api.notion.com)로 글을 보낸다. 그래서 세 가지를 지킨다.
  *
- *   1. **설정이 없으면 아무것도 하지 않는다.** 토큰과 올릴 부모 페이지를 둘 다 받아야
- *      동작한다. 하나라도 비면 `notionConfig()` 가 null 이고, 화면은 "설정 안 됨" 을
- *      그대로 보여 준다(lib/atlassian.ts 와 같은 규약).
+ *   1. **연결이 없으면 아무것도 하지 않는다.** 토큰과 올릴 부모 페이지를 둘 다 받아야
+ *      동작한다. 그 둘은 **사람별**이다(lib/notionAccount.ts) — 토큰은 그 사람의 노션에
+ *      쓰는 열쇠라, 팀 하나로 두면 한 사람의 노션이 팀 전체에 열린다.
  *   2. **사람이 고른 메모만 나간다.** 자동으로 올리는 길을 두지 않았다 — 메모장에는
  *      고객사 상황이 적힐 수 있고, 올린 글은 지워도 이미 읽힌 뒤다.
  *   3. **글 내용을 로그에 남기지 않는다.** 실패 사유에 응답 본문을 붙이는데, 그건
  *      노션이 돌려준 오류 설명이고 우리가 보낸 글이 아니다.
  *
- * ## 왜 토큰을 환경변수로 받나
- *
- * DB(설정 화면)에 두려면 암호화 키(SR_SECRET_KEY)가 있어야 하고, 그게 아직 없다
- * (lib/portalCredentials.ts — 평문 폴백은 두지 않는다). Jira 와 같은 방식으로 환경변수를
- * 먼저 쓴다. 키가 생기면 포털 자격처럼 DB 로 옮기면 된다.
+ * 여기는 호출만 안다. 토큰을 어디서 읽고 어떻게 보관하는지는 lib/notionAccount.ts 다
+ * (AES-256-GCM, 키가 없으면 저장 거부).
  *
  * ## 부모는 **페이지**다, 데이터베이스가 아니다
  *
@@ -25,7 +22,7 @@
  * 언제든 바꾼다 — 그때마다 우리 쪽이 400 으로 멈춘다. 페이지 자식으로 만들면 제목
  * 하나만 맞추면 된다. 노션에서 나중에 DB 로 옮기는 것은 사람이 끌어다 하면 된다.
  *
- * 노션에서 **그 부모 페이지를 이 integration 에 공유**해 두어야 한다. 안 하면 404 가
+ * 노션에서 **그 부모 페이지를 자기 integration 에 공유**해 두어야 한다. 안 하면 404 가
  * 온다(없는 페이지와 권한 없는 페이지를 노션은 같은 404 로 답한다 — 그래서 아래에서
  * 그 404 에만 안내를 붙인다).
  */
@@ -47,23 +44,10 @@ export class NotionError extends Error {
 }
 
 export interface NotionConfig {
+  /** 그 사람의 integration 토큰. **로그에 남기지 않는다.** */
   readonly token: string;
-  /** 메모 페이지를 이 페이지의 자식으로 만든다. */
+  /** 메모 페이지를 이 페이지의 자식으로 만든다. 32자 id. */
   readonly parentPageId: string;
-}
-
-/**
- * 설정을 읽는다. 하나라도 비면 null — 화면이 "설정 안 됨" 을 그대로 보여 준다.
- *
- * 페이지 id 는 노션 주소 끝의 32자 16진수다. 사람이 주소를 그대로 붙여 넣는 일이
- * 흔하므로 여기서 걷어낸다 — 안 하면 404 가 오고, 그 404 는 "공유를 안 했다" 와
- * 구분이 안 된다.
- */
-export function notionConfig(): NotionConfig | null {
-  const token = (process.env.NOTION_TOKEN ?? "").trim();
-  const parent = normalizePageId(process.env.NOTION_PARENT_PAGE ?? "");
-  if (token === "" || parent === "") return null;
-  return { token, parentPageId: parent };
 }
 
 /**
@@ -233,10 +217,10 @@ export function notionFailureText(error: unknown): string {
     return `노션에 닿지 못했습니다. 이 서버에서 api.notion.com 으로 나가는 길이 막혀 있을 수 있습니다. (${error.message})`;
   }
   if (error.status === 404) {
-    return "노션이 페이지를 찾지 못했습니다. 노션에서 그 페이지를 integration 에 공유했는지, NOTION_PARENT_PAGE 가 맞는지 확인하세요.";
+    return "노션이 페이지를 찾지 못했습니다. 노션에서 그 페이지를 integration 에 공유했는지, 내 설정의 페이지 주소가 맞는지 확인하세요.";
   }
   if (error.status === 401) {
-    return "노션 토큰이 거절당했습니다(NOTION_TOKEN).";
+    return "노션 토큰이 거절당했습니다. 내 설정에서 토큰을 다시 넣어주세요.";
   }
   if (error.status === 429) {
     return "노션이 요청을 너무 자주 받았다고 합니다. 잠시 후 다시 올려주세요.";

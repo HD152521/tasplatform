@@ -15,7 +15,11 @@ import { assertValidTeamId } from "./config.ts";
 import { isoNow } from "./dates.ts";
 import type { Db } from "./db.ts";
 
-/** 노션 반영 상태. "만들어졌는지 모름" 은 두지 않는다(lib/schema.ts 머리말). */
+/**
+ * 노션 반영 상태. "만들어졌는지 모름" 은 두지 않는다(lib/schema.ts 머리말).
+ *
+ * `none` 은 **행이 없는 것**이다. 올린 적 없는 (메모, 사람) 짝은 표에 행이 없다.
+ */
 export type NotionState = "none" | "ok" | "failed";
 
 export interface TeamNote {
@@ -28,17 +32,32 @@ export interface TeamNote {
   readonly createdBy: number | null;
   readonly createdAt: string;
   readonly updatedAt: string;
-  readonly notionPageId: string;
-  readonly notionUrl: string;
-  readonly notionState: NotionState;
-  readonly notionError: string;
-  readonly notionTries: number;
-  readonly notionSyncedAt: string;
 }
 
-/** 화면에 필요한 사람 이름까지 붙인 메모. */
+/**
+ * 메모 한 건을 **내가** 노션에 올린 기록.
+ *
+ * 노션 연결이 사람별이라(lib/notionAccount.ts) 같은 메모가 사람마다 다른 페이지로
+ * 간다. 그래서 이 값은 **보는 사람에 따라 다르다** — 메모에 붙은 값이 아니다.
+ */
+export interface NotePublishRecord {
+  readonly pageId: string;
+  readonly url: string;
+  readonly state: NotionState;
+  readonly error: string;
+  readonly tries: number;
+  readonly syncedAt: string;
+}
+
+export const NO_PUBLISH: NotePublishRecord = {
+  pageId: "", url: "", state: "none", error: "", tries: 0, syncedAt: "",
+};
+
+/** 화면에 필요한 사람 이름과 **내가 올린 기록**까지 붙인 메모. */
 export interface TeamNoteView extends TeamNote {
   readonly createdByName: string;
+  /** 보는 사람 기준이다. 다른 사람이 올렸는지는 여기 담기지 않는다. */
+  readonly mine: NotePublishRecord;
 }
 
 interface NoteRowRaw {
@@ -50,12 +69,6 @@ interface NoteRowRaw {
   created_by: number | null;
   created_at: string;
   updated_at: string;
-  notion_page_id: string;
-  notion_url: string;
-  notion_state: string;
-  notion_error: string;
-  notion_tries: number;
-  notion_synced_at: string;
 }
 
 function coerceNotionState(value: string): NotionState {
@@ -72,12 +85,6 @@ function toNote(row: NoteRowRaw): TeamNote {
     createdBy: row.created_by === null ? null : Number(row.created_by),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    notionPageId: row.notion_page_id ?? "",
-    notionUrl: row.notion_url ?? "",
-    notionState: coerceNotionState(row.notion_state ?? ""),
-    notionError: row.notion_error ?? "",
-    notionTries: Number(row.notion_tries ?? 0),
-    notionSyncedAt: row.notion_synced_at ?? "",
   };
 }
 
@@ -114,9 +121,8 @@ export async function createNote(db: Db, input: NoteInput): Promise<number> {
   const now = isoNow();
   return db.insertReturning(
     "INSERT INTO team_notes ("
-      + " team_id, title, body, tags, created_by, created_at, updated_at,"
-      + " notion_page_id, notion_url, notion_state, notion_error, notion_tries, notion_synced_at"
-      + ") VALUES (?,?,?,?,?,?,?,'','','none','',0,'')",
+      + " team_id, title, body, tags, created_by, created_at, updated_at"
+      + ") VALUES (?,?,?,?,?,?,?)",
     [input.teamId, title, input.body ?? "", (input.tags ?? "").trim(), input.createdBy ?? null, now, now],
     "note_id",
   );
@@ -154,16 +160,17 @@ export async function updateNote(
 }
 
 /**
- * 메모 삭제.
+ * 메모 삭제. 올린 기록(note_notion_pages)도 함께 치운다.
  *
- * **노션 페이지는 건드리지 않는다.** 올린 글을 지우는 것은 다른 결정이고(이미 남이
- * 읽었을 수 있다), 외부 쓰기를 DB 삭제와 섞으면 실패했을 때 어느 쪽이 남았는지 알 수
- * 없다. 부르는 쪽이 그 사실을 사람에게 말해 준다.
+ * **노션 페이지는 건드리지 않는다.** 올린 글은 각자의 노션에 있고, 그걸 지우는 것은
+ * 다른 결정이다(이미 남이 읽었을 수 있다). 외부 쓰기를 DB 삭제와 섞으면 실패했을 때
+ * 어느 쪽이 남았는지 알 수 없다. 부르는 쪽이 그 사실을 사람에게 말해 준다.
  */
 export async function deleteNote(db: Db, teamId: string, noteId: number): Promise<TeamNote | null> {
   assertValidTeamId(teamId);
   const existing = await getNote(db, teamId, noteId);
   if (existing === null) return null;
+  await db.run("DELETE FROM note_notion_pages WHERE note_id = ?", [noteId]);
   await db.run("DELETE FROM team_notes WHERE team_id = ? AND note_id = ?", [teamId, noteId]);
   return existing;
 }
@@ -190,7 +197,17 @@ export async function getNote(db: Db, teamId: string, noteId: number): Promise<T
 export async function listNotes(
   db: Db,
   teamId: string,
-  options: { readonly limit?: number; readonly query?: string } = {},
+  options: {
+    readonly limit?: number;
+    readonly query?: string;
+    /**
+     * 보는 사람. 노션에 올린 기록을 이 사람 기준으로 붙인다.
+     *
+     * 주지 않으면 기록 없이 돌려준다(올린 적 없는 것과 같은 모양). 남의 기록을
+     * 섞어 보여 주면 "내가 올렸다" 고 믿게 되고, 그 사람의 노션에는 아무것도 없다.
+     */
+    readonly viewerId?: number | null;
+  } = {},
 ): Promise<TeamNoteView[]> {
   assertValidTeamId(teamId);
   const limit = options.limit === undefined ? 200 : Math.max(1, Math.min(500, options.limit));
@@ -215,54 +232,105 @@ export async function listNotes(
       + " LIMIT ?",
     args,
   );
-  return rows.map((row) => ({ ...toNote(row), createdByName: row.created_by_name ?? "" }));
+
+  // 올린 기록은 한 번에 읽는다 — 메모마다 한 번씩 물으면 N+1 이 된다.
+  const mine = new Map<number, NotePublishRecord>();
+  const viewerId = options.viewerId ?? null;
+  if (viewerId !== null && rows.length > 0) {
+    const marks = rows.map(() => "?").join(",");
+    const pages = await db.all<PageRowRaw>(
+      "SELECT * FROM note_notion_pages WHERE user_id = ? AND note_id IN (" + marks + ")",
+      [viewerId, ...rows.map((r) => Number(r.note_id))],
+    );
+    for (const page of pages) mine.set(Number(page.note_id), toRecord(page));
+  }
+
+  return rows.map((row) => ({
+    ...toNote(row),
+    createdByName: row.created_by_name ?? "",
+    mine: mine.get(Number(row.note_id)) ?? NO_PUBLISH,
+  }));
 }
 
 /* ------------------------------------------------------------------ *
- * 노션 반영 상태
+ * 노션에 올린 기록 — (메모, 사람) 짝
  * ------------------------------------------------------------------ */
 
+interface PageRowRaw {
+  note_id: number;
+  user_id: number;
+  page_id: string;
+  url: string;
+  state: string;
+  error: string;
+  tries: number;
+  synced_at: string;
+}
+
+function toRecord(row: PageRowRaw): NotePublishRecord {
+  return {
+    pageId: row.page_id ?? "",
+    url: row.url ?? "",
+    state: coerceNotionState(row.state ?? ""),
+    error: row.error ?? "",
+    tries: Number(row.tries ?? 0),
+    syncedAt: row.synced_at ?? "",
+  };
+}
+
+/** 내가 이 메모를 올린 기록. 없으면 NO_PUBLISH. */
+export async function readPublishRecord(
+  db: Db,
+  noteId: number,
+  userId: number,
+): Promise<NotePublishRecord> {
+  const row = await db.get<PageRowRaw>(
+    "SELECT * FROM note_notion_pages WHERE note_id = ? AND user_id = ?",
+    [noteId, userId],
+  );
+  return row === undefined || row === null ? NO_PUBLISH : toRecord(row);
+}
+
 /**
- * 노션에 올린 결과를 적는다.
+ * 올린 결과를 적는다.
  *
- * 실패를 **센다**(notion_tries). 몇 번째 실패인지 보여 주려는 것이다 — 한 번 실패와
- * 다섯 번 실패는 사람이 할 일이 다르다(기다리기 / 설정 보기). 성공하면 0 으로 되돌린다.
+ * 실패를 **센다**(tries). 몇 번째 실패인지 보여 주려는 것이다 — 한 번 실패와 다섯 번
+ * 실패는 사람이 할 일이 다르다(기다리기 / 설정 보기). 성공하면 0 으로 되돌린다.
  *
  * page_id·url 은 **빈 값으로 덮지 않는다.** 한 번 만들어진 페이지의 주소를 잃으면,
  * 다음 올리기가 그 페이지를 못 찾아 같은 글로 페이지를 하나 더 만든다.
  */
 export async function recordNotionResult(
   db: Db,
-  teamId: string,
   noteId: number,
+  userId: number,
   result: {
     readonly pageId?: string;
     readonly url?: string;
-    readonly state: NotionState;
+    readonly state: Exclude<NotionState, "none">;
     readonly error?: string;
   },
 ): Promise<void> {
-  assertValidTeamId(teamId);
-  await db.run(
-    "UPDATE team_notes SET"
-      + " notion_page_id = CASE WHEN ? = '' THEN notion_page_id ELSE ? END,"
-      + " notion_url = CASE WHEN ? = '' THEN notion_url ELSE ? END,"
-      + " notion_state = ?,"
-      + " notion_error = ?,"
-      + " notion_tries = CASE WHEN ? = 'failed' THEN notion_tries + 1 ELSE 0 END,"
-      + " notion_synced_at = ?"
-      + " WHERE team_id = ? AND note_id = ?",
-    [
-      result.pageId ?? "",
-      result.pageId ?? "",
-      result.url ?? "",
-      result.url ?? "",
-      result.state,
-      result.error ?? "",
-      result.state,
-      isoNow(),
-      teamId,
-      noteId,
-    ],
+  const before = await readPublishRecord(db, noteId, userId);
+  const pageId = (result.pageId ?? "") === "" ? before.pageId : (result.pageId as string);
+  const url = (result.url ?? "") === "" ? before.url : (result.url as string);
+  const tries = result.state === "failed" ? before.tries + 1 : 0;
+  const now = isoNow();
+
+  // 행이 없으면 넣고, 있으면 고친다. UPSERT 방언을 피한다 — SQLite 와 Postgres 를
+  // 함께 쓰는 레포라(lib/db.ts) 한쪽에서만 되는 문법을 들이지 않는다.
+  const updated = await db.run(
+    "UPDATE note_notion_pages SET page_id = ?, url = ?, state = ?, error = ?, tries = ?, synced_at = ?"
+      + " WHERE note_id = ? AND user_id = ?",
+    [pageId, url, result.state, result.error ?? "", tries, now, noteId, userId],
   );
+  // 고친 행이 없으면 처음 올린 것이다.
+  if (before.syncedAt === "" && before.pageId === "" && before.state === "none") {
+    void updated;
+    await db.run(
+      "INSERT INTO note_notion_pages (note_id, user_id, page_id, url, state, error, tries, synced_at)"
+        + " VALUES (?,?,?,?,?,?,?,?)",
+      [noteId, userId, pageId, url, result.state, result.error ?? "", tries, now],
+    );
+  }
 }

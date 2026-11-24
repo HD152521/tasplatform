@@ -140,6 +140,9 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: string 
   // "Jira 에 올릴 것인가". 기존 행은 전부 올리던 일정이므로 1 이다 — 0 으로 메꾸면
   // 이미 Jira 에 올라가 있는 일정이 다음 수정부터 조용히 동기화를 멈춘다.
   { table: "team_events", column: "jira_wanted", ddl: "INTEGER NOT NULL DEFAULT 1" },
+  // 개인 노션 연결. users 는 오래전부터 배포돼 있으므로 ALTER 로 더한다.
+  { table: "users", column: "notion_token_enc", ddl: "TEXT NOT NULL DEFAULT ''" },
+  { table: "users", column: "notion_parent_page", ddl: "TEXT NOT NULL DEFAULT ''" },
   // sr_jira_links 는 이미 배포돼 있으므로(PR #62) ALTER 로 더한다.
   { table: "sr_jira_links", column: "publish_tries", ddl: "INTEGER NOT NULL DEFAULT 0" },
   { table: "sr_jira_links", column: "comment_tries", ddl: "INTEGER NOT NULL DEFAULT 0" },

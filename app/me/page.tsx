@@ -8,6 +8,8 @@
  */
 import Link from "next/link";
 import { requireUser } from "../../lib/appAuth.ts";
+import { openDb } from "../../lib/db.ts";
+import { readNotionAccountMeta, type NotionAccountMeta } from "../../lib/notionAccount.ts";
 import { COLOR, Notice, PageHeader } from "../ui.tsx";
 import { MyAccountPanel } from "./MyAccountPanel.tsx";
 
@@ -15,6 +17,18 @@ export const dynamic = "force-dynamic";
 
 export default async function MyPage() {
   const me = await requireUser("/me");
+
+  /*
+   * 노션 연결은 **사람별**이다(lib/notionAccount.ts). 토큰은 돌려받지 않는다 —
+   * 있다/없다와 부모 페이지만 온다. 돌려주면 그게 유출 경로다.
+   */
+  let notion: NotionAccountMeta = { hasToken: false, parentPageId: "", ready: false, canSave: false };
+  const db = await openDb();
+  try {
+    notion = await readNotionAccountMeta(db, me.userId);
+  } finally {
+    await db.close();
+  }
 
   return (
     <>
@@ -37,6 +51,7 @@ export default async function MyPage() {
         loginId={me.loginId}
         displayName={me.displayName}
         jiraAccountId={me.jiraAccountId}
+        notion={notion}
         teamName={me.teamName}
         role={me.role}
       />

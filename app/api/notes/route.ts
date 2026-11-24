@@ -21,6 +21,7 @@ import {
   deleteNote,
   getNote,
   listNotes,
+  readPublishRecord,
   updateNote,
   type NotePatch,
 } from "../../../lib/notes.ts";
@@ -48,7 +49,12 @@ export async function GET(request: Request) {
     if (me === null) return NextResponse.json(UNAUTHORIZED, { status: 401 });
     if (me.teamId === "") return NextResponse.json(NO_TEAM, { status: 400 });
 
-    const notes = await listNotes(db, me.teamId, { query: url.searchParams.get("q") ?? "" });
+    // 올린 기록은 **보는 사람 기준**이다. 남의 기록을 섞어 보여 주면 "내가 올렸다" 고
+    // 믿게 되고, 그 사람의 노션에는 아무것도 없다(lib/notes.ts listNotes).
+    const notes = await listNotes(db, me.teamId, {
+      query: url.searchParams.get("q") ?? "",
+      viewerId: me.userId,
+    });
     return NextResponse.json({ ok: true, notes });
   } catch (error) {
     return fail(error);
@@ -83,7 +89,7 @@ export async function POST(request: Request) {
       if (!Number.isInteger(noteId) || noteId <= 0) {
         return NextResponse.json({ ok: false, message: "메모 번호가 올바르지 않습니다." }, { status: 400 });
       }
-      const result = await publishNoteToNotion(db, me.teamId, noteId);
+      const result = await publishNoteToNotion(db, me.teamId, noteId, me.userId);
       await recordAudit(db, {
         actor: actorOf(me), teamId: me.teamId, action: "note_to_notion", requestId: null,
         result: result.action === "failed" ? "failed" : "ok",
@@ -93,7 +99,7 @@ export async function POST(request: Request) {
         {
           ok: result.action !== "failed",
           message: result.message,
-          note: await getNote(db, me.teamId, noteId),
+          mine: await readPublishRecord(db, noteId, me.userId),
         },
         { status: result.action === "failed" ? 400 : 200 },
       );
@@ -167,9 +173,9 @@ export async function PATCH(request: Request) {
 /**
  * 메모 삭제.
  *
- * **노션 페이지는 지우지 않는다.** 올린 글을 지우는 것은 다른 결정이고(이미 남이 읽었을
- * 수 있다), 외부 쓰기를 DB 삭제와 섞으면 실패했을 때 어느 쪽이 남았는지 알 수 없다.
- * 올린 적이 있는 메모였다면 그 사실을 응답으로 말해 준다.
+ * **노션 페이지는 지우지 않는다.** 올린 글은 각자의 노션에 있고, 그걸 지우는 것은 다른
+ * 결정이다(이미 남이 읽었을 수 있다). 외부 쓰기를 DB 삭제와 섞으면 실패했을 때 어느
+ * 쪽이 남았는지 알 수 없다. 내가 올린 적이 있으면 그 사실을 응답으로 말해 준다.
  */
 export async function DELETE(request: Request) {
   const noteId = Number(new URL(request.url).searchParams.get("noteId"));
@@ -183,6 +189,8 @@ export async function DELETE(request: Request) {
     if (me === null) return NextResponse.json(UNAUTHORIZED, { status: 401 });
     if (me.teamId === "") return NextResponse.json(NO_TEAM, { status: 400 });
 
+    // 지우기 전에 읽는다 — 지운 뒤에는 올린 기록도 함께 치워져 있다.
+    const mine = await readPublishRecord(db, noteId, me.userId);
     const removed = await deleteNote(db, me.teamId, noteId);
     if (removed === null) {
       return NextResponse.json({ ok: false, message: "그 메모를 찾을 수 없습니다." }, { status: 404 });
@@ -194,10 +202,9 @@ export async function DELETE(request: Request) {
     return NextResponse.json({
       ok: true,
       message:
-        removed.notionPageId === ""
+        mine.pageId === ""
           ? "메모를 지웠습니다."
-          : "메모를 지웠습니다. 노션에 올린 페이지는 그대로 남아 있습니다 — 필요하면 노션에서 지워주세요.",
-      notionUrl: removed.notionUrl,
+          : "메모를 지웠습니다. 내 노션에 올린 페이지는 그대로 남아 있습니다 — 필요하면 노션에서 지워주세요.",
     });
   } catch (error) {
     return fail(error);

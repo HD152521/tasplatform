@@ -161,7 +161,7 @@ export function NotesBoard({
       setOpenId(null);
       await reload();
       // 노션 페이지가 남았다는 안내가 오면 그대로 보여 준다 — 사람이 할 일이 있다.
-      setMessage({ tone: note.notionPageId === "" ? "ok" : "warn", text: data.message ?? "지웠습니다." });
+      setMessage({ tone: note.mine.pageId === "" ? "ok" : "warn", text: data.message ?? "지웠습니다." });
     } catch (error) {
       setMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -212,10 +212,9 @@ export function NotesBoard({
       {message !== null && <Notice tone={message.tone}>{message.text}</Notice>}
       {!notionReady && (
         <Notice tone="info">
-          노션 연동이 아직 설정되지 않았습니다 — 메모는 저장되지만 올릴 수 없습니다.
-          <code style={{ marginLeft: 6, fontSize: 12 }}>NOTION_TOKEN</code> ·{" "}
-          <code style={{ fontSize: 12 }}>NOTION_PARENT_PAGE</code> 를 넣고, 노션에서 그 페이지를
-          integration 에 공유해 주세요.
+          내 노션이 아직 연결되지 않았습니다 — 메모는 저장되지만 올릴 수 없습니다.{" "}
+          <a href="/me" style={{ color: "inherit", fontWeight: WEIGHT.semibold }}>내 설정</a>
+          에서 연결하세요. 연결은 <strong>사람마다 따로</strong>이고, 올리면 자기 노션으로 갑니다.
         </Notice>
       )}
 
@@ -270,10 +269,11 @@ export function NotesBoard({
                     <span style={{ fontFamily: MONO_STACK, flexShrink: 0 }}>
                       {note.updatedAt.slice(5, 10)}
                     </span>
-                    {note.notionState === "ok" && (
-                      <span style={{ color: COLOR.ok, flexShrink: 0 }}>노션</span>
+                    {/* 내 노션에 올렸는가. 남이 올렸는지는 여기 담기지 않는다. */}
+                    {note.mine.state === "ok" && (
+                      <span style={{ color: COLOR.ok, flexShrink: 0 }}>내 노션</span>
                     )}
-                    {note.notionState === "failed" && (
+                    {note.mine.state === "failed" && (
                       <span style={{ color: COLOR.waitUs, flexShrink: 0 }}>올리기 실패</span>
                     )}
                     {note.tags !== "" && (
@@ -405,9 +405,9 @@ function NoteDetail({
    * 같이 바뀐 줄 알고, 그 페이지를 보는 사람은 옛 글을 읽는다.
    */
   const stale =
-    note.notionState === "ok"
-    && note.notionSyncedAt !== ""
-    && note.updatedAt > note.notionSyncedAt;
+    note.mine.state === "ok"
+    && note.mine.syncedAt !== ""
+    && note.updatedAt > note.mine.syncedAt;
 
   return (
     <Card style={{ padding: SPACE.lg }}>
@@ -456,20 +456,20 @@ function NoteDetail({
         display: "flex", alignItems: "center", gap: SPACE.md, flexWrap: "wrap",
       }}>
         <span style={{ fontSize: TEXT.small, fontWeight: WEIGHT.semibold, color: COLOR.body }}>
-          노션
+          내 노션
         </span>
-        {note.notionUrl !== "" ? (
+        {note.mine.url !== "" ? (
           <a
-            href={note.notionUrl}
+            href={note.mine.url}
             target="_blank"
             rel="noreferrer"
             style={{ fontSize: TEXT.small, color: COLOR.accent, fontWeight: WEIGHT.semibold }}
           >
-            올린 페이지 열기
+            내 노션에서 열기
           </a>
         ) : (
           <span style={{ fontSize: TEXT.small, color: COLOR.faint }}>
-            {note.notionState === "failed" ? "올리지 못했습니다" : "아직 안 올렸습니다"}
+            {note.mine.state === "failed" ? "올리지 못했습니다" : "아직 안 올렸습니다"}
           </span>
         )}
         {stale && (
@@ -477,16 +477,16 @@ function NoteDetail({
             올린 뒤에 고쳤습니다 — 노션 쪽은 옛 내용입니다
           </span>
         )}
-        {note.notionTries > 1 && (
-          <span style={{ fontSize: TEXT.micro, color: COLOR.faint }}>{note.notionTries}회 실패</span>
+        {note.mine.tries > 1 && (
+          <span style={{ fontSize: TEXT.micro, color: COLOR.faint }}>{note.mine.tries}회 실패</span>
         )}
         <Button size="small" onClick={onToNotion} disabled={busy || !notionReady}>
-          {note.notionPageId === "" ? "노션에 올리기" : "노션 다시 올리기"}
+          {note.mine.pageId === "" ? "내 노션에 올리기" : "내 노션에 다시 올리기"}
         </Button>
       </div>
-      {note.notionError !== "" && (
+      {note.mine.error !== "" && (
         <p style={{ margin: `${SPACE.sm}px 0 0`, fontSize: TEXT.micro, color: COLOR.waitUs, lineHeight: 1.7 }}>
-          {note.notionError}
+          {note.mine.error}
         </p>
       )}
     </Card>

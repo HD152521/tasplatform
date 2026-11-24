@@ -47,7 +47,6 @@ test("제목만 있으면 저장된다 — 적어 두고 나중에 채우는 쓰
   const note = await getNote(db, "default", id);
   assert.equal(note?.title, "나중에 정리");
   assert.equal(note?.body, "");
-  assert.equal(note?.notionState, "none");
 });
 
 test("제목이 비면 거절한다", async () => {

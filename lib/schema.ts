@@ -518,6 +518,14 @@ CREATE TABLE IF NOT EXISTS users (
   display_name    TEXT    NOT NULL DEFAULT '',
   password_hash   TEXT    NOT NULL DEFAULT '',
   jira_account_id TEXT    NOT NULL DEFAULT '',
+  -- 개인 노션 연결. 메모장의 메모를 **자기 노션**으로 올리는 데 쓴다.
+  --   notion_token_enc   integration 토큰. AES-256-GCM 으로만 저장한다(lib/secretBox.ts).
+  --                      SR_SECRET_KEY 가 없으면 **저장을 거부**한다 — 평문 폴백은 없다.
+  --   notion_parent_page 메모 페이지를 그 아래에 만든다. 32자 id(비밀값 아님).
+  -- 팀 공용이 아니라 사람별이다. 토큰은 그 사람의 노션 전체에 쓰이는 열쇠라, 팀 하나로
+  -- 두면 한 사람의 노션이 팀 전체에 열린다.
+  notion_token_enc   TEXT NOT NULL DEFAULT '',
+  notion_parent_page TEXT NOT NULL DEFAULT '',
   created_at      TEXT    NOT NULL,
   last_login_at   TEXT    NOT NULL DEFAULT '',
   -- 1 이면 로그인을 거부한다. 지우지 않는 이유: 이 사람이 등록한 일정·기록의 작성자
@@ -696,14 +704,8 @@ CREATE TABLE IF NOT EXISTS weekly_digests (
 -- (회의 내용·조사 결과·인수인계·설정 값). 캘린더에 억지로 날짜를 붙여 적던 것을
 -- 가를 자리가 없어서 만들었다.
 --
--- notion_*: 이 메모를 노션 페이지로 올린 결과. team_events 의 jira_* 와 같은 모양이다.
---   none    아직 올리지 않았다
---   ok      올라갔고 notion_page_id 가 유효하다
---   failed  거절당했다(사유는 notion_error)
---
--- "만들어졌는지 모름"(unknown) 을 두지 않는다. 노션 페이지 생성은 응답으로 **id 를
--- 돌려주고**, 멱등 라벨로 찾아올 길이 없다. 타임아웃이면 실패로 적고 사람이 노션을
--- 보게 한다 — 추측해서 두 번 만드는 것보다 낫다.
+-- 노션으로 올린 결과는 **여기 없다.** 노션 연결이 사람별이라(users.notion_token_enc)
+-- 같은 메모가 사람마다 다른 페이지로 간다. 그 짝을 note_notion_pages 가 들고 있다.
 CREATE TABLE IF NOT EXISTS team_notes (
   note_id          INTEGER PRIMARY KEY AUTOINCREMENT,
   team_id          TEXT    NOT NULL,
@@ -713,14 +715,30 @@ CREATE TABLE IF NOT EXISTS team_notes (
   tags             TEXT    NOT NULL DEFAULT '',
   created_by       INTEGER,
   created_at       TEXT    NOT NULL,
-  updated_at       TEXT    NOT NULL,
-  notion_page_id   TEXT    NOT NULL DEFAULT '',
-  notion_url       TEXT    NOT NULL DEFAULT '',
-  notion_state     TEXT    NOT NULL DEFAULT 'none',
-  notion_error     TEXT    NOT NULL DEFAULT '',
-  notion_tries     INTEGER NOT NULL DEFAULT 0,
-  notion_synced_at TEXT    NOT NULL DEFAULT ''
+  updated_at       TEXT    NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_team_notes_team ON team_notes(team_id, updated_at);
+
+-- 메모 한 건을 **누가 자기 노션의 어느 페이지로** 올렸는가.
+--
+-- 노션 연결이 사람별이므로 (메모, 사람) 짝마다 페이지가 하나다. 한 칸으로 두면 먼저
+-- 올린 사람의 페이지 id 가 남고, 다음 사람이 올릴 때 그 페이지를 고치려 든다 — 남의
+-- 노션이라 404 가 오고, 사람은 무엇이 틀렸는지 알 수 없다.
+--
+-- state: none 은 행이 없는 것과 같으므로 적지 않는다. ok | failed 둘만 쓴다.
+--   "만들어졌는지 모름"(unknown)을 두지 않는다 — 노션은 페이지 생성 응답으로 id 를
+--   돌려주고, 멱등 라벨로 찾아올 길이 없다. 타임아웃이면 실패로 적고 사람이 노션을
+--   보게 한다. 추측해서 두 번 만드는 것보다 낫다.
+CREATE TABLE IF NOT EXISTS note_notion_pages (
+  note_id    INTEGER NOT NULL,
+  user_id    INTEGER NOT NULL,
+  page_id    TEXT    NOT NULL DEFAULT '',
+  url        TEXT    NOT NULL DEFAULT '',
+  state      TEXT    NOT NULL DEFAULT 'ok',
+  error      TEXT    NOT NULL DEFAULT '',
+  tries      INTEGER NOT NULL DEFAULT 0,
+  synced_at  TEXT    NOT NULL DEFAULT '',
+  PRIMARY KEY (note_id, user_id)
+);
 `;

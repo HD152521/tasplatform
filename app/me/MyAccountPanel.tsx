@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 import { Card, COLOR, controlStyle, MONO_STACK, Notice, SPACE, TEXT, WEIGHT } from "../ui.tsx";
+import type { NotionAccountMeta } from "../../lib/notionAccount.ts";
 
 interface Props {
   readonly loginId: string;
   readonly displayName: string;
   readonly jiraAccountId: string;
+  /** 내 노션 연결 상태. **토큰은 담기지 않는다** — 담으면 그게 유출 경로다. */
+  readonly notion: NotionAccountMeta;
   readonly teamName: string;
   readonly role: "owner" | "member";
 }
@@ -22,9 +25,19 @@ type Tone = "ok" | "error" | "warn";
  *
  * 브로드컴 공용 계정은 **팀 것**이므로 여기 없다(`/settings/account`).
  */
-export function MyAccountPanel({ loginId, displayName, jiraAccountId, teamName, role }: Props) {
+export function MyAccountPanel({
+  loginId, displayName, jiraAccountId, notion, teamName, role,
+}: Props) {
   const [name, setName] = useState(displayName);
   const [jira, setJira] = useState(jiraAccountId);
+  /*
+   * 토큰 칸은 **늘 빈 칸으로 시작한다.** 저장된 값을 되돌려주지 않으므로 채울 수도 없다.
+   * 비운 채로 저장하면 토큰은 그대로 두고 부모 페이지만 바뀐다(lib/notionAccount.ts) —
+   * 페이지만 옮기려는 사람이 토큰을 다시 받아 오지 않아도 되게.
+   */
+  const [notionToken, setNotionToken] = useState("");
+  const [notionPage, setNotionPage] = useState(notion.parentPageId);
+  const [notionState, setNotionState] = useState(notion);
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [busy, setBusy] = useState(false);
@@ -124,6 +137,116 @@ export function MyAccountPanel({ loginId, displayName, jiraAccountId, teamName, 
           {jiraAccountId !== "" && (
             <span style={{ fontSize: TEXT.small, color: COLOR.ok, paddingBottom: SPACE.sm }}>연결됨</span>
           )}
+        </div>
+      </Card>
+
+      {/* ── 노션 연결 ─────────────────────────────────── */}
+      {/*
+        Jira 계정 연결과 나란히 두지만 성격이 다르다 — Jira 쪽은 **공개 식별자**이고,
+        이쪽은 **내 노션에 쓰는 열쇠**다. 그래서 저장된 값을 되돌려주지 않고(있다/없다만),
+        암호화 키가 없으면 저장 자체를 거부한다.
+      */}
+      <Card style={{ padding: SPACE.xl, marginBottom: SPACE.lg }}>
+        <h2 style={sectionTitle}>노션 연결</h2>
+        <p style={hintStyle}>
+          <a href="/notes" style={{ color: COLOR.accent }}>메모장</a>의 메모를{" "}
+          <strong>내 노션</strong>으로 올릴 때 씁니다. 연결은 <strong>사람마다 따로</strong>이고,
+          올리면 아래 페이지 아래에 메모 한 건이 페이지 하나로 만들어집니다. 저장할 때 따라
+          나가지 않습니다 — 메모장에서 올리기를 누를 때만 나갑니다.
+        </p>
+        <ol style={{ ...hintStyle, margin: `${SPACE.sm}px 0 0`, paddingLeft: 18 }}>
+          <li>
+            <a href="https://www.notion.so/my-integrations" target="_blank" rel="noreferrer"
+               style={{ color: COLOR.accent }}>notion.so/my-integrations</a>{" "}
+            에서 integration 을 만들고 <strong>Internal Integration Secret</strong> 을 복사합니다
+            (<span style={{ fontFamily: MONO_STACK }}>ntn_…</span>).
+          </li>
+          <li>
+            메모를 모아 둘 노션 <strong>페이지</strong>를 하나 만들고, 그 페이지의{" "}
+            <span style={{ fontFamily: MONO_STACK }}>…</span> 메뉴 →{" "}
+            <strong>연결 추가</strong>로 그 integration 을 공유합니다.
+            <span style={{ color: COLOR.waitUs }}> 이걸 빠뜨리면 404 가 옵니다.</span>
+          </li>
+          <li>그 페이지 주소를 아래에 붙여 넣습니다. 주소를 그대로 넣어도 됩니다.</li>
+        </ol>
+
+        {!notionState.canSave && (
+          <div style={{ marginTop: SPACE.md }}>
+            <Notice tone="warn">
+              암호화 키(<span style={{ fontFamily: MONO_STACK }}>SR_SECRET_KEY</span>)가 없어 토큰을
+              저장할 수 없습니다. 평문으로는 저장하지 않습니다 — 서버에 키를 넣어야 합니다.
+            </Notice>
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: SPACE.sm, marginTop: SPACE.md }}>
+          <input
+            type="password"
+            value={notionToken}
+            onChange={(e) => setNotionToken(e.target.value)}
+            placeholder={notionState.hasToken ? "토큰 (바꿀 때만 입력 — 비우면 그대로 둡니다)" : "ntn_…"}
+            autoComplete="off"
+            style={{ ...controlStyle, cursor: "text", fontFamily: MONO_STACK }}
+          />
+          <input
+            value={notionPage}
+            onChange={(e) => setNotionPage(e.target.value)}
+            placeholder="https://www.notion.so/… (메모를 모아 둘 페이지)"
+            style={{ ...controlStyle, cursor: "text", fontFamily: MONO_STACK }}
+          />
+          <div style={{ display: "flex", gap: SPACE.sm, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              disabled={busy || !notionState.canSave || notionPage.trim() === ""}
+              onClick={() => {
+                void post(
+                  { action: "notion_connect", token: notionToken, parentPage: notionPage },
+                  "노션을 연결했습니다.",
+                ).then((data) => {
+                  const next = data?.notion as NotionAccountMeta | undefined;
+                  if (next === undefined) return;
+                  setNotionState(next);
+                  setNotionPage(next.parentPageId);
+                  // 저장된 토큰은 돌려받지 않는다. 칸을 비워 "저장됨" 과 입력칸을 섞지 않는다.
+                  setNotionToken("");
+                });
+              }}
+              style={{ ...controlStyle, opacity: busy ? 0.6 : 1 }}
+            >
+              저장
+            </button>
+            {notionState.ready ? (
+              <span style={{ fontSize: TEXT.small, color: COLOR.ok }}>연결됨</span>
+            ) : notionState.hasToken ? (
+              <span style={{ fontSize: TEXT.small, color: COLOR.waitUs }}>
+                올릴 페이지가 없습니다
+              </span>
+            ) : (
+              <span style={{ fontSize: TEXT.small, color: COLOR.faint }}>연결 안 됨</span>
+            )}
+            {notionState.hasToken && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  void post({ action: "notion_clear" }, "노션 연결을 끊었습니다.").then((data) => {
+                    const next = data?.notion as NotionAccountMeta | undefined;
+                    if (next === undefined) return;
+                    setNotionState(next);
+                    setNotionPage("");
+                    setNotionToken("");
+                  });
+                }}
+                style={{ ...controlStyle, opacity: busy ? 0.6 : 1 }}
+              >
+                연결 끊기
+              </button>
+            )}
+          </div>
+          <p style={{ ...hintStyle, margin: 0 }}>
+            연결을 끊어도 <strong>이미 올린 노션 페이지는 남습니다</strong> — 필요하면 노션에서
+            직접 지워주세요. 다시 연결하면 그 페이지를 이어 씁니다.
+          </p>
         </div>
       </Card>
 

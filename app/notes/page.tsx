@@ -10,7 +10,7 @@
  */
 import { requireTeamUser } from "../../lib/appAuth.ts";
 import { openDb } from "../../lib/db.ts";
-import { notionReady } from "../../lib/notePublish.ts";
+import { readNotionAccountMeta } from "../../lib/notionAccount.ts";
 import { listNotes, type TeamNoteView } from "../../lib/notes.ts";
 import { listTeamMembers } from "../../lib/users.ts";
 import { COLOR, Notice } from "../ui.tsx";
@@ -30,11 +30,15 @@ export default async function NotesPage({
 
   let notes: TeamNoteView[] = [];
   let members: MemberChip[] = [];
+  /** 노션 연결은 **사람별**이다 — 내 연결 상태만 본다(lib/notionAccount.ts). */
+  let notionReady = false;
   let loadError: string | null = null;
 
   const db = await openDb();
   try {
-    notes = await listNotes(db, me.teamId);
+    // 올린 기록은 보는 사람 기준이다. 남의 기록을 섞으면 "내가 올렸다" 고 믿게 된다.
+    notes = await listNotes(db, me.teamId, { viewerId: me.userId });
+    notionReady = (await readNotionAccountMeta(db, me.userId)).ready;
     members = (await listTeamMembers(db, me.teamId)).map((m) => ({
       userId: m.userId,
       displayName: m.displayName,
@@ -67,7 +71,7 @@ export default async function NotesPage({
       <NotesBoard
         initialNotes={notes}
         members={members}
-        notionReady={notionReady()}
+        notionReady={notionReady}
         focusNoteId={focusRaw !== null && Number.isInteger(focusRaw) ? focusRaw : null}
       />
     </>
