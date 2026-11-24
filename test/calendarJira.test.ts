@@ -19,9 +19,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createEvent, getEvent, updateEvent } from "../lib/calendar.ts";
+import { addEventNote, createEvent, getEvent, updateEvent } from "../lib/calendar.ts";
 import {
   eventLabel,
+  postNoteToJira,
   removeEventFromJira,
   syncEventToJira,
   syncPendingEvents,
@@ -129,6 +130,129 @@ function createdFields(): Record<string, unknown> {
 /* ------------------------------------------------------------------ *
  * 생성
  * ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ *
+ * 메모지 — 올리지 않기로 고른 일정
+ * ------------------------------------------------------------------ */
+
+test("메모로만 저장한 일정은 Jira 를 때리지 않는다", async () => {
+  const id = await createEvent(db, {
+    teamId: "default",
+    title: "자리 비움",
+    startDate: "2126-12-01",
+    createdBy: userId,
+    jiraWanted: false,
+  });
+  install(() => ({ status: 201, body: { key: "ABC-99" } }));
+
+  const result = await syncEventToJira(db, "default", id);
+  assert.equal(result.action, "skipped");
+  assert.equal(calls.length, 0, "호출이 한 건이라도 나가면 외부에 글이 남는다");
+
+  const event = await getEvent(db, "default", id);
+  assert.equal(event?.jiraKey, "");
+  // 실패로 적으면 "고쳐야 하는 것" 처럼 보이고, 사람은 고치려 든다.
+  assert.equal(event?.jiraState, "none");
+  assert.equal(event?.jiraTries, 0);
+});
+
+test("force 로도 뚫지 않는다 — 버튼 한 번에 외부로 나가면 안 된다", async () => {
+  /*
+   * 화면의 "Jira 다시 맞추기" 가 force 를 보낸다. 그게 의도를 넘어서면, 올리지 않기로
+   * 고른 일정이 버튼 한 번에 올라간다. 되돌릴 수 없는 쪽으로 기울면 안 된다.
+   */
+  const id = await createEvent(db, {
+    teamId: "default",
+    title: "개인 일정",
+    startDate: "2126-12-02",
+    createdBy: userId,
+    jiraWanted: false,
+  });
+  install(() => ({ status: 201, body: { key: "ABC-98" } }));
+
+  const result = await syncEventToJira(db, "default", id, { force: true });
+  assert.equal(result.action, "skipped");
+  assert.equal(calls.length, 0);
+});
+
+test("쓸어 올리는 회차가 메모지를 건너뛴다", async () => {
+  // 이 줄이 없으면 한 회차가 올리지 않기로 고른 일정을 **전부** 올려 버린다.
+  await createEvent(db, {
+    teamId: "default",
+    title: "메모 하나",
+    startDate: "2126-12-03",
+    createdBy: userId,
+    jiraWanted: false,
+  });
+  install(() => ({ status: 201, body: { key: "ABC-97" } }));
+
+  const results = await syncPendingEvents(db, "default");
+  // 올리기로 한 일정(준비 단계의 '방화벽 점검') 하나만 집어야 한다.
+  assert.equal(results.length, 1, JSON.stringify(results));
+  const posts = callsTo("/rest/api/3/issue", "POST");
+  assert.equal(posts.length, 1);
+  assert.ok(
+    JSON.stringify(posts[0]?.body).includes("방화벽 점검"),
+    `메모지가 올라갔다: ${JSON.stringify(posts[0]?.body)}`,
+  );
+});
+
+test("뒤늦게 올리기로 바꾸면 그때 이슈가 만들어진다", async () => {
+  const id = await createEvent(db, {
+    teamId: "default",
+    title: "룰 정리",
+    startDate: "2126-12-04",
+    createdBy: userId,
+    jiraWanted: false,
+  });
+  install(() => ({ status: 201, body: { key: "ABC-96" } }));
+  await syncEventToJira(db, "default", id);
+  assert.equal(calls.length, 0);
+
+  await updateEvent(db, "default", id, { jiraWanted: true });
+  const result = await syncEventToJira(db, "default", id);
+  assert.equal(result.action, "created");
+  assert.equal(result.issueKey, "ABC-96");
+});
+
+test("올리기로 한 일정을 고쳐도 의도는 유지된다", async () => {
+  // patch 에 jiraWanted 가 없으면 **앞의 값을 지켜야 한다.** 기본값으로 덮어쓰면
+  // 제목만 고친 수정이 메모지를 Jira 로 올리거나 그 반대가 된다.
+  const id = await createEvent(db, {
+    teamId: "default",
+    title: "메모 유지",
+    startDate: "2126-12-05",
+    createdBy: userId,
+    jiraWanted: false,
+  });
+  await updateEvent(db, "default", id, { title: "메모 유지 2" });
+  assert.equal((await getEvent(db, "default", id))?.jiraWanted, false);
+
+  await updateEvent(db, "default", eventId, { title: "방화벽 점검 2" });
+  assert.equal((await getEvent(db, "default", eventId))?.jiraWanted, true);
+});
+
+test("메모지에는 메모를 코멘트로 올릴 수 없고 이유를 말해 준다", async () => {
+  const id = await createEvent(db, {
+    teamId: "default",
+    title: "메모만",
+    startDate: "2126-12-06",
+    createdBy: userId,
+    jiraWanted: false,
+  });
+  const noteId = await addEventNote(db, "default", id, {
+    userId,
+    author: "안용식",
+    body: "확인했습니다",
+  });
+  install(() => ({ status: 201, body: {} }));
+
+  const result = await postNoteToJira(db, "default", id, noteId);
+  assert.equal(result.ok, false);
+  assert.match(result.message, /메모로만/);
+  assert.equal(calls.length, 0);
+});
+
 
 test("일정을 올리면 이슈가 하나 만들어진다", async () => {
   install(() => ({ status: 201, body: { key: "ABC-10" } }));

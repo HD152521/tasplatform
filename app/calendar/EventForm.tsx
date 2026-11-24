@@ -13,6 +13,7 @@ import {
 import { addDays, weekdayOf } from "../../lib/quickAdd.ts";
 import { COLOR, Chip, MONO_STACK, RADIUS, controlStyle } from "../ui.tsx";
 import type { MemberChip } from "./CalendarBoard.tsx";
+import { MemoBody } from "./MemoBody.tsx";
 import { TokenInput } from "./TokenInput.tsx";
 
 /** 자주 쓰는 업무 성격. 목록에 없는 것도 직접 적을 수 있다. */
@@ -29,6 +30,14 @@ export interface EventFormValue {
   readonly kind: string;
   readonly assigneeUserId: number | null;
   readonly body: string;
+  /**
+   * Jira 에 올릴 것인가.
+   *
+   * 기본은 **올리지 않는다**(emptyFormValue). 캘린더에 적히는 것은 이슈가 될 일보다
+   * 그냥 적어 두는 일이 훨씬 많고, Jira 는 지워도 알림이 이미 간 뒤다. 되돌릴 수
+   * 없는 쪽을 기본으로 둘 수 없다.
+   */
+  readonly jiraWanted: boolean;
 }
 
 /** 저장된 일정 → 폼 초기값. 수정할 때 쓴다. */
@@ -43,6 +52,7 @@ export function formValueOf(event: {
   kind: string;
   assigneeUserId: number | null;
   body: string;
+  jiraWanted: boolean;
 }): EventFormValue {
   const parsed = classifyTags([
     ...event.scopes.split("/").filter((p) => p !== ""),
@@ -59,6 +69,7 @@ export function formValueOf(event: {
     kind: event.kind,
     assigneeUserId: event.assigneeUserId,
     body: event.body,
+    jiraWanted: event.jiraWanted,
   };
 }
 
@@ -74,6 +85,8 @@ export function emptyFormValue(date: string): EventFormValue {
     kind: "",
     assigneeUserId: null,
     body: "",
+    // 고르지 않고 저장하면 메모지다. 외부로 글이 나가는 쪽을 기본으로 두지 않는다.
+    jiraWanted: false,
   };
 }
 
@@ -88,6 +101,7 @@ export function toPayload(v: EventFormValue): Record<string, unknown> {
     tags: [...v.scopes, ...(v.corp === null ? [] : [v.corp]), ...(v.kind === "" ? [] : [v.kind])],
     assigneeUserId: v.assigneeUserId,
     body: v.body,
+    jiraWanted: v.jiraWanted,
   };
 }
 
@@ -107,12 +121,19 @@ export function toPayload(v: EventFormValue): Record<string, unknown> {
  * "또 가서 고치는" 일이 없다.
  */
 export function EventForm({
-  value, members, busy, submitLabel, onChange, onSubmit, onCancel,
+  value, members, busy, submitLabel, jiraLocked = false, onChange, onSubmit, onCancel,
 }: {
   value: EventFormValue;
   members: readonly MemberChip[];
   busy: boolean;
   submitLabel: string;
+  /**
+   * 이미 Jira 에 이슈가 만들어진 일정인가.
+   *
+   * 그러면 "메모로만" 으로 되돌릴 수 없다 — 끄는 것만으로 이슈가 사라지지 않고,
+   * 동기화만 멈춘 채 Jira 에 남아 조용히 어긋난다(서버도 같은 이유로 거절한다).
+   */
+  jiraLocked?: boolean;
   onChange: (next: EventFormValue) => void;
   onSubmit: () => void;
   onCancel?: () => void;
@@ -292,7 +313,7 @@ export function EventForm({
       </Row>
 
       {/* 법인 */}
-      <Row label="법인" hint="Jira 상위 에픽을 고릅니다.">
+      <Row label="법인" hint={value.jiraWanted ? "Jira 상위 에픽을 고릅니다." : "어느 법인 일인지 적어 둡니다."}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <Chip label="없음" active={value.corp === null} onClick={() => set({ corp: null })} />
           {CORPS.map((corp) => (
@@ -307,7 +328,12 @@ export function EventForm({
       </Row>
 
       {/* 업무 성격 */}
-      <Row label="업무 성격" hint="Jira 라벨이 됩니다(작업지원·장애대응·내부업무).">
+      <Row
+        label="업무 성격"
+        hint={value.jiraWanted
+          ? "Jira 라벨이 됩니다(작업지원·장애대응·내부업무)."
+          : "주간 정리에서 이 성격으로 묶입니다."}
+      >
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           {WORK_KINDS.map((kind) => (
             <Chip
@@ -328,7 +354,12 @@ export function EventForm({
 
       {/* 본문 */}
       {showBody ? (
-        <Row label="본문" hint="Jira 이슈 본문에 들어갑니다. @이름 을 적으면 실제 멘션이 됩니다.">
+        <Row
+          label="본문"
+          hint={value.jiraWanted
+            ? "Jira 이슈 본문에 들어갑니다. @이름 을 적으면 실제 멘션이 됩니다."
+            : "줄머리에 - 를 적으면 목록으로, 빈 줄을 두면 문단으로 보입니다. @이름 도 알아봅니다."}
+        >
           {/* `@` 를 치면 팀원 목록이 뜬다. 고른 이름은 Jira 에서 **실제 멘션**이 된다. */}
           <TokenInput
             value={value.body}
@@ -346,22 +377,71 @@ export function EventForm({
           onClick={() => setShowBody(true)}
           style={{ ...controlStyle, alignSelf: "flex-start", fontSize: 12 }}
         >
-          + 본문 쓰기 (Jira 이슈 본문 · @멘션)
+          + 내용 쓰기 (목록 · @이름)
         </button>
       )}
 
-      {/* Jira 미리보기 — 저장 전에 확인할 수 있어야 "또 가서 고치는" 일이 없다 */}
+      {/* ── Jira 에 올릴까 ───────────────────────────────── */}
+      {/*
+        맨 아래에 둔다. 제목·날짜를 적기 전에 묻는 질문이 아니고, 바로 아래 미리보기가
+        "고른 결과" 를 그대로 보여 줘야 한다.
+      */}
       <div style={{
-        background: COLOR.ground, borderRadius: RADIUS.control, padding: "10px 12px",
-        fontSize: 12.5, lineHeight: 1.7,
+        background: COLOR.ground, borderRadius: RADIUS.control, padding: "11px 12px",
+        display: "flex", flexDirection: "column", gap: 9,
       }}>
-        <div style={{ color: COLOR.faint, fontSize: 11, fontWeight: 600, marginBottom: 3 }}>
-          JIRA 에 이렇게 올라갑니다
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <Chip
+            label="메모로만"
+            active={!value.jiraWanted}
+            // 이슈가 이미 있으면 눌러도 꺼지지 않는다. 버튼을 지우는 대신 남겨 두는 이유는,
+            // 선택지가 사라지면 "왜 못 고르는지" 를 말할 자리도 사라지기 때문이다.
+            onClick={() => { if (!jiraLocked) set({ jiraWanted: false }); }}
+          />
+          <Chip
+            label="Jira 에 올리기"
+            active={value.jiraWanted}
+            onClick={() => set({ jiraWanted: true })}
+          />
+          <span style={{ fontSize: 11.5, color: COLOR.faint, lineHeight: 1.6 }}>
+            {jiraLocked
+              ? "이미 Jira 이슈가 있습니다 — 되돌리려면 Jira 에서 이슈를 지워야 합니다."
+              : value.jiraWanted
+                ? "이슈가 만들어지고, 일정을 고치면 따라 바뀝니다."
+                : "사내에만 남습니다. 나중에 올릴 수도 있습니다."}
+          </span>
         </div>
-        <div style={{ fontFamily: MONO_STACK, color: value.title.trim() === "" ? COLOR.faint : COLOR.ink }}>
-          {value.title.trim() === "" ? "제목을 입력하세요" : jiraTitle}
-        </div>
-        <div style={{ color: COLOR.muted, marginTop: 2 }}>{classification}</div>
+
+        {/* 저장 전에 무엇이 될지 보여 준다 — 그래야 "또 가서 고치는" 일이 없다 */}
+        {value.jiraWanted ? (
+          <div style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+            <div style={{ color: COLOR.faint, fontSize: 11, fontWeight: 600, marginBottom: 3 }}>
+              JIRA 에 이렇게 올라갑니다
+            </div>
+            <div style={{
+              fontFamily: MONO_STACK,
+              color: value.title.trim() === "" ? COLOR.faint : COLOR.ink,
+            }}>
+              {value.title.trim() === "" ? "제목을 입력하세요" : jiraTitle}
+            </div>
+            <div style={{ color: COLOR.muted, marginTop: 2 }}>{classification}</div>
+          </div>
+        ) : (
+          <div style={{ fontSize: 12.5, lineHeight: 1.7 }}>
+            <div style={{ color: COLOR.faint, fontSize: 11, fontWeight: 600, marginBottom: 3 }}>
+              이렇게 저장됩니다
+            </div>
+            <div style={{ color: value.title.trim() === "" ? COLOR.faint : COLOR.ink, fontWeight: 600 }}>
+              {value.title.trim() === "" ? "제목을 입력하세요" : value.title.trim()}
+            </div>
+            <div style={{ color: COLOR.muted, marginTop: 2 }}>{classification}</div>
+            {value.body.trim() !== "" && (
+              <div style={{ marginTop: 7 }}>
+                <MemoBody text={value.body} members={members} />
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 9 }}>

@@ -21,6 +21,7 @@ import {
   Button,
   COLOR,
   Card,
+  Chip,
   Empty,
   LinkButton,
   MONO_STACK,
@@ -138,6 +139,20 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
   const [form, setForm] = useState<EventFormValue>(() => emptyFormValue(selectedDateInit(month, today)));
   /** 폼이 수정 중인 일정. null 이면 새로 등록하는 것이다. */
   const [formEditId, setFormEditId] = useState<number | null>(null);
+  /**
+   * 고치는 중인 일정에 **이미 Jira 이슈가 있는가.**
+   *
+   * 있으면 "메모로만" 으로 되돌릴 수 없다 — 끄는 것만으로 이슈가 사라지지 않고,
+   * 동기화만 멈춘 채 Jira 에 남는다(서버도 같은 이유로 거절한다).
+   */
+  const [formJiraLocked, setFormJiraLocked] = useState(false);
+  /**
+   * 한 줄 입력으로 등록할 때 Jira 에 올릴 것인가. 기본은 올리지 않는다.
+   *
+   * 한 줄 입력은 여러 건을 잇따라 적는 자리라 **누른 값을 유지한다** — 작업 일정을
+   * 연달아 적는 사람이 매번 다시 켜야 하면 그게 더 틀린다.
+   */
+  const [lineJira, setLineJira] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "error" | "warn"; text: string } | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -305,7 +320,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ line, today: selectedDate }),
+        body: JSON.stringify({ line, today: selectedDate, jiraWanted: lineJira }),
       },
       "일정을 등록했습니다.",
     );
@@ -341,6 +356,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
             "일정을 고쳤습니다.",
           );
     if (result !== null) {
+      setFormJiraLocked(false);
       setForm(emptyFormValue(selectedDate));
       setFormEditId(null);
       // 저장하면 닫는다. 이 화면의 주인공은 목록이고, 방금 넣은 것이 거기 보여야 한다.
@@ -503,6 +519,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
             if (composing) {
               setComposing(false);
               setFormEditId(null);
+              setFormJiraLocked(false);
               setForm(emptyFormValue(selectedDate));
             } else {
               setComposing(true);
@@ -674,6 +691,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
               members={members}
               busy={busy}
               submitLabel={formEditId === null ? "일정 등록" : "수정 저장"}
+              jiraLocked={formJiraLocked}
               onChange={setForm}
               onSubmit={() => void saveForm()}
               onCancel={
@@ -681,6 +699,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
                   ? undefined
                   : () => {
                       setFormEditId(null);
+                      setFormJiraLocked(false);
                       setForm(emptyFormValue(selectedDate));
                     }
               }
@@ -722,6 +741,21 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
             >
               등록
             </button>
+          </div>
+
+          {/*
+            Jira 에 올릴지 고른다. **기본은 올리지 않는다** — 한 줄로 적히는 것은 이슈가
+            될 일보다 그냥 적어 두는 일이 훨씬 많고, Jira 는 지워도 알림이 이미 간 뒤다.
+            누른 값은 유지한다(작업 일정을 연달아 적는 사람이 매번 켜야 하면 그게 더 틀린다).
+          */}
+          <div style={{
+            marginTop: 9, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center",
+          }}>
+            <Chip label="메모로만" active={!lineJira} onClick={() => setLineJira(false)} />
+            <Chip label="Jira 에 올리기" active={lineJira} onClick={() => setLineJira(true)} />
+            <span style={{ fontSize: 11.5, color: COLOR.faint }}>
+              {lineJira ? "이슈가 만들어집니다." : "사내에만 남습니다. 나중에 올릴 수도 있습니다."}
+            </span>
           </div>
 
           {/*
@@ -813,6 +847,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
             // 폼으로 고친다. 날짜·망·법인을 **보고 고를 수 있어야** 또 고치러 오지 않는다.
             setForm(formValueOf(open));
             setFormEditId(open.eventId);
+            setFormJiraLocked(open.jiraKey !== "");
             setMode("form");
             setOpenId(null);
             window.scrollTo({ top: 0, behavior: "smooth" });

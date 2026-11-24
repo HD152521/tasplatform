@@ -351,6 +351,25 @@ export async function syncEventToJira(
   const event = await getEvent(db, teamId, eventId);
   if (event === null) return skipped("그 일정을 찾을 수 없습니다.");
 
+  /*
+   * 메모지는 나가지 않는다.
+   *
+   * `force` 로도 뚫지 않는다. 화면의 "Jira 다시 맞추기" 가 force 를 보내는데, 그것으로
+   * 넘어가 버리면 **올리지 않기로 고른 일정이 버튼 한 번에 올라간다.** 되돌릴 수 없는
+   * 쪽(외부에 글이 남는 쪽)으로 기울면 안 된다. 뒤늦게 올리려면 의도를 먼저 바꾼다
+   * (jira_wanted → true). 화면이 그 길을 "Jira 에 올리기" 로 내준다.
+   */
+  if (!event.jiraWanted) {
+    return {
+      action: "skipped",
+      issueKey: event.jiraKey,
+      issueUrl: event.jiraUrl,
+      state: event.jiraState,
+      message: "메모로만 저장한 일정입니다. Jira 에 올리지 않았습니다.",
+      dropped: [],
+    };
+  }
+
   if (!options.force && event.jiraTries >= MAX_TRIES && event.jiraState !== "ok") {
     return {
       action: "skipped",
@@ -700,6 +719,9 @@ export async function syncPendingEvents(
   const rows = await db.all<{ event_id: number }>(
     `SELECT event_id FROM team_events
       WHERE team_id = ?
+        -- 메모지는 대상이 아니다. 이 줄이 없으면 쓸어 올리는 회차가 올리지 않기로 고른
+        -- 일정을 **전부** 올려 버린다 — 조용히, 한 번에.
+        AND jira_wanted = 1
         AND jira_key = ''
         AND jira_state <> 'ok'
         AND jira_tries < ?
@@ -761,6 +783,12 @@ export async function postNoteToJira(
 
   const event = await getEvent(db, teamId, eventId);
   if (event === null) return { ok: false, message: "그 일정을 찾을 수 없습니다." };
+  if (!event.jiraWanted) {
+    return {
+      ok: false,
+      message: "메모로만 저장한 일정입니다. 일정을 Jira 에 올린 뒤에 메모를 코멘트로 보낼 수 있습니다.",
+    };
+  }
   if (event.jiraKey === "") {
     return { ok: false, message: "이 일정에는 아직 Jira 이슈가 없습니다. 먼저 Jira 에 등록하세요." };
   }

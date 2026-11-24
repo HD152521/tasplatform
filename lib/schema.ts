@@ -597,6 +597,16 @@ CREATE INDEX IF NOT EXISTS idx_case_reads_user ON case_reads_user(user_id, reque
 --   취소는 **일정을 지우는 것과 다르다.** 취소는 "하기로 했는데 안 했다" 는 기록이고
 --   삭제는 "그 일정이 없었다" 다. 주간 정리에서 둘을 다르게 센다.
 --
+-- jira_wanted: **이 일정을 Jira 에 올릴 것인가.** 쓰는 사람이 저장할 때 고른다.
+--   0 이면 메모지다 — 사내에만 남고 Jira 로 나가지 않는다. 일정 중에 Jira 로 올릴
+--   일이 아닌 것(개인 일정·공유 메모·기억용 기록)이 훨씬 많아서, 새로 적는 일정은
+--   기본이 0 이다. 기존 행과 Jira 에서 가져온 행은 1 이다(DEFAULT 1 — 이미 올라가
+--   있는 이슈와의 연결이 끊기면 안 된다).
+--
+--   의도(jira_wanted)와 결과(jira_state)를 나눠 둔다. 한 칸에 섞으면 "올리기로 했는데
+--   실패한 것" 과 "애초에 안 올리는 것" 을 구분할 수 없고, 그러면 재시도 대상을 고를
+--   수 없다.
+--
 -- jira_*: 캘린더 → Jira 연동(S5)이 쓰는 칸. jira_state:
 --   none    아직 올리지 않았다
 --   ok      올라갔고 jira_key 가 유효하다
@@ -626,6 +636,7 @@ CREATE TABLE IF NOT EXISTS team_events (
   created_by       INTEGER,
   created_at       TEXT    NOT NULL,
   updated_at       TEXT    NOT NULL,
+  jira_wanted      INTEGER NOT NULL DEFAULT 1,
   jira_key         TEXT    NOT NULL DEFAULT '',
   jira_url         TEXT    NOT NULL DEFAULT '',
   jira_state       TEXT    NOT NULL DEFAULT 'none',

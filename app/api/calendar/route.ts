@@ -146,6 +146,16 @@ export async function POST(request: Request) {
       loginId: m.loginId,
     }));
 
+    /*
+     * Jira 에 올릴 것인가. **없으면 올리지 않는다.**
+     *
+     * 캘린더에 적히는 것은 Jira 이슈가 될 일보다 그냥 적어 두는 일(개인 일정·공유
+     * 메모·기억용 기록)이 훨씬 많다. 기본을 "올린다" 로 두면 그 전부가 외부에 글로
+     * 남고, 지워도 알림은 이미 갔다. 되돌릴 수 없는 쪽을 기본으로 둘 수는 없다.
+     * 화면은 둘 다 명시해서 보낸다.
+     */
+    const jiraWanted = body.jiraWanted === true;
+
     const line = str("line").trim();
     let input;
     if (line !== "") {
@@ -174,6 +184,7 @@ export async function POST(request: Request) {
         assigneeLabel: parsed.assignee,
         body: str("body"),
         createdBy: me.userId,
+        jiraWanted,
       };
     } else {
       // 폼에서 온 경로. 태그를 **배열로** 받아 한 줄 입력과 **같은 분류 함수**를 쓴다 —
@@ -203,6 +214,7 @@ export async function POST(request: Request) {
         assigneeLabel: matched?.displayName ?? str("assignee"),
         body: str("body"),
         createdBy: me.userId,
+        jiraWanted,
       };
     }
 
@@ -213,6 +225,7 @@ export async function POST(request: Request) {
     });
 
     // Jira 는 **저장 뒤 곁다리**다. 실패해도 일정은 남는다.
+    // 메모지는 syncEventToJira 가 안에서 걸러낸다(한 자리에서 판정하려고 여기서 안 나눈다).
     const jira = await syncEventToJira(db, me.teamId, eventId).catch(() => null);
     return NextResponse.json({
       ok: true,
@@ -316,6 +329,27 @@ export async function PATCH(request: Request) {
       if (typeof body.startTime === "string") patch = { ...patch, startTime: body.startTime };
       if (typeof body.endTime === "string") patch = { ...patch, endTime: body.endTime };
       if (typeof body.state === "string") patch = { ...patch, state: coerceState(body.state) };
+      /*
+       * 메모지 → Jira 는 **켜는 방향만** 받는다.
+       *
+       * 끄는 것을 받아 주면 "동기화만 멈춘 이슈" 가 Jira 에 남는다. 일정은 고쳐지는데
+       * 이슈는 그대로라 둘이 조용히 어긋나고, 보는 사람은 어느 쪽이 맞는지 알 수 없다.
+       * 정말 없애려면 Jira 에서 이슈를 지워야 하므로, 여기서 끊고 그렇게 말해 준다.
+       */
+      if (body.jiraWanted !== undefined) {
+        const wanted = body.jiraWanted === true;
+        if (!wanted && before.jiraKey !== "") {
+          return NextResponse.json(
+            {
+              ok: false,
+              message:
+                `이미 Jira 에 올라간 일정입니다(${before.jiraKey}). 메모로 되돌리려면 Jira 에서 이슈를 먼저 지워주세요.`,
+            },
+            { status: 400 },
+          );
+        }
+        patch = { ...patch, jiraWanted: wanted };
+      }
     }
 
     const after = await updateEvent(db, me.teamId, eventId, patch);

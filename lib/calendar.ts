@@ -50,6 +50,13 @@ export interface TeamEvent {
   readonly createdBy: number | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /**
+   * 이 일정을 Jira 에 올릴 것인가. 쓰는 사람이 저장할 때 고른다.
+   *
+   * false 면 메모지다 — 사내에만 남는다. **결과(jiraState)와 다른 값이다.** 올리기로
+   * 했는데 실패한 것과 애초에 안 올리는 것을 구분해야 재시도 대상을 고를 수 있다.
+   */
+  readonly jiraWanted: boolean;
   readonly jiraKey: string;
   readonly jiraUrl: string;
   readonly jiraState: JiraState;
@@ -83,6 +90,7 @@ interface EventRowRaw {
   created_by: number | null;
   created_at: string;
   updated_at: string;
+  jira_wanted: number;
   jira_key: string;
   jira_url: string;
   jira_state: string;
@@ -110,6 +118,9 @@ function toEvent(row: EventRowRaw): TeamEvent {
     createdBy: row.created_by === null ? null : Number(row.created_by),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    // 옛 행에는 칸이 없을 수 있다. 그때는 올리던 일정이므로 true 다
+    // (lib/db.ts 의 ALTER 주석과 같은 이유).
+    jiraWanted: Number(row.jira_wanted ?? 1) !== 0,
     jiraKey: row.jira_key,
     jiraUrl: row.jira_url,
     jiraState: coerceJiraState(row.jira_state),
@@ -149,6 +160,13 @@ export interface EventInput {
   readonly assigneeLabel?: string;
   readonly state?: EventState;
   readonly createdBy?: number | null;
+  /**
+   * Jira 에 올릴 것인가. **주지 않으면 올린다**(true).
+   *
+   * 화면은 늘 명시해서 보낸다. 기본을 true 로 둔 것은 이 함수를 부르는 다른 길
+   * (Jira 가져오기·시험)이 전부 Jira 와 짝지어진 일정을 만들기 때문이다.
+   */
+  readonly jiraWanted?: boolean;
 }
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -186,8 +204,8 @@ export async function createEvent(db: Db, input: EventInput): Promise<number> {
        team_id, title, body, kind, scopes, corp,
        start_date, end_date, start_time, end_time,
        assignee_user_id, assignee_label, state, created_by, created_at, updated_at,
-       jira_key, jira_url, jira_state, jira_error, jira_tries, jira_synced_at
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'','','none','',0,'')`,
+       jira_wanted, jira_key, jira_url, jira_state, jira_error, jira_tries, jira_synced_at
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'','','none','',0,'')`,
     [
       input.teamId,
       input.title.trim(),
@@ -205,6 +223,7 @@ export async function createEvent(db: Db, input: EventInput): Promise<number> {
       input.createdBy ?? null,
       now,
       now,
+      input.jiraWanted === false ? 0 : 1,
     ],
     "event_id",
   );
@@ -223,6 +242,14 @@ export interface EventPatch {
   readonly assigneeUserId?: number | null;
   readonly assigneeLabel?: string;
   readonly state?: EventState;
+  /**
+   * Jira 에 올릴 것인가를 바꾼다.
+   *
+   * 메모지를 뒤늦게 Jira 로 올리는 길이다(화면의 "Jira 에 올리기"). 반대 방향은
+   * 화면이 내주지 않는다 — 이미 만들어진 이슈는 끄는 것만으로 사라지지 않고,
+   * 동기화만 멈춘 채 Jira 에 남아 조용히 어긋난다.
+   */
+  readonly jiraWanted?: boolean;
 }
 
 /**
@@ -257,6 +284,7 @@ export async function updateEvent(
     assigneeUserId: patch.assigneeUserId === undefined ? before.assigneeUserId : patch.assigneeUserId,
     assigneeLabel: patch.assigneeLabel ?? before.assigneeLabel,
     state: patch.state ?? before.state,
+    jiraWanted: patch.jiraWanted ?? before.jiraWanted,
   };
   const { startDate, endDate } = validate(merged);
 
@@ -264,7 +292,7 @@ export async function updateEvent(
     `UPDATE team_events SET
        title = ?, body = ?, kind = ?, scopes = ?, corp = ?, start_date = ?, end_date = ?,
        start_time = ?, end_time = ?, assignee_user_id = ?, assignee_label = ?,
-       state = ?, updated_at = ?
+       state = ?, jira_wanted = ?, updated_at = ?
      WHERE team_id = ? AND event_id = ?`,
     [
       merged.title.trim(),
@@ -279,6 +307,7 @@ export async function updateEvent(
       merged.assigneeUserId ?? null,
       (merged.assigneeLabel ?? "").trim(),
       merged.state ?? "planned",
+      merged.jiraWanted === false ? 0 : 1,
       isoNow(),
       teamId,
       eventId,

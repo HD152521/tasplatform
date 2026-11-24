@@ -16,6 +16,7 @@ import {
   formatStamp,
 } from "../ui.tsx";
 import type { MemberChip } from "./CalendarBoard.tsx";
+import { MemoBody } from "./MemoBody.tsx";
 
 /**
  * 일정 상세 — 메모와 Jira 상태.
@@ -132,6 +133,46 @@ export function EventPanel({
     }
   }
 
+  /**
+   * 메모지를 뒤늦게 Jira 에 올린다.
+   *
+   * 의도(jira_wanted)를 **먼저** 바꾸고, 그 결과로 동기화가 돈다. 반대로 하면
+   * "올리기" 가 한 번은 성공하고 다음 수정부터 조용히 멈춘다 — 쓸어 올리는 회차가
+   * 메모지를 건너뛰기 때문이다.
+   *
+   * 되돌리는 길은 내주지 않는다. 끄는 것만으로 Jira 이슈가 사라지지 않아서,
+   * 동기화만 멈춘 이슈가 남고 둘이 조용히 어긋난다.
+   */
+  async function sendToJira(): Promise<void> {
+    setWorking(true);
+    onMessage(null);
+    try {
+      const res = await fetch("/api/calendar", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eventId: event.eventId, jiraWanted: true }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        message?: string;
+        jira?: { message?: string; action?: string } | null;
+      };
+      if (data.ok !== true) {
+        onMessage({ tone: "error", text: data.message ?? "Jira 에 올리지 못했습니다." });
+        return;
+      }
+      onMessage({
+        tone: data.jira?.action === "failed" ? "error" : "ok",
+        text: data.jira?.message ?? "Jira 에 올렸습니다.",
+      });
+      await onChanged();
+    } catch (error) {
+      onMessage({ tone: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setWorking(false);
+    }
+  }
+
   const assigneeMember = members.find((m) => m.userId === event.assigneeUserId) ?? null;
   const period =
     event.endDate === event.startDate ? event.startDate : `${event.startDate} ~ ${event.endDate}`;
@@ -186,17 +227,19 @@ export function EventPanel({
         </button>
       </div>
 
+      {/*
+        본문을 덩어리로 그린다. Jira 에 올리지 않는 일정은 **이 자리가 그 글을 보여 주는
+        유일한 곳**이다(app/calendar/MemoBody.tsx).
+      */}
       {event.body.trim() !== "" && (
-        <p style={{
-          margin: "14px 0 0", fontSize: 13, color: COLOR.body, lineHeight: 1.75,
-          whiteSpace: "pre-wrap",
-        }}>
-          {event.body}
-        </p>
+        <div style={{ marginTop: 14 }}>
+          <MemoBody text={event.body} members={members} />
+        </div>
       )}
 
       {/* 담당자 Jira 연결 안 됨 — 조용히 넘기지 않는다. */}
-      {event.assigneeUserId !== null && assigneeMember?.hasJira === false && (
+      {/* 메모지는 Jira 로 가지 않으므로 이 경고가 뜰 자리가 아니다. */}
+      {event.jiraWanted && event.assigneeUserId !== null && assigneeMember?.hasJira === false && (
         <p style={{ margin: "12px 0 0", fontSize: 12, color: COLOR.warn, lineHeight: 1.7 }}>
           담당자의 Jira 계정이 연결되지 않아 이슈에 <strong>담당자 없이</strong> 올라갑니다
           (본문에는 이름이 적힙니다). <a href="/team" style={{ color: COLOR.warn }}>팀 화면</a>에서
@@ -216,34 +259,62 @@ export function EventPanel({
         display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
       }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: COLOR.body }}>Jira</span>
-        {event.jiraKey !== "" ? (
-          <a
-            href={event.jiraUrl}
-            target="_blank"
-            rel="noreferrer"
-            style={{ fontSize: 12.5, color: COLOR.accent, fontFamily: MONO_STACK, fontWeight: 600 }}
-          >
-            {event.jiraKey}
-          </a>
+
+        {/*
+          메모지와 "올리려다 실패한 것" 을 **다르게** 보여 준다. 전에는 둘 다 "미연결"
+          이었는데, 그러면 올리지 않기로 고른 일정이 고장처럼 보인다 — 사람은 고치려고
+          "다시 맞추기" 를 누른다.
+        */}
+        {!event.jiraWanted ? (
+          <>
+            <span style={{
+              fontSize: 11, fontWeight: 700, color: COLOR.muted, background: COLOR.ground,
+              padding: "2px 7px", borderRadius: RADIUS.badge,
+            }}>
+              메모
+            </span>
+            <span style={{ fontSize: 12, color: COLOR.faint }}>사내에만 남습니다.</span>
+            <button
+              type="button"
+              disabled={busy || working}
+              onClick={() => void sendToJira()}
+              style={{ ...controlStyle, padding: "5px 10px", fontSize: 12 }}
+            >
+              Jira 에 올리기
+            </button>
+          </>
         ) : (
-          <span style={{ fontSize: 12, color: COLOR.faint }}>
-            {event.jiraState === "none" ? "연결 없음" : "미연결"}
-          </span>
+          <>
+            {event.jiraKey !== "" ? (
+              <a
+                href={event.jiraUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{ fontSize: 12.5, color: COLOR.accent, fontFamily: MONO_STACK, fontWeight: 600 }}
+              >
+                {event.jiraKey}
+              </a>
+            ) : (
+              <span style={{ fontSize: 12, color: COLOR.faint }}>
+                {event.jiraState === "none" ? "아직 안 올라갔습니다" : "미연결"}
+              </span>
+            )}
+            {event.jiraState !== "ok" && event.jiraState !== "none" && (
+              <span style={{ fontSize: 12, color: COLOR.waitUs }}>
+                {event.jiraState === "unknown" ? "만들어졌는지 확인 중" : "실패"}
+                {event.jiraTries > 0 && ` (${event.jiraTries}회 시도)`}
+              </span>
+            )}
+            <button
+              type="button"
+              disabled={busy || working}
+              onClick={() => void retryJira()}
+              style={{ ...controlStyle, padding: "5px 10px", fontSize: 12 }}
+            >
+              Jira 다시 맞추기
+            </button>
+          </>
         )}
-        {event.jiraState !== "ok" && event.jiraState !== "none" && (
-          <span style={{ fontSize: 12, color: COLOR.waitUs }}>
-            {event.jiraState === "unknown" ? "만들어졌는지 확인 중" : "실패"}
-            {event.jiraTries > 0 && ` (${event.jiraTries}회 시도)`}
-          </span>
-        )}
-        <button
-          type="button"
-          disabled={busy || working}
-          onClick={() => void retryJira()}
-          style={{ ...controlStyle, padding: "5px 10px", fontSize: 12 }}
-        >
-          Jira 다시 맞추기
-        </button>
       </div>
       {event.jiraError !== "" && (
         <p style={{ margin: "8px 0 0", fontSize: 11.5, color: COLOR.waitUs, lineHeight: 1.7 }}>
@@ -293,7 +364,8 @@ export function EventPanel({
                 </LinkButton>
               )}
             </div>
-            <div style={{ color: COLOR.body, whiteSpace: "pre-wrap" }}>{note.body}</div>
+            {/* 메모도 같은 규칙으로 그린다 — 한 글에 두 모양이 있으면 안 된다. */}
+            <MemoBody text={note.body} members={members} />
           </div>
         ))}
 

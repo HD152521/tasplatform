@@ -15,57 +15,25 @@
  * 않으면 멘션을 만들 수 없다 — 그때는 **글자로 남긴다.** 조용히 지우면 그 이름이
  * 본문에서 사라져 "누구 얘기였는지" 를 잃는다.
  *
- * ## 이름을 어떻게 맞추나
+ * ## 이름 맞추기와 줄 가르기는 여기 없다
  *
- * 긴 이름을 먼저 본다. `@안용식` 과 `@안` 이 둘 다 후보일 때 `@안` 을 먼저 맞추면
- * 뒤의 "용식" 이 글자로 남아 이름이 쪼개진다. 그래서 후보를 **길이 내림차순**으로
- * 정렬해 훑는다.
+ * `@` 를 찾아 이름과 맞추는 규칙, 빈 줄로 문단을 가르는 규칙은 lib/mentionSpans.ts 에
+ * 있다. 같은 판정을 **우리 화면도** 써야 하기 때문이다 — 메모만 저장한 일정은 Jira 로
+ * 가지 않는다(lib/memoBlocks.ts). 규칙이 갈라지면 화면에서는 이름이 강조되는데 Jira
+ * 에는 멘션이 안 가는 상태가 생기고, 적은 사람은 알렸다고 믿는다.
  *
  * 순수 함수다 — DB·네트워크를 모른다. 부르는 쪽이 팀원 목록을 넘긴다.
  */
 import { adfText, type AdfNode } from "./adf.ts";
+import { mentionSpans, textBlocks, type MentionablePerson } from "./mentionSpans.ts";
 
-export interface MentionablePerson {
-  /** 화면에 보이는 이름. `@안용식` 의 "안용식". */
-  readonly displayName: string;
-  /** 로그인 아이디. `@yongsik` 로도 적을 수 있게 한다. */
-  readonly loginId: string;
-  /** Jira accountId. 비어 있으면 멘션을 만들 수 없다. */
-  readonly jiraAccountId: string;
-}
+// 정본은 lib/mentionSpans.ts 다. 이 경로로 가져가던 곳이 많아 그대로 내보낸다.
+export type { MentionablePerson };
 
 /** 멘션 노드 하나. */
 export function adfMention(accountId: string, label: string): AdfNode {
   return { type: "mention", attrs: { id: accountId, text: `@${label}` } };
 }
-
-interface Candidate {
-  readonly needle: string;
-  readonly label: string;
-  readonly accountId: string;
-}
-
-/**
- * 맞출 후보 목록. 이름과 아이디를 모두 받고, **긴 것부터** 본다.
- *
- * accountId 가 없는 사람도 후보에 넣는다 — 글자를 그대로 두되 "멘션이 안 됐다" 를
- * 부르는 쪽이 알 수 있어야 한다(mentionGaps).
- */
-function candidatesOf(people: readonly MentionablePerson[]): Candidate[] {
-  const out: Candidate[] = [];
-  for (const person of people) {
-    const label = person.displayName.trim() === "" ? person.loginId : person.displayName.trim();
-    for (const needle of [person.displayName.trim(), person.loginId.trim()]) {
-      if (needle === "") continue;
-      if (out.some((c) => c.needle.toLowerCase() === needle.toLowerCase())) continue;
-      out.push({ needle, label, accountId: person.jiraAccountId.trim() });
-    }
-  }
-  return out.sort((a, b) => b.needle.length - a.needle.length);
-}
-
-/** `@` 뒤에 올 수 있는 글자인지. 한글·영숫자·점·밑줄·하이픈까지 본다. */
-const NAME_CHAR = /[0-9A-Za-z가-힣._-]/;
 
 export interface MentionResult {
   readonly nodes: AdfNode[];
@@ -76,69 +44,25 @@ export interface MentionResult {
 /**
  * 한 줄(또는 한 문단)의 글을 멘션이 섞인 노드 배열로 바꾼다.
  *
- * `@` 가 이름과 맞지 않으면 **그대로 글자로 둔다.** 이메일 주소(`a@b.com`)처럼 `@`
- * 앞에 글자가 붙어 있는 경우도 건드리지 않는다 — 그건 멘션이 아니다.
+ * 조각을 가르는 일은 mentionSpans 가 한다. 여기서는 Jira 계정이 없는 사람을 **글자로**
+ * 되돌리는 것만 결정한다 — 조용히 지우면 누구 얘기였는지를 잃는다.
  */
 export function adfTextWithMentions(
   text: string,
   people: readonly MentionablePerson[],
 ): MentionResult {
-  const candidates = candidatesOf(people);
+  const split = mentionSpans(text, people);
   const nodes: AdfNode[] = [];
-  const unlinked: string[] = [];
-  let buffer = "";
-
-  const flush = (): void => {
-    if (buffer !== "") {
-      nodes.push(...adfText(buffer));
-      buffer = "";
-    }
-  };
-
-  let i = 0;
-  while (i < text.length) {
-    const char = text[i] as string;
-    if (char !== "@") {
-      buffer += char;
-      i += 1;
-      continue;
-    }
-
-    // `@` 앞이 이름 글자면 멘션이 아니다(이메일 주소 등).
-    const before = i === 0 ? "" : (text[i - 1] as string);
-    if (before !== "" && NAME_CHAR.test(before)) {
-      buffer += char;
-      i += 1;
-      continue;
-    }
-
-    const rest = text.slice(i + 1);
-    const hit = candidates.find((c) => {
-      if (!rest.toLowerCase().startsWith(c.needle.toLowerCase())) return false;
-      // 더 긴 이름의 일부를 잘라 맞추지 않는다 — `@안용식` 에서 `안용` 만 맞으면 안 된다.
-      const after = rest.slice(c.needle.length, c.needle.length + 1);
-      return after === "" || !NAME_CHAR.test(after);
-    });
-
-    if (hit === undefined) {
-      buffer += char;
-      i += 1;
-      continue;
-    }
-
-    flush();
-    if (hit.accountId === "") {
-      // Jira 계정이 연결되지 않은 사람. 글자로 남기고 그 사실을 알린다.
-      nodes.push(...adfText(`@${hit.label}`));
-      if (!unlinked.includes(hit.label)) unlinked.push(hit.label);
+  for (const span of split.spans) {
+    if (span.kind === "text") {
+      nodes.push(...adfText(span.text));
+    } else if (span.accountId === "") {
+      nodes.push(...adfText(`@${span.label}`));
     } else {
-      nodes.push(adfMention(hit.accountId, hit.label));
+      nodes.push(adfMention(span.accountId, span.label));
     }
-    i += 1 + hit.needle.length;
   }
-
-  flush();
-  return { nodes, unlinked };
+  return { nodes, unlinked: split.unlinked };
 }
 
 /**
@@ -153,15 +77,9 @@ export function adfLinesWithMentions(
   people: readonly MentionablePerson[],
 ): MentionResult {
   const unlinked: string[] = [];
-  const blocks = text
-    .replace(/\r\n/g, "\n")
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter((block) => block !== "");
-
-  const nodes: AdfNode[] = blocks.map((block) => {
+  const nodes: AdfNode[] = textBlocks(text).map((lines) => {
     const parts: AdfNode[] = [];
-    block.split("\n").forEach((line, index) => {
+    lines.forEach((line, index) => {
       if (index > 0) parts.push({ type: "hardBreak" });
       const result = adfTextWithMentions(line, people);
       parts.push(...result.nodes);
