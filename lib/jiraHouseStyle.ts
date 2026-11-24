@@ -212,33 +212,22 @@ export function describeClassification(c: ClassifiedTags): string {
  * ------------------------------------------------------------------ */
 
 /**
- * 본문도 추측이 아니다 — NHTAS 최근 80건을 조회해 모양을 셌다(2026-11-24).
+ * 본문 양식도 추측이 아니다 — NHTAS 최근 80건을 조회해 모양을 셌다(2026-11-24).
  *
  *   본문이 있는 건 **80 / 80.** 빈칸은 우리가 올린 것뿐이었다.
  *   모양: 짧은 줄의 나열 75 · `라벨: 값` 3 · 번호 절 2
  *
- * 첫 줄은 "무엇을" 이고 **법인·망을 글로 앞세우는** 관행이 뚜렷하다 —
- *   `은행 운영 GSLB전환 모니터링` · `중앙회 bbr 백업 테스트 지원` · `검증 opsmanager 업그레이드 작업`
- * 제목 대괄호와 겹치지만 팀도 그렇게 쓴다(제목과 본문 첫 줄이 거의 같은 건도 있다).
  * 시각은 짧은 줄로 따로 적고(`08:00~`, `09:00~04:00`), 회의는 `일시:` 라벨을 쓴다.
  * 결과는 화살표로 잇는다(`원인 불명 → 추가 지연 없어 모니터링 해제`).
  *
  * 반대로 **메타데이터를 라벨로 줄줄이 나열하는 건은 80건 중 하나도 없다.** 망은 제목
  * 대괄호, 법인은 상위 에픽, 성격은 라벨이 이미 말한다. 같은 것을 네 번 적으면 사람이
  * 읽어야 할 줄이 그만큼 뒤로 밀린다. 그래서 본문에서 뺀다.
+ *
+ * 첫 줄에 법인·망·무엇을 다시 적는 관행도 있지만(제목과 본문 첫 줄이 거의 같은 건이
+ * 있다) 우리는 따르지 않는다. 제목은 사람이 적은 그대로 올리고(houseSummary) 본문은
+ * 사람이 적은 메모를 정리할 뿐이다 — 제목을 짐작해 만든 줄은 틀리면 고칠 사람이 없다.
  */
-export function houseHeadLine(input: {
-  readonly scopes: readonly Scope[];
-  readonly corp?: Corp | null;
-  readonly title: string;
-}): string {
-  const scopes = sortScopes(input.scopes);
-  // 본사는 망이면서 법인이다. 둘 다 적으면 "본사 본사" 가 된다.
-  const corp = input.corp !== null && input.corp !== undefined && !scopes.includes(input.corp as Scope)
-    ? input.corp
-    : "";
-  return [corp, scopes.join("/"), input.title.trim()].filter((part) => part !== "").join(" ");
-}
 
 /**
  * 일시 한 줄. 날짜 칸이 떨어져도 본문에는 남아야 한다.

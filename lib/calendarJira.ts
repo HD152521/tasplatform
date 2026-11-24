@@ -31,7 +31,6 @@ import { adfLinesWithMentions, type MentionablePerson } from "./adfMention.ts";
 import {
   classifyTags,
   corpEpicKey,
-  houseHeadLine,
   houseSummary,
   houseWhenLine,
   readWorkLabel,
@@ -204,15 +203,6 @@ function describeEvent(
   people: readonly MentionablePerson[] = [],
 ): { doc: AdfDoc; unlinked: readonly string[] } {
   const memo = event.body.trim();
-  const scopes = scopesOf(event);
-  const corp = corpOf(event);
-
-  /*
-   * 메모를 안 적은 일정은 **본문에 할 말이 없었다.** 전에는 정보 줄만 늘어놓아서,
-   * Jira 에서 보면 제목 한 줄이 전부였다(실제로 그렇게 올라갔다). 팀의 이슈 80건은
-   * 전부 첫 줄에 "무엇을" 이 적혀 있다 — 메모가 없으면 그 줄을 우리가 만든다.
-   */
-  const head = memo === "" ? houseHeadLine({ scopes, corp, title: event.title }) : "";
 
   /*
    * 정보 줄을 줄인다.
@@ -225,9 +215,12 @@ function describeEvent(
    *   일시: 날짜 칸(시작일·duedate)은 곁가지라 400 한 번에 떨어질 수 있다.
    *   담당: 담당자 칸을 못 채우는 경우가 있다(Jira 계정이 없는 팀원).
    *   등록: 토큰이 하나라 reporter 는 전원 같은 계정이다 — 이 줄이 유일한 기록이다.
+   *
+   * 제목을 본문 첫 줄로 한 번 더 적던 것도 뺐다. 제목은 **사람이 적은 그대로** 올라가고
+   * (houseSummary), 같은 말을 본문이 되풀이하면 읽을 줄만 밀린다. 본문은 사람이 적은
+   * 메모를 정리해 올리는 자리다 — 제목을 짐작해 만들어 주지 않는다.
    */
   const lines = [
-    head,
     houseWhenLine({
       startDate: event.startDate,
       endDate: event.endDate,
@@ -236,8 +229,9 @@ function describeEvent(
     }),
     assigneeName === "" ? "" : `담당: ${assigneeName}`,
     createdByName === "" ? "" : `등록: ${createdByName} (앱 사용자)`,
+    // 링크 하나로 "어디서 왔는지" 가 충분히 전해진다. 안내 문장을 한 줄 더 붙이던 것은
+    // 이슈마다 똑같이 쌓이는 상투구라 뺐다.
     `팀 캘린더: ${appUrl()}/calendar?event=${event.eventId}`,
-    "팀 캘린더의 일정에서 만들어졌습니다. 일정을 고치면 이 본문도 따라 바뀝니다.",
   ];
 
   // 사람이 적은 메모가 맨 위에 온다. 멘션은 여기서만 만든다.

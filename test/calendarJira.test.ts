@@ -333,24 +333,30 @@ test("업무 성격이 사내 라벨이 된다", async () => {
   assert.ok(!labels.includes("TAS_작업지원"), "둘이 함께 붙으면 집계가 겹친다");
 });
 
-test("본문 첫 줄이 법인·망·무엇 순으로 적힌다 — 팀이 쓰는 모양이다", async () => {
+test("본문은 제목을 되풀이하지 않고 메타데이터도 나열하지 않는다", async () => {
   /*
    * 전에는 `전산망: 개발 / 운영` · `법인: 은행` · `업무: 점검` 을 라벨로 나열했다.
-   * NHTAS 80건을 조회해 보면 그렇게 나열한 건이 **하나도 없다.** 전부 첫 줄에
-   * "무엇을" 이 적혀 있고 법인·망을 글로 앞세운다 —
-   *   `은행 운영 GSLB전환 모니터링` · `중앙회 bbr 백업 테스트 지원`
-   * 그 셋은 제목 대괄호·상위 에픽·라벨이 이미 말하므로 본문에서 또 적지 않는다.
+   * NHTAS 80건을 조회해 보면 그렇게 나열한 건이 **하나도 없다.** 망은 제목 대괄호,
+   * 법인은 상위 에픽, 성격은 라벨이 이미 말한다.
+   *
+   * 제목을 본문 첫 줄로 다시 적던 것도 뺐다. 제목은 사람이 적은 그대로 올라가고,
+   * 본문은 사람이 적은 메모를 정리하는 자리다 — 우리가 제목을 짐작해 만들지 않는다.
    */
   const id = await eventWith({ scopes: "개발/운영", corp: "은행", kind: "점검" });
   install(() => ({ status: 201, body: { key: "ABC-38" } }));
   await syncEventToJira(db, "default", id);
 
-  const description = JSON.stringify(createdFields().description);
-  assert.ok(description.includes("은행 개발/운영 10월 정기 점검"), description);
+  const fields = createdFields();
+  const description = JSON.stringify(fields.description);
+  assert.equal(fields.summary, "[개발/운영] 10월 정기 점검");
+  assert.ok(!description.includes("은행 개발/운영 10월 정기 점검"), description);
   // 같은 것을 네 번 적으면 사람이 읽을 줄이 그만큼 뒤로 밀린다.
   assert.ok(!description.includes("전산망:"), "망은 제목 대괄호가 말한다");
   assert.ok(!description.includes("법인:"), "법인은 상위 에픽이 말한다");
   assert.ok(!description.includes("업무:"), "성격은 라벨이 말한다");
+  // 이슈마다 똑같이 쌓이는 상투구는 뺀다. 링크 하나로 어디서 왔는지는 충분히 전해진다.
+  assert.ok(!description.includes("만들어졌습니다"), "안내 문장은 빠졌다");
+  assert.ok(description.includes("팀 캘린더: "), "원본으로 돌아올 링크는 남는다");
 });
 
 test("본문에 일시가 남는다 — 날짜 칸은 400 한 번에 떨어질 수 있다", async () => {
@@ -542,14 +548,19 @@ test("수정이 본문도 갱신한다 — 안 보내면 빈 본문을 되돌릴
   await syncEventToJira(db, "default", eventId);
   calls = [];
 
-  await updateEvent(db, "default", eventId, { title: "방화벽 룰 정리" });
+  await updateEvent(db, "default", eventId, {
+    title: "방화벽 룰 정리",
+    body: "미사용 룰 42건 정리 예정",
+  });
   install(() => ({ status: 204 }));
   await syncEventToJira(db, "default", eventId);
 
   const fields = (callsTo("/rest/api/3/issue/ABC-10", "PUT")[0]?.body?.fields ?? {}) as Record<string, unknown>;
   const description = JSON.stringify(fields.description);
   assert.ok(fields.description !== undefined, "본문을 안 보내면 고칠 방법이 없다");
-  assert.ok(description.includes("방화벽 룰 정리"), description);
+  assert.equal(fields.summary, "방화벽 룰 정리");
+  // 제목은 제목 칸이 말한다. 본문이 따라가야 하는 것은 사람이 적은 메모다.
+  assert.ok(description.includes("미사용 룰 42건 정리 예정"), description);
 });
 
 test("담당자를 비우면 Jira 담당자도 비운다", async () => {

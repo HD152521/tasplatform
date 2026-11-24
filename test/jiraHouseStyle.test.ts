@@ -12,7 +12,6 @@ import {
   classifyTags,
   corpEpicKey,
   describeClassification,
-  houseHeadLine,
   houseSummary,
   houseWhenLine,
   readCorpTag,
@@ -222,35 +221,9 @@ test("분류를 한 줄로 말한다", () => {
 /* ------------------------------------------------------------------ *
  * 본문 양식 — 실측 80건(2026-11-24)
  *
- * 80건 전부 본문이 있고, 첫 줄은 법인·망을 글로 앞세운 "무엇을" 이다.
+ * 80건 전부 본문이 있다. 시각은 짧은 줄로 따로 적고 회의는 `일시:` 라벨을 쓴다.
  * 메타데이터를 라벨로 나열한 건은 하나도 없었다.
  * ------------------------------------------------------------------ */
-
-test("본문 첫 줄은 법인 · 망 · 무엇 순이다", () => {
-  // 실측: `은행 운영 GSLB전환 모니터링`
-  assert.equal(
-    houseHeadLine({ scopes: ["운영"], corp: "은행", title: "GSLB전환 모니터링" }),
-    "은행 운영 GSLB전환 모니터링",
-  );
-});
-
-test("망이 여럿이면 제목과 같은 순서로 잇는다", () => {
-  assert.equal(
-    houseHeadLine({ scopes: ["운영", "개발"], corp: "중앙회", title: "bbr 백업 테스트" }),
-    "중앙회 개발/운영 bbr 백업 테스트",
-  );
-});
-
-test("본사는 두 번 적지 않는다 — 망이면서 법인이다", () => {
-  assert.equal(
-    houseHeadLine({ scopes: ["본사"], corp: "본사", title: "문서 작성" }),
-    "본사 문서 작성",
-  );
-});
-
-test("법인·망을 모르면 제목만 남는다", () => {
-  assert.equal(houseHeadLine({ scopes: [], corp: null, title: "ASG 테스트" }), "ASG 테스트");
-});
 
 test("종일이면 시각을 적지 않는다", () => {
   assert.equal(
