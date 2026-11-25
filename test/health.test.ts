@@ -12,16 +12,31 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isoNow } from "../lib/dates.ts";
 import { listTeams, openDb } from "../lib/db.ts";
+import { UNKNOWN_VERSION } from "../lib/buildVersion.ts";
 import { healthError, healthOk, summarizeHealthError } from "../lib/health.ts";
 
-test("healthOk 는 방언·팀수·시각만 담는다", () => {
+test("healthOk 는 방언·팀수·시각·빌드커밋만 담는다", () => {
   const status = healthOk("sqlite", 3, "2026-01-01T00:00:00.000Z");
   assert.deepEqual(status, {
     ok: true,
     dialect: "sqlite",
     teams: 3,
     at: "2026-01-01T00:00:00.000Z",
+    // CI 를 안 거친 빌드(로컬·시험)는 unknown 이다 — 그럴듯한 값을 만들지 않는다.
+    version: UNKNOWN_VERSION,
   });
+});
+
+test("빌드 커밋은 접속정보를 담지 않는다", () => {
+  /*
+   * 이 응답은 로그인 없이 누구나 볼 수 있다(배포 확인용). 커밋 해시는 레포를 볼 수
+   * 있는 사람에게만 뜻이 있지만, 접속정보·계정이 섞이면 그건 유출이다.
+   */
+  const status = healthOk("postgres", 1, "2026-01-01T00:00:00.000Z");
+  const text = JSON.stringify(status);
+  for (const secret of ["postgres://", "password", "@", "5432"]) {
+    assert.equal(text.includes(secret), false, `${secret} 가 응답에 있으면 안 된다`);
+  }
 });
 
 test("summarizeHealthError 는 원인별 고정 코드로 환원한다", () => {
@@ -48,7 +63,8 @@ test("요약 코드에 호스트·계정·포트가 새지 않는다", () => {
 
 test("healthError 는 { ok:false, error:<코드> } 형태다", () => {
   const status = healthError(new Error("getaddrinfo ENOTFOUND x"));
-  assert.deepEqual(status, { ok: false, error: "db_unreachable" });
+  // 실패해도 **어느 빌드가 실패했는지**는 말해 준다 — 그게 없으면 진단이 또 헛돈다.
+  assert.deepEqual(status, { ok: false, error: "db_unreachable", version: UNKNOWN_VERSION });
 });
 
 test("임시 SQLite 로 라우트 조회 경로가 성공 상태를 만든다", async () => {

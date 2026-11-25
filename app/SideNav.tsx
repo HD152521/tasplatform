@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { activeNavHref } from "../lib/navActive.ts";
+import { collapsedNames } from "../lib/navCollapse.ts";
 import { COLOR, MONO_STACK, RADIUS, SPACE, TEXT, WEIGHT } from "./ui.tsx";
 import { SessionDot } from "./SessionDot.tsx";
 
@@ -130,9 +131,10 @@ export function SideNav({
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(COLLAPSE_KEY);
-      if (raw !== null) setCollapsed(JSON.parse(raw) as string[]);
+      if (raw !== null) setCollapsed(collapsedNames(JSON.parse(raw)));
     } catch {
       // 저장이 막힌 환경에서도 그냥 펼친 채로 동작한다.
+      // 망가진 JSON 도 여기로 온다(parse 가 던진다) — 그냥 펼친 채로 둔다.
     }
   }, []);
 

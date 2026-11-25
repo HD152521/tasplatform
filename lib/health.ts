@@ -9,24 +9,35 @@
  * 방언(postgres/sqlite)과 팀 수 정도만, 실패 시엔 원문 대신 고정된 요약 코드만 노출한다.
  */
 import type { Dialect } from "./dbConn.ts";
+import { readBuildVersion, type BuildVersion } from "./buildVersion.ts";
 
 export interface HealthOk {
   readonly ok: true;
   readonly dialect: Dialect;
   readonly teams: number;
   readonly at: string;
+  /**
+   * 지금 돌고 있는 빌드의 커밋. **"배포됐나" 를 이 한 줄로 끝내려고 둔다.**
+   *
+   * 전에는 알 길이 없어서 "새로 만든 화면이 404 인지" 를 찔러 봐야 했고, 새 화면이
+   * 없는 변경이면 그마저 통하지 않았다. 커밋 해시는 비밀이 아니다(레포를 볼 수 있는
+   * 사람만 뜻을 안다) — 접속정보·계정은 여전히 담지 않는다.
+   */
+  readonly version: BuildVersion;
 }
 
 export interface HealthError {
   readonly ok: false;
   readonly error: string;
+  /** 실패해도 **어느 빌드가 실패했는지**는 말해 준다. 그게 없으면 진단이 또 헛돈다. */
+  readonly version: BuildVersion;
 }
 
 export type HealthStatus = HealthOk | HealthError;
 
 /** DB 조회가 성공했을 때의 응답 본문을 만든다. */
 export function healthOk(dialect: Dialect, teams: number, at: string): HealthOk {
-  return { ok: true, dialect, teams, at };
+  return { ok: true, dialect, teams, at, version: readBuildVersion() };
 }
 
 /**
@@ -52,5 +63,5 @@ export function summarizeHealthError(error: unknown): string {
 
 /** DB 조회가 실패했을 때의 응답 본문을 만든다(요약 코드만). */
 export function healthError(error: unknown): HealthError {
-  return { ok: false, error: summarizeHealthError(error) };
+  return { ok: false, error: summarizeHealthError(error), version: readBuildVersion() };
 }
