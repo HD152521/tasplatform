@@ -9,13 +9,49 @@ stages:
   - test
   - deploy
 
+# 디스크가 꽉 차면 무슨 일이 생기나 — 겪어 봤다.
+#
+# 러너 VM 의 디스크가 차자 test 잡이 소스를 받는 단계에서 죽었고, 로그에 남은 것은
+#
+#     bash: line 69: printf: write error: No space left on device
+#
+# 한 줄이었다. 배포 잡 둘은 Skipped 가 되어 **배포는 시도조차 되지 않았다.** 그런데
+# 화면에서는 '고친 게 아직 안 보인다' 로만 나타나서, 코드 문제인지 배포 누락인지
+# 가리는 데 하루가 갔다.
+#
+# 그래서 소스를 받기 **전에** 여유를 확인한다. before_script 로는 늦다 — 오늘 죽은
+# 자리가 바로 소스 받기였고, 그보다 앞서 도는 자리는 pre_get_sources_script 뿐이다.
+# 모자라면 '무엇이 자리를 먹고 있는지' 까지 찍고 멈춘다. 다음 사람은 로그 첫 화면에서
+# 원인을 본다.
+.guards:
+  hooks:
+    pre_get_sources_script:
+      - |
+        free_mb=$(df -Pm . | awk 'NR==2 {print $4}')
+        min_mb=${CI_MIN_FREE_MB:-3000}
+        if [ "${free_mb:-0}" -ge "$min_mb" ]; then
+          echo "[디스크] 여유 ${free_mb}MB (최소 ${min_mb}MB) — 계속합니다."
+          exit 0
+        fi
+        echo "[디스크] 여유가 ${free_mb}MB 뿐입니다(최소 ${min_mb}MB). 빌드를 멈춥니다."
+        echo "[디스크] 비우지 않으면 소스 받기부터 실패하고, 배포 잡은 Skipped 가 됩니다."
+        df -h . || true
+        du -sh "$HOME"/builds/* "$HOME"/.npm/_cacache 2>/dev/null | sort -rh | head -10 || true
+        exit 1
+
 # 테스트: 타입체크 + 유닛테스트. 브라우저 안 띄우므로 가볍고 빠르다.
 test:
+  extends: .guards
   stage: test
   script:
     - npm ci
     - npm run typecheck
     - npm test
+  after_script:
+    # 다음 회차까지 .next 와 node_modules 를 안고 있을 이유가 없다. 빌드 디렉터리
+    # 하나가 1GB 를 넘고, 그게 쌓여 러너 디스크를 채웠다. 잡이 시작될 때 git clean 이
+    # 어차피 지우므로(그때는 이미 자리가 없다) 끝낼 때 우리가 비워 둔다.
+    - rm -rf .next node_modules
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
@@ -24,6 +60,7 @@ test:
 # 실제 작업은 레포 밖 고정 스크립트(/usr/local/bin/sr-deploy.sh)가 한다 —
 # 레포 안 스크립트를 sudo 로 물리면 push 로 root 를 탈취당할 수 있어서다.
 deploy_worker:
+  extends: .guards
   stage: deploy
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -41,6 +78,7 @@ deploy_worker:
 #       CF_API, CF_USER, CF_PASSWORD, CF_ORG(PA), CF_SPACE(PA)
 #       선택 CF_PG_INSTANCE(바인딩할 Postgres 서비스명, 기본 PA-postgres)
 deploy_tas:
+  extends: .guards
   stage: deploy
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -59,3 +97,8 @@ deploy_tas:
     - cf target -o "$CF_ORG" -s "$CF_SPACE"
     - cf push broadcom-sr-web -f manifest.yml --var pg_instance="${CF_PG_INSTANCE:-PA-postgres}"
     - cf push broadcom-sr-mcp -f manifest.yml --var pg_instance="${CF_PG_INSTANCE:-PA-postgres}"
+  after_script:
+    # 다음 회차까지 .next 와 node_modules 를 안고 있을 이유가 없다. 빌드 디렉터리
+    # 하나가 1GB 를 넘고, 그게 쌓여 러너 디스크를 채웠다. 잡이 시작될 때 git clean 이
+    # 어차피 지우므로(그때는 이미 자리가 없다) 끝낼 때 우리가 비워 둔다.
+    - rm -rf .next node_modules
