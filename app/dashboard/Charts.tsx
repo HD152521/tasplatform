@@ -79,7 +79,12 @@ export interface BarRow {
  * 가장 큰 값을 100% 로 잡는다(전체 합이 아니라). 비교 대상이 서로이기 때문이다 —
  * 합을 기준으로 하면 항목이 많을 때 모든 막대가 짧아져 차이가 안 보인다.
  */
-export function BarList({ rows, max = 6 }: { rows: readonly BarRow[]; max?: number }) {
+export function BarList({ rows, max = 6, unit = "개" }: {
+  rows: readonly BarRow[];
+  max?: number;
+  /** 넘친 줄을 셀 때 쓰는 단위. 사람은 "명", 망·날짜는 "개"·"일". */
+  unit?: string;
+}) {
   if (rows.length === 0) {
     return <p style={{ margin: 0, fontSize: 12.5, color: COLOR.faint }}>없음</p>;
   }
@@ -114,7 +119,7 @@ export function BarList({ rows, max = 6 }: { rows: readonly BarRow[]; max?: numb
         </div>
       ))}
       {rows.length > max && (
-        <div style={{ fontSize: 11.5, color: COLOR.faint }}>그 외 {rows.length - max}명</div>
+        <div style={{ fontSize: 11.5, color: COLOR.faint }}>그 외 {rows.length - max}{unit}</div>
       )}
     </div>
   );

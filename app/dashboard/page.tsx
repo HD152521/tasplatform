@@ -24,7 +24,7 @@ import { listEventsBetween, type EventState, type TeamEventView } from "../../li
 import { openDb } from "../../lib/db.ts";
 import { getLastRun, listCasesSplit, type CaseListRow } from "../../lib/queries.ts";
 import { getSessionStatus } from "../../lib/sessionFile.ts";
-import { addDays } from "../../lib/quickAdd.ts";
+import { addDays, weekdayOf } from "../../lib/quickAdd.ts";
 import { describeWeek, weekMondayOf, weekRange } from "../../lib/weekRange.ts";
 import { COLOR, Card, MONO_STACK, Notice, RADIUS } from "../ui.tsx";
 import { DigestCard } from "./DigestCard.tsx";
@@ -35,6 +35,35 @@ export const dynamic = "force-dynamic";
 /** 오늘(KST). 서버가 UTC 면 자정 무렵 하루가 밀린다(lib/jiraWrite.ts today() 와 같은 이유). */
 function todayKst(): string {
   return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * Jira 반영 상황을 보여 주는 칸.
+ *
+ * `jiraWanted`(올리기로 했는가)와 `jiraState`(올려졌는가)는 다른 값이다
+ * (lib/calendar.ts 머리말). 올리지 않기로 한 메모와 올리다 실패한 것을 같은
+ * 칸에 넣으면 "반영 안 된 것" 이 얼마인지 알 수 없다.
+ */
+const JIRA_BUCKETS = [
+  { key: "ok", label: "올라감", color: COLOR.ok },
+  { key: "waiting", label: "대기", color: COLOR.waitThem },
+  { key: "unknown", label: "확인 못함", color: COLOR.warn },
+  { key: "failed", label: "실패", color: COLOR.waitUs },
+  { key: "memo", label: "메모만", color: COLOR.faint },
+] as const;
+
+/**
+ * 한 일정은 **한 칸에만** 들어간다.
+ *
+ * 누적 막대는 조각들의 합을 전체로 삼아 비율을 낸다(Charts.tsx StackBar). 한 일정이
+ * 두 칸에 세어지면 합이 건수보다 커져 **비율이 조용히 틀린다.** 그래서 세는 쪽을
+ * 필터 여러 개가 아니라 분류 함수 하나로 둔다 — 겹칠 수가 없다.
+ */
+function jiraBucketOf(event: TeamEventView): (typeof JIRA_BUCKETS)[number]["key"] {
+  if (event.jiraState === "ok") return "ok";
+  if (event.jiraState === "failed") return "failed";
+  if (event.jiraState === "unknown") return "unknown";
+  return event.jiraWanted ? "waiting" : "memo";
 }
 
 const STATE_COLOR: Record<EventState, string> = {
@@ -134,6 +163,22 @@ export default async function DashboardPage() {
       .map(([label, value]) => ({ label, value }))
       .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
   })();
+
+  // 요일별 — 이번 주 어느 날에 몰려 있나. 기간 일정은 **걸치는 날마다** 센다.
+  // 보는 사람이 알고 싶은 것은 "그 날 몇 건이 걸려 있나" 이고, 시작한 건수가 아니다.
+  const byWeekday: BarRow[] = Array.from({ length: 7 }, (_, i) => addDays(week.from, i)).map(
+    (date) => ({
+      label: `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}(${weekdayOf(date)})`,
+      value: events.filter((e) => e.startDate <= date && e.endDate >= date).length,
+      highlight: date === today,
+    }),
+  );
+
+  const jiraSlices = JIRA_BUCKETS.map((bucket) => ({
+    label: bucket.label,
+    value: events.filter((e) => jiraBucketOf(e) === bucket.key).length,
+    color: bucket.color,
+  }));
 
   return (
     <>
@@ -250,7 +295,7 @@ export default async function DashboardPage() {
         {/* ── 사람별 ────────────────────────────────────── */}
         <Card style={{ padding: 18 }}>
           <SectionTitle title="이번 주 사람별" href="/calendar" linkLabel="캘린더" />
-          <BarList rows={byPerson} />
+          <BarList rows={byPerson} unit="명" />
         </Card>
 
         {/* ── 망별 ──────────────────────────────────────── */}
@@ -263,6 +308,40 @@ export default async function DashboardPage() {
               대괄호도 그 값으로 들어갑니다.
             </p>
           )}
+        </Card>
+
+        {/* ── 요일별 ────────────────────────────── */}
+        <Card style={{ padding: 18 }}>
+          <SectionTitle title="이번 주 요일별" href="/calendar" linkLabel="캘린더" />
+          {events.length === 0 ? (
+            <Empty>이번 주 일정이 없습니다.</Empty>
+          ) : (
+            <>
+              {/* 7일을 다 보여 준다 — 몰린 날을 미리 알아야 다음 일정을 비울 수 있다. */}
+              <BarList rows={byWeekday} max={7} unit="일" />
+              <p style={{
+                margin: "12px 0 0", paddingTop: 10, borderTop: `1px solid ${COLOR.divider}`,
+                fontSize: 11.5, color: COLOR.faint, lineHeight: 1.7,
+              }}>
+                여러 날에 걸치는 일정은 걸치는 날마다 한 건입니다. 진한 줄이 오늘입니다.
+              </p>
+            </>
+          )}
+        </Card>
+
+        {/* ── Jira 반영 ────────────────────────────── */}
+        <Card style={{ padding: 18 }}>
+          <SectionTitle title="이번 주 Jira 반영" href="/calendar" linkLabel="캘린더" />
+          <StackBar slices={jiraSlices} />
+          <p style={{
+            margin: "14px 0 0", paddingTop: 10, borderTop: `1px solid ${COLOR.divider}`,
+            fontSize: 11.5, color: COLOR.faint, lineHeight: 1.7,
+          }}>
+            <strong style={{ color: COLOR.body, fontWeight: 600 }}>메모만</strong> 은 사내에만
+            남기기로 한 일정이라 올릴 대상이 아닙니다.{" "}
+            <strong style={{ color: COLOR.body, fontWeight: 600 }}>대기</strong> 는 올리기로
+            했지만 아직 올라가지 않은 것입니다.
+          </p>
         </Card>
 
         {/* ── 내 담당 일정 ──────────────────────────────── */}

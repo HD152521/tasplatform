@@ -79,6 +79,19 @@ const WEEK_LABELS = ["일", "월", "화", "수", "목", "금", "토"] as const;
 const LANE_LIMIT = 3;
 
 /**
+ * 칸 **아래에 늘 비워 두는 높이.**
+ *
+ * 띠가 세 줄 차고 `+N` 까지 붙으면 칸이 위에서 아래까지 띠로 덮여, 그 날을 고르려고
+ * 눌러도 **일정이 열렸다.** 날 숫자 줄(위 20px)만 남아서, 일정이 몰린 주에는 사실상
+ * 누를 자리가 없었다.
+ *
+ * 그래서 마지막 격자 줄을 `minmax(CLICK_GUTTER, 1fr)` 로 두고 **아무것도 얹지
+ * 않는다.** 일정이 몇 건이든 칸마다 가로로 긴 빈 자리가 남아, 그 날을 고르는 손이
+ * 갈 곳이 생긴다. 한가한 달에서는 `1fr` 이 늘어나 지금과 똑같이 보인다.
+ */
+const CLICK_GUTTER = 18;
+
+/**
  * 저장된 일정을 **한 줄 태그**로 되살린다.
  *
  * 적은 태그는 저장될 때 망(scopes)·법인(corp)·성격(kind) 셋으로 갈라진다
@@ -587,7 +600,10 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(7, 1fr)",
-                gridTemplateRows: `20px repeat(${laneRows}, 18px)${anyOverflow ? " 14px" : ""} 1fr`,
+                // 마지막 줄은 비워 둔다 — 그 날을 고르는 자리(CLICK_GUTTER 머리말).
+                gridTemplateRows:
+                  `20px repeat(${laneRows}, 18px)${anyOverflow ? " 14px" : ""}` +
+                  ` minmax(${CLICK_GUTTER}px, 1fr)`,
                 minHeight: 74,
                 borderBottom: wi < weeks.length - 1 ? `1px solid ${COLOR.divider}` : "none",
               }}
@@ -600,6 +616,7 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
                   <div
                     key={date}
                     onClick={() => pickDate(date)}
+                    title={`${date} — 누르면 이 날 전부가 아래에 열립니다`}
                     style={{
                       gridColumn: c + 1,
                       gridRow: "1 / -1",
@@ -647,9 +664,17 @@ export function CalendarBoard({ month, initialEvents, members, me, focusEventId,
                       title="이 날 전부를 아래 목록에서 봅니다"
                       style={{
                         gridColumn: c + 1, gridRow: laneRows + 2,
-                        background: "transparent", border: "none", cursor: "pointer",
-                        fontFamily: MONO_STACK, fontSize: 10, color: COLOR.faint,
-                        textAlign: "left", padding: "0 6px",
+                        // 전에는 투명한 글자였다. 가려진 일정이 있다는 **유일한 신호**인데
+                        // 흐려서 아무도 못 봤다. 알약 모양으로 묶어 누를 자리로도 보이게 한다.
+                        justifySelf: "start", alignSelf: "center",
+                        marginLeft: 4,
+                        background: COLOR.subtle,
+                        border: `1px solid ${COLOR.divider}`,
+                        borderRadius: RADIUS.badge,
+                        cursor: "pointer",
+                        fontFamily: MONO_STACK, fontSize: 10, lineHeight: "12px",
+                        color: COLOR.muted,
+                        textAlign: "left", padding: "0 5px",
                       }}
                     >
                       +{n}
