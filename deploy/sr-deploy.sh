@@ -56,5 +56,45 @@ if ! sudo -u "$RUN_USER" npx playwright install chromium; then
   echo "경고: Playwright 브라우저 설치 실패 — 로그인이 안 될 수 있습니다" >&2
 fi
 
+# 옛 브라우저 버전은 지운다 — 안 지우면 무한히 쌓인다.
+#
+# 바로 위 install 은 빌드 번호가 바뀌면 **새 폴더를 만들고 옛 폴더는 두고 간다.**
+# chromium 한 벌이 460MB, headless shell 까지 560MB다. 그게 쌓여 VM 루트(19G)가 100%
+# 가 되었고, CI 가 소스를 받는 단계에서 죽어 배포가 멈췄다. 로그에 남은 것은
+# `printf: write error: No space left on device` 한 줄이라 원인이 보이지도 않았다.
+#
+# 지울 목록을 버전 번호로 적어 두면 다음 업그레이드에 또 어긋난다. 그래서 playwright
+# 에게 **지금 어느 자리를 쓰는지 직접 묻고**(--dry-run 이 Install location 을 찍는다)
+# 그 자리만 남긴다.
+#
+# 확인에 실패하면 **아무것도 지우지 않는다.** 지우는 쪽으로 틀리면
+#   browserType.launch: Executable doesn't exist at .../chromium_headless_shell-XXXX
+# 로 로그인이 통째로 막힌다. 자리를 아끼려다 수집기를 세우는 것은 남는 장사가 아니다.
+prune_old_browsers() {
+  local root keep name size
+  root=$(sudo -u "$RUN_USER" sh -c 'echo "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"')
+  [ -d "$root" ] || return 0
+
+  keep=$(sudo -u "$RUN_USER" npx playwright install --dry-run chromium 2>/dev/null | sed -n 's/^[[:space:]]*Install location:[[:space:]]*//p' | sed 's#.*/##' | sort -u)
+  if [ -z "$keep" ]; then
+    echo "경고: 쓰는 브라우저를 확인하지 못해 정리를 건너뜁니다" >&2
+    return 0
+  fi
+
+  # chromium 계열만 건드린다. firefox·webkit 은 우리가 깐 것이 아니다.
+  for dir in "$root"/chromium*; do
+    [ -d "$dir" ] || continue
+    name=$(basename "$dir")
+    if printf '%s
+' "$keep" | grep -qxF "$name"; then
+      continue
+    fi
+    size=$(du -sh "$dir" 2>/dev/null | cut -f1)
+    echo "옛 브라우저 정리: $name ($size)"
+    rm -rf "$dir"
+  done
+}
+prune_old_browsers
+
 systemctl restart broadcom-sr
 echo "배포 완료 → broadcom-sr 재시작"
