@@ -30,6 +30,20 @@ applications:
     # 본문을 메모리에 올리고(50MB) base64 로 바꾸고(67MB) DB 드라이버가 또 직렬화해
     # (67MB) 한 건의 피크가 400MB 를 넘는다. 512M 에서는 한 건만으로도 OOM 가능성이 있다.
     memory: 1G
+    # 디스크를 1G(기본값)로 두면 안 된다 — 실측 910.9M of 1G(91%)였다.
+    #
+    # 드롭릿이 왜 이렇게 큰가. 셋이 겹친다.
+    #   · node_modules 를 통째로 올린다(.cfignore 가 일부러 제외하지 않는다 —
+    #     사내망에서 스테이징 컨테이너가 npm 레지스트리로 못 나갈 수 있어서다).
+    #     앱 패키지만 189.5M 이다.
+    #   · python_buildpack 이 supply 로 python3 + python-pptx 를 함께 깐다.
+    #   · .next 프로덕션 빌드가 함께 올라간다(next start 가 써야 한다).
+    #
+    # 남는 자리가 100MB 남짓이면 두 가지가 터진다. 첨부 한 건이 50MB 까지
+    # 오고(lib/attachmentUpload.ts), 보고서 PPTX 를 python 이 임시파일로 만든다.
+    # 그리고 화면이 커지면 .next 가 자라서 **다음 cf push 가 스테이징에서** 깨진다.
+    # worker 가 같은 이유로 이미 2G 를 적어 두고 있다(아래).
+    disk_quota: 2G
     instances: 1
     env:
       NODE_ENV: production
@@ -52,6 +66,9 @@ applications:
       - nodejs_buildpack
     command: node --conditions=react-server mcp/server.ts   # TODO: prod 는 JS 컴파일 권장
     memory: 512M
+    # web 과 같은 나무를 올린다 — node_modules 가 통째로 들어간다. python 은 안 깔아
+    # web 보다 작지만 기본 1G 로는 여유가 빡빡하다.
+    disk_quota: 1536M
     instances: 1
     env:
       HOST: 0.0.0.0             # 라우트는 GoRouter 가 TLS 종단
